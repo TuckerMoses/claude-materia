@@ -128,37 +128,88 @@ Wait for the user to approve or request changes before launching.
 
 ## Phase 3: Launch
 
-### Session Creation
+The launch phase uses a single bash script to ensure consistent, reproducible execution. This avoids timing issues with multiple tool calls and guarantees the sleep guards work reliably.
 
-Pick a descriptive session name based on the work theme. If ambiguous, use a timestamp-based name like `work-20260414`.
+### Build the Launch Script
 
-Build the tmux session step by step:
+Generate a launch script at `/tmp/session-planner-launch.sh`. The script has three sections executed in order:
+
+**Section 1 — Create the session structure:**
 
 ```bash
+#!/bin/bash
+set -e
+
 # Create the session with the first window
 tmux new-session -d -s SESSION_NAME -n WINDOW_1_NAME -x WIDTH -y HEIGHT
 
-# For additional windows
+# Additional windows
 tmux new-window -t SESSION_NAME -n WINDOW_N_NAME
 
-# For pane splits within a window
+# Pane splits within a window
 tmux split-window -t SESSION_NAME:WINDOW -h   # horizontal split (side by side)
 tmux split-window -t SESSION_NAME:WINDOW -v   # vertical split (stacked)
+
+# Apply an even layout after splitting (recommended before fine-tuning)
+tmux select-layout -t SESSION_NAME:WINDOW even-horizontal  # or even-vertical, tiled
 
 # Resize panes if needed
 tmux resize-pane -t SESSION_NAME:WINDOW.PANE -x COLS
 tmux resize-pane -t SESSION_NAME:WINDOW.PANE -y ROWS
 ```
 
-### Injecting Claude Sessions
-
-For panes classified as "claude," send an interactive Claude command with the todo as a prompt. The prompt should be contextual — not just the raw todo text, but enriched with relevant context from the conversation.
+**Section 2 — Wait for shells to initialize:**
 
 ```bash
-tmux send-keys -t SESSION_NAME:WINDOW.PANE 'claude "PROMPT_HERE"' Enter
+# Let all shells spin up before injecting commands
+sleep 2
 ```
 
-**Prompt construction for Claude panes:**
+There is a race condition between pane creation and shell readiness: if `send-keys` fires before the shell has finished initializing, the command gets swallowed silently. 2 seconds covers the vast majority of machines and shell configs.
+
+**Section 3 — Inject commands into panes:**
+
+```bash
+# cd + claude for panes that need a working directory
+tmux send-keys -t SESSION_NAME:WINDOW.PANE 'cd /path/to/repo' Enter
+sleep 0.5
+tmux send-keys -t SESSION_NAME:WINDOW.PANE 'claude "PROMPT_HERE"' Enter
+
+# Direct claude for panes already in the right directory
+tmux send-keys -t SESSION_NAME:WINDOW.PANE 'claude "PROMPT_HERE"' Enter
+
+# Raw terminal commands
+tmux send-keys -t SESSION_NAME:WINDOW.PANE 'npm run dev' Enter
+
+# Focus the first window
+tmux select-window -t SESSION_NAME:WINDOW_1_NAME
+```
+
+Use a 0.5-second sleep between sequential commands to the **same pane** (e.g., `cd` then `claude`). No sleep needed between commands to different panes — each has its own shell.
+
+### Pane Indexing
+
+After creating panes, tmux assigns indices starting from 1 (not 0). Always use `WINDOW_NAME.1`, `.2`, `.3` etc. in the script. If in doubt, query first:
+
+```bash
+tmux list-panes -t SESSION_NAME:WINDOW -F '#{pane_index}'
+```
+
+### Session Naming
+
+Pick a descriptive session name based on the work theme. If ambiguous, use a timestamp-based name like `work-20260414`. Before creating, check for collisions:
+
+```bash
+tmux has-session -t SESSION_NAME 2>/dev/null && echo "EXISTS" || echo "CLEAR"
+```
+
+If it exists, append a number suffix rather than clobbering.
+
+### Prompt Construction
+
+**Working directory:** If a todo references or implies a specific repo or directory (from conversation context, file paths mentioned, or the todo text itself), `cd` to that directory before launching Claude. The current session's working directory is a strong default — if the user invokes the skill from within a repo and says "these todos," assume the todos live in that repo unless context says otherwise.
+
+**Claude pane prompts:**
 - Start with the todo itself as the core task
 - If the conversation contained relevant context (file paths discussed, decisions made, constraints mentioned), weave that into the prompt
 - If the todo is part of a broader effort discussed in conversation, mention that framing
@@ -170,31 +221,24 @@ Example prompt for a todo "Refactor auth middleware":
 Refactor the JWT auth middleware in src/middleware/auth.ts. The current implementation refreshes tokens synchronously which blocks the request. Convert to async refresh with a token cache. The rest of the team is working on the API integration tests in parallel, so don't change the public interface.
 ```
 
-### Injecting Raw Terminal Commands
+**Raw pane commands:** If the todo implies a specific command (like "run the dev server"), include it. If ambiguous, just `cd` to the directory and leave the pane at a shell prompt — don't guess.
 
-For raw panes, if the todo implies a specific command (like "run the dev server"), send that command:
+### Execute and Attach
 
-```bash
-tmux send-keys -t SESSION_NAME:WINDOW.PANE 'npm run dev' Enter
-```
-
-If the todo is ambiguous, just leave the pane at a shell prompt — don't guess.
-
-### Attach
-
-After everything is set up, attach to the session:
+Write the script, make it executable, and run it. Then attach:
 
 ```bash
+chmod +x /tmp/session-planner-launch.sh
+/tmp/session-planner-launch.sh
+
+# If inside tmux, switch to the new session
+tmux switch-client -t SESSION_NAME
+
+# If not inside tmux, attach
 tmux attach-session -t SESSION_NAME
 ```
 
-If already inside tmux, switch instead:
-
-```bash
-tmux switch-client -t SESSION_NAME
-```
-
-**Important:** After running the attach/switch command, tell the user the session is ready and which windows are available. The skill's job is done at this point — the user takes over from the tmux session.
+After running the attach/switch command, tell the user the session is ready and which windows are available. The skill's job is done at this point — the user takes over from the tmux session.
 
 ## Context Injection
 
