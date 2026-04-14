@@ -50,7 +50,7 @@ If the artifact is internally consistent, say so explicitly and emit no findings
 ## Context you receive
 
 - The artifact being reviewed
-- The kind file for the artifact's declared type (use this to understand what invariants the artifact's type requires)
+- `ARTIFACT.md` — a profile of the artifact describing its format, purpose, any structural constraints from the environment, and observations from inspection. Use this to understand what invariants apply.
 - The flags file (pay attention to flagged concerns, but review the entire artifact regardless)
 - If this is not the first iteration: the previous triage output, so you can see what was already found and fixed
 

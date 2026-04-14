@@ -54,7 +54,7 @@ If the artifact is sufficiently explicit for AI consumption, say so and emit no 
 ## Context you receive
 
 - The artifact being reviewed
-- The kind file for the artifact's declared type
+- `ARTIFACT.md` — a profile of the artifact describing its format, purpose, any structural constraints, and observations from inspection
 - The flags file
 - If not the first iteration: previous triage output
 

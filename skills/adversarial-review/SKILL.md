@@ -22,12 +22,13 @@ An adversarial review loop that validates artifacts through multiple independent
 
 `/adversarial-review run <agent-name> <artifact-path>`
 
-Dispatches a single reviewer agent against the artifact. No session, no loop, no triage, no fixer. The reviewer reads the artifact, kind file (if inferrable), and produces findings. Results are presented directly to the user.
+Dispatches a single reviewer agent against the artifact. No session, no loop, no triage, no fixer.
 
 1. Read the named agent from the skill's `agents/` directory. Must be a `role: reviewer` agent.
-2. Identify the artifact's kind (same decision tree as Phase 1 Step 1 of the full loop).
-3. Dispatch the reviewer as a subagent with: the artifact, the kind file (if available), and a note that no flags were provided (no flags file exists in single-pass mode).
-4. Present findings to the user. No triage, no severity override, no fixer. The reviewer's raw output is the result.
+2. Read the artifact. Build `ARTIFACT.md` (see Phase 1 Step 1 of the full loop — the same procedure applies).
+3. Create a minimal flags file with: no user concerns, no session concerns. The user is not prompted for concerns in single-pass mode — to include specific concerns, use the full loop.
+4. Dispatch the reviewer as a subagent with: the artifact, `ARTIFACT.md`, and the flags file.
+5. Present findings to the user. No triage, no severity override, no fixer. The reviewer's raw output is the result.
 
 This is useful for quick checks, verifying a specific concern, or running a reviewer after the full loop to confirm the final state.
 
@@ -37,13 +38,42 @@ This is useful for quick checks, verifying a specific concern, or running a revi
 
 ### Phase 1: Session Setup
 
-1. **Identify the artifact and its kind.**
+1. **Read the artifact and build `ARTIFACT.md`.**
    - Read the artifact at the given path.
-   - Determine its kind:
-     1. Path matches a known pattern? (e.g., `.claude/skills/*/SKILL.md` → skill, `.claude/agents/*.md` → agent, `plans/*.md` → plan) → use that kind.
-     2. Artifact content declares a kind explicitly (e.g., YAML frontmatter `kind:` field)? → use that kind.
-     3. Neither → if the environment provides kind definitions, list available kinds for the user. Otherwise, prompt: "Can't infer this artifact's kind. What kind is it? Or type 'none' to proceed without kind-specific rules."
-   - If a matching kind file is available (from environment or context), read it for type-specific invariants. If no kind matches, proceed with universal review only and warn the user.
+   - Run the environment discovery protocol (see `## Environment`).
+   - Inspect the artifact itself: structure, format, frontmatter, stated purpose, apparent audience.
+   - Compose `ARTIFACT.md` — a profile of the artifact that every agent receives. This file **always exists**, regardless of whether an environment was found. It is written to `review/ARTIFACT.md` when the session directory is created in step 4. It must contain:
+
+     ```markdown
+     # Artifact Profile
+
+     **Path:** [artifact path]
+     **Format:** [markdown, YAML frontmatter + markdown, JSON, etc.]
+     **Apparent purpose:** [what this artifact appears to be — a plan, a spec, an agent definition, etc.]
+
+     ## Environment source
+     [One of:]
+     - "Environment discovered at ~/.claude/env/index.md. Relevant entries: [list]. See below."
+     - "Environment exists but no entries were relevant to this artifact. Reason: [why]."
+     - "No environment found at ~/.claude/env/. Review proceeds on the artifact's own merits."
+     - "Environment at ~/.claude/env/ appears misconfigured (index.md absent/unreadable). Warned user. Proceeding without."
+
+     ## Structural constraints
+     [If the environment provided spec checklists, read/write contracts, naming
+     conventions, routing rules, or other structural requirements that apply to
+     this artifact, list them here. These become review inputs — reviewers should
+     check the artifact against them.]
+
+     [If no environment or no relevant constraints: "None — universal review only.
+     Reviewers assess the artifact against general quality principles."]
+
+     ## Observations from inspection
+     [Anything notable the orchestrator observed about the artifact that reviewers
+     should be aware of: unusual structure, mixed concerns, stated invariants,
+     cross-references to other files, etc.]
+     ```
+
+   - The goal: every agent gets a self-contained briefing about what this artifact is and what rules apply to it, without needing to re-derive that information or know where it came from.
 
 2. **Check version control.**
    - Detect VCS: check for jj first (`jj status`), then git (`git status`).
@@ -54,7 +84,7 @@ This is useful for quick checks, verifying a specific concern, or running a revi
 3. **Build the agent pool.**
    - Read all `role: reviewer` agent files from the skill's `agents/` directory.
    - Required agents (`required: true`) are included automatically.
-   - Optional agents (`required: false`): the orchestrator reasons over each agent's `trigger` field against the artifact content, path, and user-stated intent. If the trigger condition appears met, propose including it with stated reasoning. The user confirms or overrides.
+   - Optional agents (`required: false`): the orchestrator reasons over each agent's `trigger` field against the artifact content, `ARTIFACT.md`, and user-stated intent. If the trigger condition appears met, propose including it with stated reasoning. The user confirms or overrides.
    - Present the planned pool to the user for approval:
      ```
      Planned review agents:
@@ -74,6 +104,7 @@ This is useful for quick checks, verifying a specific concern, or running a revi
    - Create symlink: `sessions/<id>/artifact` → absolute path to the artifact
    - Create `review/accepted-risks.json` with initial content `[]`
    - Create `review/deferred-lows.json` with initial content `[]`. Schema: array of objects with fields `id` (string), `description` (string), `tier` (string: `"c"` or `"o"`), `iteration` (integer), `reason` (string).
+   - Write the `ARTIFACT.md` composed in step 1 to `review/ARTIFACT.md`.
 
 5. **Write flags.**
    - Create `review/flags.md`:
@@ -104,9 +135,9 @@ This is useful for quick checks, verifying a specific concern, or running a revi
 0. **Create the iteration directory.** `review/iterations/<N>/` before dispatching any agents.
 
 1. **Dispatch reviewers.**
-   - Iteration 1 (cold start): evaluate each reviewer's precondition individually against the cold-start state. Preconditions like "may be inconsistent" (coherence) are trivially met. Preconditions requiring prior verification (e.g., "internally consistent" for design/detail) are NOT met on cold start — exclude those reviewers.
+   - Iteration 1 (cold start): evaluate each reviewer's precondition individually against the cold-start state. Preconditions like "may be inconsistent" (coherence) are trivially met. Preconditions requiring prior verification (e.g., "internally consistent" for design/detail) are NOT met on cold start — exclude those reviewers. On iteration 1, excluded agents will run in a subsequent iteration once their preconditions are met — the coverage check (step 3) ensures this.
    - Iteration 2+: dispatch only the agents listed in triage's `next_reviewers` from the previous iteration.
-   - Each reviewer runs as a subagent (Agent tool) with: the artifact, the kind file, the flags file, and previous triage output (if iteration 2+).
+   - Each reviewer runs as a subagent (Agent tool) with: the artifact, `ARTIFACT.md`, the flags file, and previous triage output (if iteration 2+).
    - Reviewers are always independent and always dispatched in parallel. **Never combine multiple reviewer roles into a single agent call.**
    - Model: current tier model (sonnet during cheap tier, opus during opus tier). Exception: triage always runs opus.
    - Save each reviewer's output to `review/iterations/<N>/<reviewer-name>-output.md`.
@@ -140,7 +171,7 @@ This is useful for quick checks, verifying a specific concern, or running a revi
      4. Report: "Review aborted at iteration N. Partial summary at [path]."
 
 5. **Dispatch fixer.**
-   - Run the fixer agent (read `agents/fixer.md` for its full spec) with: the artifact, current triage output, the flags file, the kind file.
+   - Run the fixer agent (read `agents/fixer.md` for its full spec) with: the artifact, `ARTIFACT.md`, current triage output, the flags file.
    - Fixer model: current tier model (sonnet during cheap tier, opus during opus tier).
    - Fixer emits changelog to `review/iterations/<N>/fixer-changelog.md`.
    - **VCS commit:**
@@ -175,7 +206,6 @@ When the opus tier loop exits clean:
    # Review Summary
    
    **Artifact:** [path]
-   **Kind:** [kind name]
    **Date:** [timestamp]
    **Final triage:** [path to final triage-output.json]
    
@@ -237,28 +267,19 @@ When the opus tier loop exits clean:
 This skill extends with environment context. Before executing:
 
 1. Check if `~/.claude/env/` exists.
-   - If `~/.claude/env/` does not exist: bare environment. Execute with defaults
-     and note that no environment was found. Kind inference falls back to
-     path-pattern matching and explicit user declaration only.
+   - If `~/.claude/env/` does not exist: bare environment. Note this in `ARTIFACT.md`
+     and proceed — the review works without environment context.
    - If `~/.claude/env/` exists but `index.md` is absent or unreadable: warn the
-     user that the environment appears misconfigured. Do not silently degrade.
+     user that the environment appears misconfigured. Note in `ARTIFACT.md` and proceed.
    - If `~/.claude/env/index.md` exists: proceed to step 2.
 2. Read the index to discover available environment heuristics.
 3. Produce a **relevance map**: for each entry in the index, state whether
-   it applies to this task and a brief rationale. No silent dropping —
+   it applies to this review and a brief rationale. No silent dropping —
    every entry gets an explicit disposition.
-4. For relevant entries, read those files and derive
-   **Review Criteria** scoped to the current task. Specifically:
-   - **Kind definitions** (workspace.md, project.md): used for artifact kind
-     inference and type-specific invariants. If the artifact matches a kind,
-     the kind file's spec checklist and read/write contract become review inputs.
-   - **Routing**: used to validate that the artifact's location matches
-     expected artifact destinations.
-   - **Conventions**: used to check naming, formatting, and structural compliance.
-   - Other entries: include if the artifact's domain intersects that concern.
-5. Include the derived Review Criteria in agent dispatches:
-   - Reviewer agents receive: the kind file (if matched), plus any
-     environment-derived constraints relevant to their review scope.
-   - Triage and fixer agents receive: the kind file (if matched).
-   - The Review Criteria inform what constitutes a valid artifact but do not
-     override the skill's own review methodology.
+4. For relevant entries, read those files and extract any structural
+   constraints, spec checklists, naming conventions, routing rules, or
+   other heuristics that apply to the artifact under review.
+5. Include all discovered information in `ARTIFACT.md` under
+   "Environment source" and "Structural constraints." This is how
+   environment-derived context reaches the agents — through the
+   artifact profile, not through a separate file.

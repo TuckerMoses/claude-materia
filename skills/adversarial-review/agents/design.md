@@ -110,7 +110,7 @@ If the design is sound, say so explicitly and emit no findings.
 ## Context you receive
 
 - The artifact being reviewed
-- The kind file for the artifact's declared type
+- `ARTIFACT.md` — a profile of the artifact describing its format, purpose, any structural constraints, and observations from inspection
 - The flags file (pay attention to flagged concerns, but review the entire artifact regardless)
 - If not the first iteration: previous triage output
 
