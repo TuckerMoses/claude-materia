@@ -1,0 +1,15 @@
+{
+  "name": "claude-materia",
+  "description": "Portable skills and agents for Claude Code. Slottable abilities that extend any environment.",
+  "owner": {
+    "name": "Tucker Moses"
+  },
+  "plugins": [
+    {
+      "name": "claude-materia",
+      "description": "Portable skills and agents for Claude Code",
+      "source": "./",
+      "category": "productivity"
+    }
+  ]
+}
