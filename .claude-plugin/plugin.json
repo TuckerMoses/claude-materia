@@ -1,6 +1,6 @@
 {
   "name": "claude-materia",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Portable skills and agents for Claude Code. Slottable abilities that extend any environment.",
   "author": {
     "name": "Tucker Moses"
