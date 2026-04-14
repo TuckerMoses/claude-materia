@@ -128,13 +128,11 @@ Wait for the user to approve or request changes before launching.
 
 ## Phase 3: Launch
 
-The launch phase uses a single bash script to ensure consistent, reproducible execution. This avoids timing issues with multiple tool calls and guarantees the sleep guards work reliably.
+The launch phase uses two bash scripts executed in sequence with a pause between them. The first script creates the tmux structure (session, windows, panes, layout). The second script injects commands into the now-ready panes. A 5-second sleep between them ensures all shells have fully initialized — this eliminates the race condition where `send-keys` fires before a shell is ready and the command gets swallowed silently.
 
-### Build the Launch Script
+### Script 1: Structure (`/tmp/session-planner-structure.sh`)
 
-Generate a launch script at `/tmp/session-planner-launch.sh`. The script has three sections executed in order:
-
-**Section 1 — Create the session structure:**
+Creates the session, windows, panes, and layout. No commands are sent to panes yet.
 
 ```bash
 #!/bin/bash
@@ -158,18 +156,24 @@ tmux resize-pane -t SESSION_NAME:WINDOW.PANE -x COLS
 tmux resize-pane -t SESSION_NAME:WINDOW.PANE -y ROWS
 ```
 
-**Section 2 — Wait for shells to initialize:**
+### Wait for shells to initialize
+
+After running the structure script, sleep 5 seconds before running the inject script:
 
 ```bash
-# Let all shells spin up before injecting commands
-sleep 2
+sleep 5
 ```
 
-There is a race condition between pane creation and shell readiness: if `send-keys` fires before the shell has finished initializing, the command gets swallowed silently. 2 seconds covers the vast majority of machines and shell configs.
+This is deliberately generous — shell initialization (loading `.zshrc`, plugins, etc.) can take several seconds on configured machines. The cost of waiting an extra few seconds is negligible compared to a silently dropped command.
 
-**Section 3 — Inject commands into panes:**
+### Script 2: Inject (`/tmp/session-planner-inject.sh`)
+
+Sends commands into the now-ready panes.
 
 ```bash
+#!/bin/bash
+set -e
+
 # cd + claude for panes that need a working directory
 tmux send-keys -t SESSION_NAME:WINDOW.PANE 'cd /path/to/repo' Enter
 sleep 0.5
@@ -225,11 +229,19 @@ Refactor the JWT auth middleware in src/middleware/auth.ts. The current implemen
 
 ### Execute and Attach
 
-Write the script, make it executable, and run it. Then attach:
+Write both scripts, make them executable, and run them in sequence with a 5-second gap:
 
 ```bash
-chmod +x /tmp/session-planner-launch.sh
-/tmp/session-planner-launch.sh
+chmod +x /tmp/session-planner-structure.sh /tmp/session-planner-inject.sh
+
+# 1. Create the tmux structure
+/tmp/session-planner-structure.sh
+
+# 2. Wait for all shells to initialize
+sleep 5
+
+# 3. Inject commands into panes
+/tmp/session-planner-inject.sh
 
 # If inside tmux, switch to the new session
 tmux switch-client -t SESSION_NAME
