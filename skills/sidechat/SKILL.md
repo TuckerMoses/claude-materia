@@ -49,24 +49,24 @@ Working directory: <cwd>
 This session was spun off from another conversation to explore a tangent. The context above is a summary to orient you — read the codebase directly for details.
 ```
 
-### 4. Write the launcher script and launch
+### 4. Write the prompt file and launcher, then launch
 
-Write a self-cleaning launcher script with the prompt embedded in a **single-quoted heredoc** (prevents all shell expansion — safe regardless of prompt content):
+Write the composed prompt to a tmp file, then create a self-cleaning launcher script that reads from it. This avoids heredoc quoting issues with complex prompts.
+
+**Prompt file:** Write the composed prompt (from step 3) to `/tmp/sidechat-<topic>-<timestamp>.md`. Plain text, no escaping needed.
+
+**Launcher script:** `/tmp/sidechat-<topic>-<timestamp>.sh`
 
 ```bash
 #!/bin/bash
-PROMPT=$(cat << 'SIDECHAT_PROMPT_END'
-<composed prompt goes here>
-SIDECHAT_PROMPT_END
-)
+PROMPT_FILE="/tmp/sidechat-<topic>-<timestamp>.md"
 cd "<current working directory>"
-rm -f "$0"
+PROMPT=$(cat "$PROMPT_FILE")
+rm -f "$PROMPT_FILE" "$0"
 claude -n "sc-<topic>" "$PROMPT"
 ```
 
-Save to `/tmp/sidechat-<topic>-<timestamp>.sh` and make executable.
-
-Now decide **where** to launch it. Query the current tmux window's pane count and branch:
+Make the launcher executable. Now decide **where** to launch it — query the current tmux window's pane count and decide:
 
 ```bash
 PANE_COUNT=$(tmux display-message -p '#{window_panes}')
