@@ -131,7 +131,7 @@ Step 4: Compile audit report
 
 The trust-by-source rule scopes only to `<skill-directory>/defaults/reviewers/`. Env-declared pools, `--reviewers` overrides, and ad-hoc references all get audited.
 
-**Trust-by-source for bundled defaults — what this guarantees and what it doesn't.** Bundled defaults are trusted by *repo convention*: the audit step is skipped because the repo's review process is expected to enforce audit-passing at merge time, not at session time. The recommended authoring path is `/adversarial-review create-default` (5.5), which runs the auditor heuristics inline before writing the file — a default authored this way is audit-passing by construction. Hand-authored defaults (a contributor edits `defaults/reviewers/*.md` directly) are **author-responsible**: the contributor is on the hook for verifying audit-passing before merging, since the session-time pipeline will not catch a malformed default. This is a deliberate trade — zero session-time cost on the trusted hot path, with the contract enforced upstream.
+**Trust-by-source for bundled defaults — what this guarantees and what it doesn't.** Bundled defaults are trusted by *repo convention*: the audit step is skipped because the repo's review process is expected to enforce audit-passing at merge time, not at session time. The recommended authoring path is `/adversarial-review create-default` (5.5), which runs the auditor heuristics inline before writing the file — but this is a **point-in-time** check: the self-audit verifies a default against the auditor heuristics *current at authoring time*. When `agents/auditor.md` later evolves (new accept/reject signals, changed verdict logic), previously-authored defaults are **not** re-audited automatically; they remain trusted by repo convention, not by audit-being-fresh. Hand-authored defaults (a contributor edits `defaults/reviewers/*.md` directly) are **author-responsible**: the contributor is on the hook for verifying audit-passing before merging, since the session-time pipeline will not catch a malformed default. This is a deliberate trade — zero session-time cost on the trusted hot path; the audit-passing claim is point-in-time, with a maintenance obligation to re-run `create-default` (or a future `audit-defaults` maintenance subcommand) over existing defaults whenever `auditor.md` changes.
 
 **"Audited" includes cache-hits.** When 2.3 lists "Auditor verdict: reject" as a hard reject, that verdict can come from either a fresh auditor dispatch or a cache-hit on `(auditor_content_hash, agent_content_hash)`. A cached verdict *is* the audit result for that content pair until either input changes. There is no separate "stale cache" failure mode at the 2.3 level — content-hash keying makes cache invalidation automatic.
 
@@ -191,7 +191,7 @@ User override is additive by default. To replace a default with a custom version
 
 ### New system agent: `auditor.md`
 
-Joins `triage.md` and `fixer.md` as a third system agent. Runs on opus. Inputs: candidate agent file. The auditor's prompt body embeds the triage data-model description inline (the findings schema with source_trace shapes, severity calibration, and the gate JSON structure from 1.2 / Triage spec). When triage's schema changes, auditor's prompt is updated in lockstep — this couples them deliberately, avoiding a separate doc file. Outputs: verdict + signal-by-signal reasoning.
+Joins `triage.md` and `fixer.md` as a third system agent. Runs on opus. Inputs: candidate agent file. **`agents/triage.md`'s prompt body is the canonical declaration of the triage data-model schema** (findings schema with source_trace shapes, severity calibration, gate JSON structure from 1.2). Auditor's prompt body **mirrors** that schema declaration inline — it does not redeclare it independently. Treat any change to triage.md's schema declaration as requiring a matching edit to auditor.md, and vice versa: the two must move together. This couples them deliberately, avoiding a separate doc file. (Future work: a CI check or post-edit reminder could enforce this lockstep automatically.) Outputs: verdict + signal-by-signal reasoning.
 
 ---
 
@@ -276,6 +276,7 @@ Each source directory is walked non-recursively. Every `*.md` file at the top le
 | Starts with `./` or `../` | Cwd-relative path |
 | Starts with `~/` | Home-relative path |
 | Contains `/` (anywhere else) | Treated as path |
+| Contains `:` | Namespace-prefixed reference of the form `<namespace>:<name>`. The namespace must match a known source (`default`, `env`, `override`, `manual` per 4.3); the name resolves within that source's discovered candidates. Useful when referring to an already-discovered agent by the same string the audit report and output filenames use. |
 | Otherwise (bare name) | Resolved via traversal of `~/.claude/agents/` — find first `*.md` file matching the name |
 
 A resolved path can point at a file (single agent) or a directory (multi-agent source, walked per 3.4 — non-recursive). (Note: a directory reference can expand the candidate count significantly; the cost is made visible at the pre-audit summary in 3.6 before any auditor dispatch.)
@@ -330,7 +331,7 @@ The audit report (`review/agent-audit.md`) annotates each verdict as "from cache
 
 **Pre-audit summary at confirmation.** Before dispatching the auditor, the orchestrator computes the candidate count per source and the cache-miss count (how many would require fresh audit). At confirmation, the user sees this summary and can abort if the cost is unexpected. Format: `env: 12 candidates (3 require fresh audit). manual: 2 candidates (2 require fresh audit). default: 3 candidates (skip — trusted).`
 
-The summary is computed once before the initial confirmation prompt. Confirmation-time additions (per 4.1) audit immediately on supply with the auditor's verdict shown inline; the per-addition cost is surfaced as each reference is supplied. The cost-abort affordance applies to the initial summary; users adding references during confirmation see verdicts (and cache-hit/miss status) per addition.
+The summary is computed once before the initial confirmation prompt. Confirmation-time additions (per 4.1) audit immediately on supply with the auditor's verdict shown inline; the per-addition cost is surfaced as each reference is supplied. The cost-abort affordance applies to the initial summary; users adding references during confirmation see verdicts (and cache-hit/miss status) per addition. When a confirmation-time addition resolves to a directory (multi-agent source per 4.2), a brief per-batch summary is shown before dispatch — e.g., `manual addition <path> resolves to N candidates, M require fresh audit — proceed?` — preserving the cost-preview affordance for that path. Single-file additions skip the pre-batch summary and use the inline-verdict pattern unchanged.
 
 **Cache-invalidation property.** Any edit to `agents/auditor.md` (including formatting-only changes) changes its content hash, invalidating every cached verdict under the old auditor. Subsequent sessions re-pay the full audit cost across all sessions on next run. This is a deliberate trade — the alternative (extracting only heuristic-bearing portions for hashing) requires a stable extraction rule and adds maintenance complexity. Mitigation: include "auditor changed; full audit re-run" as a notice in the audit report when the auditor hash differs from the previous session's.
 
@@ -439,7 +440,7 @@ Flow:
 4. Precondition (suggest based on what the agent depends on)
 5. Severity guidance (propose finding types and severities from purpose)
 6. Body sections (What you check / What you do NOT check / How to report findings / Tone — generate drafts, iterate with author)
-7. Self-audit: run the full 2.6 rubric: signal list + verdict logic + signal-by-signal output format inline (Claude evaluating against the rubric in the same context as authoring)
+7. Self-audit: run the full 2.6 rubric: signal list + verdict logic + signal-by-signal output format inline (Claude evaluating against the rubric in the same context as authoring). This is a **point-in-time** check against the auditor heuristics current at authoring time — drift over time (when `auditor.md` evolves) is handled by repo conventions or a future `audit-defaults` maintenance subcommand, not by re-auditing on each session.
 8. On accept: write file to `skills/adversarial-review/defaults/reviewers/<name>.md`, bump `.claude-plugin/plugin.json` patch version, print diff summary, remind to commit
 9. On reject: explain failed signals, offer to revise rather than ship a default that wouldn't pass its own audit
 
@@ -481,7 +482,7 @@ System agents stay in `agents/`; reviewer defaults move to `defaults/reviewers/`
 | `defaults/reviewers/detail.md` | Move only. |
 | `agents/triage.md` | **Significant rewrite.** Add normalization role (1.1), `source_trace` per finding with three shapes (1.2), severity_guidance as hint (1.3), `interpretation_note` field. New JSON schema reflecting these additions. |
 | `agents/fixer.md` | Minor — confirm reads `findings[]` from triage's structured output (still works post-rewrite). Add note: fixer ignores `source_trace`/`interpretation_note`/`raw_extractions` (triage-internal fields). |
-| `agents/auditor.md` | **Brand new.** Must enumerate the 4 accept signals and 5 reject signals from 2.6 by name. Must apply the verdict logic from 2.6 verbatim. Output must follow the format template in 2.6 (signal-name + strength + reasoning + verdict line). The prompt body must include the triage data-model description (findings schema with source_trace shapes, severity calibration, gate JSON structure) inline per 2.6's "New system agent" block. |
+| `agents/auditor.md` | **Brand new.** Must enumerate the 4 accept signals and 5 reject signals from 2.6 by name. Must apply the verdict logic from 2.6 verbatim. Output must follow the format template in 2.6 (signal-name + strength + reasoning + verdict line). Must mirror `agents/triage.md`'s findings schema declaration inline (source_trace shapes, severity calibration, gate JSON structure) — `triage.md` is the canonical source. Treat any change to triage.md's schema as requiring a matching edit here, and vice versa. |
 
 ### 6.3 — SKILL.md rewrites
 
@@ -529,8 +530,9 @@ After execution and verification:
 6. Update claude-materia/CLAUDE.md.
 7. Update claude-materia/README.md.
 8. Bump .claude-plugin/plugin.json to 0.5.0.
-9. Post-execution verification: run coherence (single-pass via `run`
-   subcommand from new defaults) against the final SKILL.md. If it emits any
+9. Post-execution verification: run `default:coherence` (single-pass via `run`
+   subcommand, using the namespace-prefixed reference from 3.5) against the
+   final SKILL.md. If it emits any
    finding of severity `high` or `critical`, halt — do not proceed to step 10.
    Surface findings with the context that step 10 (MIGRATION.md deletion) is
    blocked pending resolution. Medium/low findings are advisory; log them and
