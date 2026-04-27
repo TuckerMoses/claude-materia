@@ -68,9 +68,11 @@ No `role` tag. No type discriminator. No opt-in flag. Pool inclusion is decided 
 |---|---|
 | `description` | empty string |
 | `required` | `true` |
-| `trigger` | `null` (only meaningful when `required: false`) |
+| `trigger` | no default — required when `required: false` (see 2.3) |
 | `precondition` | `"always met"` (agent runs every iteration) |
 | `severity_guidance` | `null` (triage uses own calibration per 1.3) |
+
+`trigger` has no default because the only case where it's meaningful is `required: false`, and in that case it is mandatory (per 2.3) — an absent trigger on an optional agent makes the agent uninvokable, which is a hard reject, not a soft warning.
 
 If an agent file has a `role` field, the skill ignores it. Other skills are free to use it; agents are now cross-skill-compatible.
 
@@ -82,7 +84,8 @@ If an agent file has a `role` field, the skill ignores it. Other skills are free
 | Missing or empty `name` | Orchestrator can't reference it |
 | Empty prompt body | Nothing to dispatch |
 | `precondition` references another agent by name | Loop self-regulation invariant |
-| Auditor verdict: reject | Semantic audit failure (skipped for bundled defaults) |
+| `required: false` without `trigger` | Optional agent with no way to be auto-included is uninvokable |
+| Auditor verdict: reject | Semantic audit failure (skipped for bundled defaults; cache-hit verdicts count) |
 
 **Name collisions are not rejects** — they're resolved by namespacing (see below).
 
@@ -90,31 +93,35 @@ If an agent file has a `role` field, the skill ignores it. Other skills are free
 
 - Missing `description` — pool listing sparse
 - Missing `precondition` — agent runs every iteration; can't self-regulate
-- `required: false` without `trigger` — agent can never auto-include
 - Unknown frontmatter fields — probable typo of a known field
 
 ### 2.5 — Audit pipeline at Phase 1 Step 3a
 
-Two-stage pipeline runs before pool confirmation:
+Four-step pipeline runs before pool confirmation (the term **Step** is used here to keep "Stage" reserved for the top-level A/B/C taxonomy in Topic 3):
 
 ```
-Stage 1: Pre-check (cheap, deterministic, runs on all candidates)
+Step 1: Pre-check (cheap, deterministic, runs on all candidates)
   - Parse frontmatter, check 2.3 structural rejects
   - Sanity-checks even bundled defaults haven't been corrupted
 
-Stage 2: Semantic audit (LLM-driven)
+Step 2: Semantic audit (LLM-driven, with caching per 3.6)
   - SKIP for candidates from <skill-directory>/defaults/reviewers/
-    → verdict: accept (trusted: bundled default)
+    → verdict: accept (trusted: bundled default by repo convention)
   - RUN for all other candidates
     → auditor evaluates 2.6 heuristics, emits verdict + reasoning
+    → cache lookup short-circuits on (auditor_hash, agent_hash) hit
 
-Stage 3: Soft warning attachment
+Step 3: Soft warning attachment
 
-Stage 4: Compile audit report
+Step 4: Compile audit report
   - Write `review/agent-audit.md`, present at pool confirmation
 ```
 
-The trust-by-source rule scopes only to `<skill-directory>/defaults/reviewers/`. User-configured pools, env-declared pools, and `--reviewers` overrides all get audited.
+The trust-by-source rule scopes only to `<skill-directory>/defaults/reviewers/`. Env-declared pools, `--reviewers` overrides, and ad-hoc references all get audited.
+
+**Trust-by-source for bundled defaults — what this guarantees and what it doesn't.** Bundled defaults are trusted by *repo convention*: the audit step is skipped because the repo's review process is expected to enforce audit-passing at merge time, not at session time. The recommended authoring path is `/adversarial-review create-default` (5.5), which runs the auditor heuristics inline before writing the file — a default authored this way is audit-passing by construction. Hand-authored defaults (a contributor edits `defaults/reviewers/*.md` directly) are **author-responsible**: the contributor is on the hook for verifying audit-passing before merging, since the session-time pipeline will not catch a malformed default. This is a deliberate trade — zero session-time cost on the trusted hot path, with the contract enforced upstream.
+
+**"Audited" includes cache-hits.** When 2.3 lists "Auditor verdict: reject" as a hard reject, that verdict can come from either a fresh auditor dispatch or a cache-hit on `(auditor_content_hash, agent_content_hash)`. A cached verdict *is* the audit result for that content pair until either input changes. There is no separate "stale cache" failure mode at the 2.3 level — content-hash keying makes cache invalidation automatic.
 
 ### 2.6 — Auditor heuristics (codified, not vibes)
 
@@ -209,18 +216,22 @@ The skill **always** has a position on what should run. The user always has fina
 
 ### 3.1 — Source taxonomy (additive, no replacement)
 
-| Source | Namespace | Trust | Behavior |
-|---|---|---|---|
-| `--reviewers <path>` invocation flag | `override` | Audited | Adds candidates from this path |
-| Environment-declared pool | `env` | Audited | Adds candidates from env-configured path |
-| Bundled defaults | `default` | Trusted | Adds candidates from `<skill-directory>/defaults/reviewers/` |
+Three sources, all additive. No source replaces another.
 
-All sources contribute additively. No source replaces another. To use only one source, prune the others at pool confirmation.
+| Source | Namespace | Trust | When scanned | How agents are picked up |
+|---|---|---|---|---|
+| Bundled defaults | `default` | Trusted (repo convention; see 2.5) | Always | Skill scans `<skill-directory>/defaults/reviewers/` |
+| Env-configured | `env` | Audited | Always (if env declares anything) | Env lists explicit paths the user wants always-included |
+| Ad-hoc references | `override` (via flag) / `manual` (confirmation-time) | Audited | Only when explicitly named | `--reviewers <ref>`, confirmation-time addition, or `run <ref>` resolves `<ref>` per the rules in 3.5 |
+
+**Key shift from prior drafts.** There is no "default user pool" auto-scanned from `~/.claude/agents/`. The only always-on sources are bundled defaults plus whatever the env declares. `~/.claude/agents/` is traversed *only* when the user explicitly references an agent by bare name (3.5). First-run audit cost is therefore bounded by user intent — only agents the user explicitly references get audited — not by directory contents.
+
+To use only one source, prune the others at pool confirmation.
 
 ### 3.2 — Bundled defaults shipped
 
 The skill ships `coherence`, `design`, `detail` at `<skill-directory>/defaults/reviewers/`. Three reasons:
-1. Zero-config UX matters — works the moment the plugin is installed.
+1. Zero-config UX matters — works the moment the plugin is installed, with no env configuration required.
 2. The three reviewers are good baseline content for any artifact.
 3. They serve as canonical examples of the preferred shape (reduces triage workload for users writing custom reviewers).
 
@@ -232,19 +243,29 @@ Not adding a fourth source like `.claude/adversarial-review/reviewers/` in cwd. 
 
 Each source directory is walked non-recursively. Every `*.md` file at the top level is a candidate; subdirectories are ignored. Subdirs can serve as user-managed staging areas for in-progress reviewers.
 
-### 3.5 — Source configuration
+### 3.5 — Source configuration and reference resolution
 
-| Source | Resolution |
+**Bundled defaults** resolve to `<skill-directory>/defaults/reviewers/`. Always scanned, trusted by repo convention (see 2.5).
+
+**Env-configured pools** are declared in `~/.claude/env/index.md` under `adversarial-review.reviewers_dir`. The value may be a single path or a list of paths. Each path is walked per 3.4 (non-recursive). If the env file is absent or doesn't declare this key, no env-configured pool is contributed — the skill simply runs with bundled defaults plus any ad-hoc references the user provides.
+
+**Ad-hoc references** are how the user names an additional agent at any of three entry points: the `--reviewers <ref>` invocation flag, confirmation-time additions (4.1), or the `run <ref>` subcommand (5.3). The same resolution rules apply at all three:
+
+| Pattern | Resolution |
 |---|---|
-| Bundled defaults | `<skill-directory>/defaults/reviewers/` — always scanned, trusted |
-| User pool | **Default: `~/.claude/agents/`** (canonical agent location). Env file at `~/.claude/env/index.md` may declare an alternative path or list of paths under `adversarial-review.reviewers_dir`. If declared, that's *the* user pool path(s). If not declared, the default applies. |
-| Invocation override | `--reviewers <path>` — additive; one more path for this run |
+| Starts with `/` | Absolute path |
+| Starts with `./` or `../` | Cwd-relative path |
+| Starts with `~/` | Home-relative path |
+| Contains `/` (anywhere else) | Treated as path |
+| Otherwise (bare name) | Resolved via traversal of `~/.claude/agents/` — find first `*.md` file matching the name |
 
-The "env replaces the default" semantic is **configuration with a sensible default**, not a precedence-chain replacement. Same pattern as `$EDITOR` defaulting to `vi`.
+A resolved path can point at a file (single agent) or a directory (multi-agent source, walked per 3.4 — non-recursive).
+
+The bare-name case is the only path on which `~/.claude/agents/` is touched. The skill does not auto-scan that directory; it only traverses it to resolve a name the user has explicitly typed.
 
 ### 3.6 — Audit caching (content-hash keyed)
 
-Auto-scanning `~/.claude/agents/` is only viable if audit cost is bounded. Solution: cache verdicts keyed on `(auditor_content_hash, agent_content_hash)`.
+Even with audit scope bounded by explicit user reference, repeated sessions against the same agents would re-pay LLM cost on every run. Solution: cache verdicts keyed on `(auditor_content_hash, agent_content_hash)`.
 
 ```
 Cache location: ~/.claude/skills/adversarial-review/audit-cache.json
@@ -266,7 +287,7 @@ Cache structure:
 }
 ```
 
-Pipeline integration (Stage 2 of 2.5's audit pipeline):
+Pipeline integration (Step 2 of 2.5's audit pipeline):
 
 ```
 For each candidate that passed pre-check:
@@ -276,10 +297,10 @@ For each candidate that passed pre-check:
   c. Cache lookup at audit-cache.json[auditor_hash][agent_hash]:
        HIT  → use cached verdict, mark "from cache" in audit report
        MISS → dispatch auditor, write result to cache
-  d. Apply verdict
+  d. Apply verdict (cache-hits count as audit verdicts per 2.5)
 ```
 
-Cost transformation: from O(sessions × agents) LLM calls to O(unique-content-versions × auditor-versions) LLM calls. Stable directories with stable auditor → effectively one audit per agent, ever.
+Cost transformation: from O(sessions × agents) LLM calls to O(unique-content-versions × auditor-versions) LLM calls. With the source model in 3.1 the audited set is already small (env-configured paths plus explicitly-referenced ad-hoc agents — bundled defaults skip outright); caching collapses repeat-cost on top of that. Stable references with a stable auditor → effectively one audit per agent, ever.
 
 Edge cases:
 - Cache file missing → create on first write
@@ -313,13 +334,15 @@ Phase 2: Loop
 
 ### 4.1 — Confirmation-time additions go through the audit pipeline
 
-During the Phase 1 confirmation step (before pool lock), the user can supply additional paths. Each new candidate runs through Stage 1 + Stage 2 of the audit pipeline (with caching). Auditor's verdict shown; user can accept or override.
+During the Phase 1 confirmation step (before pool lock), the user can supply additional references. Each reference resolves per the rules in 3.5 — it can be an absolute, cwd-relative, home-relative, or otherwise-pathy string, or a bare name resolved against `~/.claude/agents/`. Each resolved candidate runs through Step 1 + Step 2 of the audit pipeline (with caching per 3.6). Auditor's verdict shown; user can accept or override.
 
-### 4.2 — Path can be file or directory
+### 4.2 — Reference can resolve to file or directory
 
-User-supplied paths at confirmation:
-- File path (`*.md`) → single-agent source
-- Directory path → multi-agent source (non-recursive walk)
+A reference supplied at confirmation can resolve to:
+- A file path (`*.md`) → single-agent source
+- A directory path → multi-agent source (non-recursive walk per 3.4)
+
+Bare-name resolution always lands on a single `*.md` file (the first match in `~/.claude/agents/`). Path-form references can point at either.
 
 Principle of least surprise — point at one thing, get one thing.
 
@@ -352,27 +375,30 @@ The `add` and `remove` subcommands existed to manage agents inside a closed plug
 
 ### 5.1 — Drop `/adversarial-review add <agent-file>`
 
-End-users add reviewers via filesystem (drop a file in their user pool, e.g., `~/.claude/agents/`). No subcommand needed.
+End-users add reviewers either by reference at session start (`--reviewers <ref>` or confirmation-time addition, resolved per 3.5) or by declaring the path under `adversarial-review.reviewers_dir` in their env file for always-on inclusion. No subcommand needed.
 
 ### 5.2 — Drop `/adversarial-review remove <agent-name>`
 
 End-users remove via filesystem (delete from pool source) or per-session pruning at confirmation. No subcommand needed.
 
-### 5.3 — Keep `/adversarial-review run <agent-name> [path]`
+### 5.3 — Keep `/adversarial-review run <ref> [path]`
 
 Reframed as **scaffolded single-reviewer dispatch for rapid iteration during artifact development**. Behavior:
-- Runs same discovery + audit pipeline as full loop
+- Runs same discovery + audit pipeline as full loop, restricted to the agent identified by `<ref>`
 - Builds `ARTIFACT.md` (Phase 1 Step 1 logic)
 - Builds minimal flags file
-- Resolves agent name against discovered pool (shortest-unambiguous form, namespace disambiguation if collision)
+- Resolves `<ref>` per the rules in 3.5 (absolute / cwd-relative / home-relative / pathy / bare name against `~/.claude/agents/`)
+- If `<ref>` already corresponds to a discovered candidate from bundled defaults or env-configured pool (matched by namespace + name or by resolved path), the existing audit verdict is reused
 - Dispatches the named agent in single-pass mode (no triage, no fixer, no loop)
+
+Display in single-pass mode follows the same shortest-unambiguous-form rule as the full loop (just the agent name when unambiguous, namespaced form when not).
 
 Distinction vs raw Task dispatch: `run` provides the calling-convention scaffolding (ARTIFACT.md, flags, audit gate) that reviewers expect. Raw dispatch is always available as an escape hatch for users who explicitly want no ceremony.
 
 ### 5.4 — Update `argument-hint` frontmatter
 
 ```
-[subcommand] [args] — run <agent-name> [path], create-default (author mode), or just [artifact-path] for the full loop
+[subcommand] [args] — run <ref> [path], create-default (author mode), or just [artifact-path] for the full loop
 ```
 
 ### 5.5 — Add `/adversarial-review create-default` (source-repo-gated authoring)
@@ -434,15 +460,15 @@ System agents stay in `agents/`; reviewer defaults move to `defaults/reviewers/`
 
 Sections to rewrite:
 
-1. **Phase 1 Step 3** — replace "build agent pool from skill's `agents/`" with the discovery + audit pipeline (Stages 1-4 from 2.5/3.6) + recommendation (3.1-3.5).
+1. **Phase 1 Step 3** — replace "build agent pool from skill's `agents/`" with the discovery + audit pipeline (Steps 1-4 from 2.5, with caching per 3.6) + recommendation (3.1-3.5).
 2. **Phase 1 Step 4** — pool confirmation now operates on audit-cleared candidates with namespace display, includes 4.1-4.4 mechanics. Pool locks after confirmation per 4.5.
 3. **Phase 2** — minor updates referencing triage's expanded role (extraction + normalization + source traces).
-4. **Adding a Reviewer** section — **delete entirely.** Replaced by short paragraph: "To add a reviewer, drop a `*.md` file in your pool source directory. The skill discovers and audits it on the next session."
+4. **Adding a Reviewer** section — **delete entirely.** Replaced by short paragraph: "To add a reviewer at session start, pass `--reviewers <ref>` or supply it at the confirmation prompt. To make a reviewer always-on, declare its path in `~/.claude/env/index.md` under `adversarial-review.reviewers_dir`. The skill discovers and audits it on the next session."
 5. **Removing a Reviewer** section — **delete entirely.** Same treatment.
 6. **`## Environment` section** — update to declare the source-config contract (`adversarial-review.reviewers_dir`).
 7. **Frontmatter** — update `argument-hint` per 5.4.
 8. **Subcommands list** at top — remove `add` and `remove` entries; add `create-default`.
-9. **New section: "Pool sources and namespacing"** — document the four namespaces (default/env/override/manual), how discovery resolves them, how to configure via env.
+9. **New section: "Pool sources and namespacing"** — document the four namespaces (default/env/override/manual), how discovery resolves them, how ad-hoc references resolve (3.5), and how to configure the env path.
 10. **New section: "create-default (author mode)"** — document the source-repo-gated authoring subcommand per 5.5.
 
 ### 6.4 — Repo-level documentation
