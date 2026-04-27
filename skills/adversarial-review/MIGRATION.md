@@ -330,6 +330,8 @@ The audit report (`review/agent-audit.md`) annotates each verdict as "from cache
 
 **Pre-audit summary at confirmation.** Before dispatching the auditor, the orchestrator computes the candidate count per source and the cache-miss count (how many would require fresh audit). At confirmation, the user sees this summary and can abort if the cost is unexpected. Format: `env: 12 candidates (3 require fresh audit). manual: 2 candidates (2 require fresh audit). default: 3 candidates (skip — trusted).`
 
+The summary is computed once before the initial confirmation prompt. Confirmation-time additions (per 4.1) audit immediately on supply with the auditor's verdict shown inline; the per-addition cost is surfaced as each reference is supplied. The cost-abort affordance applies to the initial summary; users adding references during confirmation see verdicts (and cache-hit/miss status) per addition.
+
 **Cache-invalidation property.** Any edit to `agents/auditor.md` (including formatting-only changes) changes its content hash, invalidating every cached verdict under the old auditor. Subsequent sessions re-pay the full audit cost across all sessions on next run. This is a deliberate trade — the alternative (extracting only heuristic-bearing portions for hashing) requires a stable extraction rule and adds maintenance complexity. Mitigation: include "auditor changed; full audit re-run" as a notice in the audit report when the auditor hash differs from the previous session's.
 
 ---
@@ -350,9 +352,13 @@ Phase 1: Setup
   Step 5: Write flags
 
 Phase 2: Loop
-  Iterations run with the LOCKED pool
-  Triage's `next_reviewers` selects WHICH agents from the locked pool
-  run next iteration. Pool itself doesn't change.
+  Iterations run with a LOCKED source set
+    ←── 4.5: no new agents discovered, audited, or added
+  Pool MEMBERSHIP may shift across iterations:
+    - triage's `precondition_evaluations` promotes dormant candidates
+      whose preconditions become satisfied as the artifact evolves
+    - triage's `next_reviewers` selects which currently-eligible agents
+      run next iteration
 ```
 
 ### 4.1 — Confirmation-time additions go through the audit pipeline
