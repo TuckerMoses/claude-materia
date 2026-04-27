@@ -15,6 +15,16 @@ Working notes capturing ratified design decisions for the migration to injectabl
 
 ---
 
+## Glossary
+
+Terms used throughout this document:
+
+- **`<skill-directory>`** — resolves at runtime to the directory containing the running skill's SKILL.md. In source: `/Users/johnmoses/claude-materia/skills/adversarial-review/`. At runtime under a plugin install: the resolved skill path. The trust-by-source check (2.5) compares against this resolved path.
+
+For consistency, this document uses `<skill-directory>` everywhere. Any earlier `<skill>` references should be read as `<skill-directory>`.
+
+---
+
 ## Topic 1 — Triage as normalizer (RATIFIED)
 
 The reviewer/triage contract shifts: reviewers may emit free-form output; triage normalizes it into the loop's structured findings format. Pattern: contract enforcement at the *consumer*, not the *producer*.
@@ -31,7 +41,7 @@ Triage emits a `source_trace` per finding using one of three shapes:
 - **`region`** — reviewer name + range pointer (e.g., "paragraphs 2-3", "section 'Coupling'"). For multi-statement findings or findings whose context spans a region. Medium audit value.
 - **`synthesis`** — reviewer name + note explaining derivation. For holistic findings drawn from the overall thrust, or absence-based observations. Lowest audit value but better than no trace.
 
-Every finding also has an `interpretation_note` field (always present, may be empty for clean quote cases) where triage explains *why* this trace shape was chosen if non-trivial.
+Every finding also has an `interpretation_note` field (REQUIRED for `region` and `synthesis` shapes; OPTIONAL for `quote` — empty string is acceptable when the quoted text appears verbatim within a single reviewer-output paragraph). Non-empty notes explain why the trace shape was chosen.
 
 Reviewer output is preserved verbatim per-iteration in `review/iterations/<N>/<reviewer-name>-output.md`. The trace is a pointer into that file, not a duplicate of it.
 
@@ -95,6 +105,8 @@ If an agent file has a `role` field, the skill ignores it. Other skills are free
 - Missing `precondition` — agent runs every iteration; can't self-regulate
 - Unknown frontmatter fields — probable typo of a known field
 
+Soft warnings do not affect pool inclusion. A soft-warned agent is fully audit-cleared and proceeds into Stage B's recommendation logic identically to a clean agent. Warnings are surfaced alongside the agent at confirmation for user awareness — they don't gate inclusion.
+
 ### 2.5 — Audit pipeline at Phase 1 Step 3a
 
 Four-step pipeline runs before pool confirmation (the term **Step** is used here to keep "Stage" reserved for the top-level A/B/C taxonomy in Topic 3):
@@ -108,7 +120,7 @@ Step 2: Semantic audit (LLM-driven, with caching per 3.6)
   - SKIP for candidates from <skill-directory>/defaults/reviewers/
     → verdict: accept (trusted: bundled default by repo convention)
   - RUN for all other candidates
-    → auditor evaluates 2.6 heuristics, emits verdict + reasoning
+    → auditor evaluates the full 2.6 rubric: signal list + verdict logic + signal-by-signal output format, emits verdict + reasoning
     → cache lookup short-circuits on (auditor_hash, agent_hash) hit
 
 Step 3: Soft warning attachment
@@ -179,7 +191,7 @@ User override is additive by default. To replace a default with a custom version
 
 ### New system agent: `auditor.md`
 
-Joins `triage.md` and `fixer.md` as a third system agent. Runs on opus. Inputs: candidate agent file + triage's data model description. Outputs: verdict + signal-by-signal reasoning.
+Joins `triage.md` and `fixer.md` as a third system agent. Runs on opus. Inputs: candidate agent file. The auditor's prompt body embeds the triage data-model description inline (the findings schema with source_trace shapes, severity calibration, and the gate JSON structure from 1.2 / Triage spec). When triage's schema changes, auditor's prompt is updated in lockstep — this couples them deliberately, avoiding a separate doc file. Outputs: verdict + signal-by-signal reasoning.
 
 ---
 
@@ -249,6 +261,13 @@ Each source directory is walked non-recursively. Every `*.md` file at the top le
 
 **Env-configured pools** are declared in `~/.claude/env/index.md` under `adversarial-review.reviewers_dir`. The value may be a single path or a list of paths. Each path is walked per 3.4 (non-recursive). If the env file is absent or doesn't declare this key, no env-configured pool is contributed — the skill simply runs with bundled defaults plus any ad-hoc references the user provides.
 
+**Edge cases for env-declared paths** (mirroring 3.6's edge cases):
+- Path doesn't exist → warn at discovery, exclude from sources, continue.
+- Path exists but is a file (not directory) → treat as single-file source (most charitable), or warn and skip if unreadable.
+- Empty directory → warn ("env declares X but found no `*.md` files"), continue.
+- Malformed YAML value → warn and skip that entry.
+- All warnings surfaced at confirmation alongside the candidate list, so silent zero-contribution is impossible.
+
 **Ad-hoc references** are how the user names an additional agent at any of three entry points: the `--reviewers <ref>` invocation flag, confirmation-time additions (4.1), or the `run <ref>` subcommand (5.3). The same resolution rules apply at all three:
 
 | Pattern | Resolution |
@@ -259,7 +278,7 @@ Each source directory is walked non-recursively. Every `*.md` file at the top le
 | Contains `/` (anywhere else) | Treated as path |
 | Otherwise (bare name) | Resolved via traversal of `~/.claude/agents/` — find first `*.md` file matching the name |
 
-A resolved path can point at a file (single agent) or a directory (multi-agent source, walked per 3.4 — non-recursive).
+A resolved path can point at a file (single agent) or a directory (multi-agent source, walked per 3.4 — non-recursive). (Note: a directory reference can expand the candidate count significantly; the cost is made visible at the pre-audit summary in 3.6 before any auditor dispatch.)
 
 The bare-name case is the only path on which `~/.claude/agents/` is touched. The skill does not auto-scan that directory; it only traverses it to resolve a name the user has explicitly typed.
 
@@ -292,7 +311,7 @@ Pipeline integration (Step 2 of 2.5's audit pipeline):
 ```
 For each candidate that passed pre-check:
   a. SKIP if source is bundled defaults (trusted)
-  b. Compute auditor_hash = SHA-256(<skill>/agents/auditor.md)
+  b. Compute auditor_hash = SHA-256(<skill-directory>/agents/auditor.md)
      Compute agent_hash   = SHA-256(<candidate-file>)
   c. Cache lookup at audit-cache.json[auditor_hash][agent_hash]:
        HIT  → use cached verdict, mark "from cache" in audit report
@@ -308,6 +327,10 @@ Edge cases:
 - Concurrent sessions → both audit, last writer wins, verdicts identical anyway
 
 The audit report (`review/agent-audit.md`) annotates each verdict as "from cache" or "fresh audit" for provenance.
+
+**Pre-audit summary at confirmation.** Before dispatching the auditor, the orchestrator computes the candidate count per source and the cache-miss count (how many would require fresh audit). At confirmation, the user sees this summary and can abort if the cost is unexpected. Format: `env: 12 candidates (3 require fresh audit). manual: 2 candidates (2 require fresh audit). default: 3 candidates (skip — trusted).`
+
+**Cache-invalidation property.** Any edit to `agents/auditor.md` (including formatting-only changes) changes its content hash, invalidating every cached verdict under the old auditor. Subsequent sessions re-pay the full audit cost across all sessions on next run. This is a deliberate trade — the alternative (extracting only heuristic-bearing portions for hashing) requires a stable extraction rule and adds maintenance complexity. Mitigation: include "auditor changed; full audit re-run" as a notice in the audit report when the auditor hash differs from the previous session's.
 
 ---
 
@@ -355,17 +378,15 @@ Principle of least surprise — point at one thing, get one thing.
 | Env pool | `env` |
 | Bundled defaults | `default` |
 
-Within `manual`, name collisions get numeric suffix: `manual:coherence`, `manual:coherence-2`. Rare; don't preemptively over-engineer.
+Within the `manual` namespace, duplicate references (same agent supplied twice in one confirmation) are deduplicated — the user's intent is interpreted as "include this agent," not "run it twice." Cross-source collisions (e.g., `default:coherence` and `manual:coherence`) still coexist as distinct agents per 2.3.
 
 ### 4.4 — Pruning is per-session only
 
 User pruning at confirmation is a per-session decision. No state persists across sessions. No `.disabled` markers, no permanent disable mechanism. If repeated pruning of the same default emerges as a pattern, future v2 candidate is `adversarial-review.disable_defaults: [coherence]` env field. Not in v1.
 
-### 4.5 — Pool is locked after Phase 1 confirmation
+### 4.5 — Pool source set is locked after Phase 1 confirmation; pool *membership* may be reevaluated each iteration
 
-Once confirmed, the pool is sealed for the rest of the session. No mid-loop additions or removals. Triage's `next_reviewers` controls *which* pool agents run *next iteration*, but only from the already-locked pool.
-
-The lock is what keeps iteration history coherent — drift detection, precondition tracking, and `next_reviewers` evaluation all assume a stable pool. Loosening this is a real design change, deferred to future v2 if real demand emerges.
+Once confirmed, no new agents can be discovered, audited, or added — the set of source files is sealed. But within that locked set, triage's `precondition_evaluations` may promote dormant candidates (those that didn't run in iteration 1 because their preconditions weren't met) into the active roster as the artifact evolves. This preserves the audit-cost invariant the lock was designed to protect (no mid-loop LLM dispatches for new audits) without freezing the iteration-1 view of which agents apply. Mid-loop additions of *new* agent sources remain a future enhancement; they would require both new audit dispatches and reevaluation of iteration history coherence.
 
 ---
 
@@ -412,7 +433,7 @@ Flow:
 4. Precondition (suggest based on what the agent depends on)
 5. Severity guidance (propose finding types and severities from purpose)
 6. Body sections (What you check / What you do NOT check / How to report findings / Tone — generate drafts, iterate with author)
-7. Self-audit: run the auditor heuristics from 2.6 inline (Claude evaluating against the rubric in the same context as authoring)
+7. Self-audit: run the full 2.6 rubric: signal list + verdict logic + signal-by-signal output format inline (Claude evaluating against the rubric in the same context as authoring)
 8. On accept: write file to `skills/adversarial-review/defaults/reviewers/<name>.md`, bump `.claude-plugin/plugin.json` patch version, print diff summary, remind to commit
 9. On reject: explain failed signals, offer to revise rather than ship a default that wouldn't pass its own audit
 
@@ -454,7 +475,7 @@ System agents stay in `agents/`; reviewer defaults move to `defaults/reviewers/`
 | `defaults/reviewers/detail.md` | Move only. |
 | `agents/triage.md` | **Significant rewrite.** Add normalization role (1.1), `source_trace` per finding with three shapes (1.2), severity_guidance as hint (1.3), `interpretation_note` field. New JSON schema reflecting these additions. |
 | `agents/fixer.md` | Minor — confirm reads `findings[]` from triage's structured output (still works post-rewrite). Add note: fixer ignores `source_trace`/`interpretation_note`/`raw_extractions` (triage-internal fields). |
-| `agents/auditor.md` | **Brand new.** Heuristics from 2.6 (4 accept signals, 5 reject signals). Verdict logic. Output format with signal-by-signal reasoning. |
+| `agents/auditor.md` | **Brand new.** Must enumerate the 4 accept signals and 5 reject signals from 2.6 by name. Must apply the verdict logic from 2.6 verbatim. Output must follow the format template in 2.6 (signal-name + strength + reasoning + verdict line). The prompt body must include the triage data-model description (findings schema with source_trace shapes, severity calibration, gate JSON structure) inline per 2.6's "New system agent" block. |
 
 ### 6.3 — SKILL.md rewrites
 
@@ -486,10 +507,12 @@ Sections to rewrite:
 
 After execution and verification:
 - Delete `skills/adversarial-review/MIGRATION.md` (transient working file, this document).
-- Verify session snapshot logic in `skills/adversarial-review/sessions/` still works against the new pool location (it copies discovered agents per-session — should be source-agnostic).
-- Confirm no other file references `<skill>/agents/coherence.md` etc. directly.
+- Verify the per-session agent snapshot logic. Snapshot semantics post-migration: the per-session agent snapshot copies the resolved-and-confirmed pool (output of Stage A+B+C) into `sessions/<id>/agents/`. Filenames use namespace-prefixed form: `default__coherence.md`, `manual__custom-thing.md`, etc. — matching the output-file naming convention from 2.3. This snapshot reflects the actual locked pool, not source directory contents. Verify by: (a) `grep -r 'agents/' skills/adversarial-review/sessions/` to confirm no hardcoded reviewer-pool path remains in the snapshot logic; (b) reading the snapshot code path and confirming pool location is derived from runtime discovery, not a literal string.
+- Confirm no other file references `<skill-directory>/agents/coherence.md` etc. directly.
 
 ### 6.7 — Execution sequence
+
+**Atomicity contract**: execute the sequence on a fresh git branch (e.g., `migration/injectable-reviewers`). Each step's changes are staged but not committed until step 9 verification passes. On any failure during steps 1-8, do not commit — surface the failure to the user, leave the working tree as-is for inspection. Step 10 (MIGRATION.md deletion) only happens after step 9 passes per its specified criterion.
 
 ```
 1. Create defaults/reviewers/ directory; move three reviewer files.
@@ -500,9 +523,13 @@ After execution and verification:
 6. Update claude-materia/CLAUDE.md.
 7. Update claude-materia/README.md.
 8. Bump .claude-plugin/plugin.json to 0.5.0.
-9. Post-execution verification: dispatch coherence reviewer (from new
-   defaults/reviewers/) against the final SKILL.md to verify implementation
-   matches plan.
+9. Post-execution verification: run coherence (single-pass via `run`
+   subcommand from new defaults) against the final SKILL.md. If it emits any
+   finding of severity `high` or `critical`, halt — do not proceed to step 10.
+   Surface findings with the context that step 10 (MIGRATION.md deletion) is
+   blocked pending resolution. Medium/low findings are advisory; log them and
+   proceed. Always preserve coherence's output at
+   `review/post-migration-verification.md` regardless of outcome.
 10. Delete MIGRATION.md.
 ```
 
@@ -510,6 +537,6 @@ After execution and verification:
 
 ## Open architectural points (surfaced, deferred)
 
-- Mid-loop pool modification (adding/removing agents during Phase 2). Deferred to future enhancement; pool is locked after Phase 1 confirmation in v1.
+- Mid-loop pool modification (adding/removing *new agent sources* during Phase 2). Deferred to future enhancement; the pool source set is locked after Phase 1 confirmation in v1, though pool *membership* may shift via precondition reevaluation per 4.5.
 - Permanent disable mechanism for unwanted defaults (`adversarial-review.disable_defaults: [coherence]` env field). Deferred until repeated pruning of same default emerges as a real friction pattern.
 - A `/adversarial-review audit <file>` subcommand that runs the auditor against a candidate without adding it to a pool. Useful for authors and curious users; not required for v1.
