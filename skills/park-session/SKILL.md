@@ -17,7 +17,7 @@ The skill never deletes anything automatically. Every entry leaves the registry 
 | `init` | Configure the destination, layout, and section structure. Run once before first park (or to reconfigure). |
 | `unpark <session-id>` | Remove an entry. Confirmation prompt before deletion. |
 | `list` | Show all parked entries with ages and sections. Read-only. |
-| `audit` | Walk entries oldest-first, prompting keep/unpark/skip on each. |
+| `audit` | Walk entries oldest-first, prompting keep/unpark/skip/quit on each. |
 
 If the user's intent is ambiguous, default to `park`.
 
@@ -29,42 +29,62 @@ Read the local config at `~/.claude/plugins/data/claude-materia-claude-materia/p
 
 ### 2. Derive the current session ID
 
-Claude Code does not expose the session ID via environment variable. Derive it from the active transcript file:
+Claude Code does not expose the session ID via environment variable. Derive it from the active transcript file.
+
+**Canonical cwd derivation (deterministic, single mechanism):** the cwd Claude Code was invoked from for this session is read by scanning the most recent project-transcript JSONL events for a `cwd` field. Transcript events are the chosen mechanism because (a) they are persisted to disk so they survive system-reminder compaction on long sessions, (b) the schema includes the invocation cwd on every event that carries one, and (c) the most-recent event's cwd is authoritative even if the user `cd`'d before invoking Claude Code (the in-process invocation cwd is what wrote the events). The session-start system reminder is **not** used as the primary source because (i) it can be compacted away on long sessions, and (ii) it is plain text whose format is undocumented and subject to change.
 
 ```bash
-# Canonical cwd: the cwd Claude Code was invoked from for this session
-# (NOT the bash tool's current cwd — the Claude Code Bash tool resets cwd between
-# calls, so `pwd` in a fresh bash invocation is unreliable. Read the cwd from the
-# system reminder at session start, or from a transcript event's `cwd` field).
-# Mid-session `cd` does not change the slug.
-# Project slug encoding: cwd with / replaced by - and a leading -
-session_cwd="<cwd Claude Code was invoked from>"
+# Step 2a: find the candidate project directory.
+# Claude Code stores transcripts under ~/.claude/projects/<slug>/<session-id>.jsonl
+# where <slug> is the invocation cwd with `/` replaced by `-` and a leading `-`.
+# We don't yet know the slug, so locate the most recently modified project dir as a
+# starting probe.
+recent_proj=$(ls -dt ~/.claude/projects/*/ 2>/dev/null | head -1)
+
+# Step 2b: read the cwd from the most recent transcript event that carries one.
+# Every project dir's most recent jsonl is one of this Claude Code instance's
+# candidates; jq pulls the last cwd field across that file.
+recent_jsonl=$(ls -t "${recent_proj}"*.jsonl 2>/dev/null | head -1)
+session_cwd=$(jq -r 'select(.cwd != null) | .cwd' "$recent_jsonl" 2>/dev/null | tail -1)
+
+# Step 2c: derive the slug from the cwd.
+if [ -z "$session_cwd" ]; then
+  # Fallback: ask the user. Do not use pwd — the bash tool's cwd is unreliable.
+  echo "unable to derive session cwd from transcript events; please supply the absolute path Claude Code was invoked from" >&2
+  exit 1
+fi
 slug=$(printf '%s' "$session_cwd" | sed 's|/|-|g')
-# Find the most recently modified transcript in the project's session dir
+slug="-${slug#-}"  # ensure leading dash, strip duplicate if cwd already started with /
+
+# Step 2d: find the most recently modified transcript in the project's session dir.
 ls -t ~/.claude/projects/${slug}/*.jsonl 2>/dev/null | head -1
 ```
 
-The basename without `.jsonl` is the session ID.
+The basename without `.jsonl` is the session ID. Mid-session `cd` does not change the slug — the invocation cwd is what indexes the transcript directory.
 
-**Concurrent-session disambiguation (probe-and-grep fallback):** if the project dir contains two or more transcripts whose mtimes differ by less than 60 seconds, the mtime trick is ambiguous. Use this fallback. It exploits the fact that Claude Code logs every bash tool invocation (the literal command string, including arguments) into the current session's JSONL transcript. Issue a bash command containing a unique probe string, then grep the project's transcripts for that probe — the only transcript that contains it is this session's:
+**Concurrent-session disambiguation (probe-and-grep fallback):** compute the time delta between the most-recently-modified transcript in the project dir and the second-most-recently-modified transcript. If that delta is **strictly less than 60 seconds** (i.e., the top two are nearly tied), the mtime trick is ambiguous and the fallback below applies. With three or more transcripts, only the top-two delta matters — older transcripts cannot be the current session. (60 seconds reflects the worst-case interval over which two sequential session starts could plausibly overlap; shorter thresholds risk false negatives — probe-and-grep skipped when sessions are actually concurrent — and longer ones impose probe latency on sequential parks.)
+
+The fallback exploits the fact that Claude Code logs every bash tool invocation (the literal command string, including arguments) into the current session's JSONL transcript. Issue a bash command containing a unique probe string, then grep the project's transcripts for that probe — the only transcript that contains it is this session's:
 
 ```bash
 probe="park-probe-$(uuidgen)"
 echo "$probe" > /dev/null    # output discarded; the bash invocation itself is what gets logged to the JSONL transcript
-sleep 1                       # allow the harness to flush the bash event into the JSONL transcript
+sleep 1                       # initial flush wait; succeeds in the common case
 grep -l "$probe" ~/.claude/projects/${slug}/*.jsonl
 ```
 
 Failure-mode handling for the probe-and-grep:
-- **Zero matches** (transcript not yet flushed, or harness schema changed): wait 2 seconds and retry the grep once. If still zero, fail loudly with `unable to derive session ID via probe-and-grep — Claude Code transcript schema may have changed; please supply the session ID directly` and ask the user for the session ID.
+- **Zero matches** (transcript not yet flushed, or harness schema changed): wait 2 additional seconds and retry the grep once (the 2s retry handles transient flush delays beyond the 1s common case). If still zero, fail loudly with `unable to derive session ID via probe-and-grep — Claude Code transcript schema may have changed; please supply the session ID directly` and ask the user for the session ID.
 - **Exactly one match**: that file is this session's transcript. Proceed.
-- **More than one match** (probe collision — implausible if `uuidgen` succeeded, possible if a weaker fallback was used): fail loudly with `probe-and-grep matched multiple transcripts; refusing to guess. Please supply the session ID directly`.
+- **More than one match**: a real probe collision is implausible because every supported `uuidgen` source produces a strong UUID (see Edge cases — `uuidgen` not available; if none of `uuidgen`, `python3 -c uuid`, or `/proc/sys/kernel/random/uuid` is available, the skill fails loudly rather than inventing a weaker probe — collision risk is unacceptable on a destructive ID-resolution path). Multiple matches therefore indicate cross-contamination of project transcripts; fail loudly with `probe-and-grep matched multiple transcripts; refusing to guess. Please supply the session ID directly`.
 
 **Known fragility:** this fallback depends on Claude Code logging bash tool invocations verbatim into the per-session JSONL transcript. This is undocumented internal harness behavior and may break across Claude Code versions. The fail-loud guards above are the defense.
 
 ### 3. Read the transcript tail and draft entry fields
 
-Read the **last 40 lines** of the transcript JSONL file (`tail -40`). Each line is a self-contained JSON event of varying type (user message, assistant message, tool use, tool result, system, meta). Skip tool-result events larger than 4 KB (typically large file reads or command output) when synthesizing — they bloat the read budget without adding signal. Synthesize:
+Process the transcript tail in this order: (a) read the last 40 lines of the transcript JSONL file (`tail -40`); (b) filter out tool-result events larger than 4 KB (typically large file reads or command output) — they bloat the read budget without adding signal; (c) within the filtered set, count **substantive events** as the union of (i) `tool_use` events and (ii) assistant events whose text content exceeds 200 chars — each JSONL line counts at most once; (d) if the count is below 3, apply the low-confidence prefix per Edge cases. If the filtered set yields fewer than 3 substantive events, optionally read an additional 40 lines and re-filter, stopping after at most 120 lines total.
+
+Synthesize from the filtered set:
 
 - **Context**: one line describing what the user was working on. Be concrete ("debugging the auto-memory facelift on dotfiles repo"), not vague ("investigating stuff").
 - **Next move**: the first concrete action to take when this session is resumed. The most important field — without it, resumption requires re-reading the whole transcript. Example: "re-run `pytest tests/test_memory.py::test_facelift_idempotent` and inspect the diff in `memory/MEMORY.md`."
@@ -77,16 +97,20 @@ Read the `context` field from the local config on every park. If it contains dir
 
 If the config has no `sections:` array (flat layout), skip classification — the entry will be appended directly inside the fenced block with no sub-section. Proceed to step 5.
 
-Otherwise, iterate the `sections:` array in declaration order. The first entry whose `cwd_glob` matches the current cwd wins. Match order is **declaration order, first match wins** — no longest-match or specificity heuristics. The user's last entry must have `cwd_glob: "*"` to serve as catch-all (init refuses to write a sub-section config that lacks it; see Validation rules).
+Otherwise, iterate the `sections:` array in declaration order. The first entry whose `cwd_glob` matches the current cwd wins. Match order is **declaration order, first match wins** — no longest-match or specificity heuristics. The last entry is guaranteed to be `cwd_glob: "*"` (the catch-all) because init normalizes the array on write — it appends `name: Other, cwd_glob: "*"` itself if the user-supplied or derived array does not already end with one. The runtime `park` workflow may rely on the catch-all being present.
 
 **Glob semantics (pinned for stability across invocations):**
-- Matcher: Python `pathlib.PurePosixPath(cwd).match(glob)`. If Python is unavailable, fall back to `fnmatch.fnmatch` semantics (a literal `**` is treated as `*` under fnmatch — accept this degradation and warn).
+- Matcher: Python 3.13+ `pathlib.PurePosixPath(cwd).full_match(glob)`. `full_match` is the only stdlib matcher that supports `**` as zero-or-more segments and matches the whole path (not just the tail). **No fallback.** If Python 3.13+ is not available, fail loudly with `glob classification requires Python 3.13+ (pathlib.PurePosixPath.full_match); please install python3.13 or newer`. Do not silently degrade to `fnmatch` or any other matcher — different glob semantics would silently re-route cwds to "Other" and break the load-bearing classification-stability invariant. (See Dependencies below.)
 - Tilde expansion: expand the **glob** to `$HOME` before matching (do not un-expand the cwd). The cwd is always passed as its absolute, tilde-free form.
-- `**` semantics: matches **zero or more** path segments. Examples (with `$HOME=/Users/u`):
+- `**` semantics under `full_match`: matches **zero or more** path segments. Examples (with `$HOME=/Users/u`):
   - `~/workspaces/*/**` matches `/Users/u/workspaces/foo`, `/Users/u/workspaces/foo/bar`, `/Users/u/workspaces/foo/bar/baz`. Does not match `/Users/u/workspaces`.
   - `~/projects/*` matches `/Users/u/projects/foo` only (single segment).
   - `*` matches any cwd (catch-all).
-- Case sensitivity: matches the underlying filesystem (case-sensitive on Linux, case-insensitive on macOS HFS+/APFS-default).
+- Case sensitivity: matches the underlying filesystem (case-sensitive on Linux, case-insensitive on macOS HFS+/APFS-default). Pass `case_sensitive=` explicitly if overriding.
+
+## Dependencies
+
+- **Python 3.13+** is required for `park` (glob classification via `pathlib.PurePosixPath.full_match`) and as the `uuidgen` fallback for the probe-and-grep path. The skill fails loudly if Python 3.13+ is not available rather than silently degrading.
 
 ### 5. Render the entry
 
@@ -108,9 +132,9 @@ Show the user:
 - The full rendered entry
 - The drafted context and next-move (these are auto-generated; user can edit)
 
-Prompt: `Confirm, edit, or cancel?` On `edit`, allow modifications to **context**, **next-move**, and (for sub-section layouts) **sub-section assignment** only. Date, origin, and session-ID are derived and cannot be edited inline — re-run park if they are wrong. For flat layout, sub-section assignment is not offered.
+Prompt: `Confirm, edit, or cancel?` On `edit`, allow modifications to **context**, **next-move**, and (for sub-section layouts) **sub-section assignment** only. Date, origin, and session-ID are derived and cannot be edited inline. Remediation differs by field: **date** is derived from the system-reminder `currentDate` and re-running park on a different day will produce a different date. **Session-ID** is derived deterministically per session — re-running park always lands on the same answer (or fails the same way); if it is wrong, the slug or probe-and-grep step misfired, so supply the session ID directly per the failure-mode handling in step 2. **Origin** is descriptive metadata derived from the invocation cwd — if it is wrong, edit the entry in the destination file by hand after writing. For flat layout, sub-section assignment is not offered.
 
-On confirm, append the entry inside the marker-fenced block in the destination file (see "Marker-fenced section" below). For sub-section layouts, append into the appropriate sub-section. For flat layout, append directly inside the fences (treat the entire fenced block as the implicit sub-section). Most-recent entries go at the **top** of their (sub-)section (reverse chronological).
+On confirm, apply the **Fence-block mutation procedure** (see Marker-fenced section) to insert the entry. For sub-section layouts, insert into the appropriate sub-section. For flat layout, insert directly inside the fences (treat the entire fenced block as the implicit sub-section). Most-recent entries go at the **top** of their (sub-)section (reverse chronological).
 
 ### 7. Audit nudge (conditional)
 
@@ -118,8 +142,8 @@ After writing, count entries older than the staleness threshold (default 30 days
 
 **Age computation procedure:**
 1. For each entry in the fenced block, parse the date from its header line (the `parked YYYY-MM-DD` suffix).
-2. Compute `age_days = (today's local date) − (parsed date)` — both as calendar dates, not timestamps. Reference is today's local date at park time (Claude's `currentDate` from the system reminder).
-3. Entries with missing or unparseable date suffixes (e.g., user hand-edited the header) are treated as `age_days = staleness_days` — i.e., they contribute to the nudge count. After the count, log a one-line warning listing the affected entry IDs so the user can repair them.
+2. Compute `age_days = (today's local date) − (parsed date)` using `date.toordinal()`-style integer day-number subtraction (both dates as calendar dates, not timestamps). Reference is today's local date at park time (Claude's `currentDate` from the system reminder). Off-by-one errors near timezone changes or DST boundaries are accepted as low-impact (±1 day age skew on a multi-day staleness threshold).
+3. Entries with missing or unparseable date suffixes (e.g., user hand-edited the header) are treated as `age_days = staleness_days` — i.e., they contribute to the nudge count. After the count, log a one-line warning listing the affected entry IDs so the user can repair them. (This biases toward over-nudging on hand-edited entries rather than silently ignoring them; the warning log lets the user repair headers and restore accurate counts. The opposite policy — treat unparseable as `age=0` — would underweight hand-edited entries and let the nudge mechanism go silent over time, which we judged worse since the audit nudge is the artifact's only built-in pressure-relief valve.)
 4. An entry is "stale" if `age_days >= staleness_days`.
 
 If the stale count is at or above the audit nudge threshold (default 5 — chosen as a soft signal that the registry is accumulating entries faster than the user is processing them; tune via `audit_nudge_threshold`), surface a single line:
@@ -147,9 +171,11 @@ No default. Validate the path with these rules:
 - **Relative path**: reject with `absolute paths only — please re-supply a path beginning with / or ~`. Do not silently expand against any base.
 - **Tilde-prefixed path** (e.g., `~/notes.md`): expand to `$HOME` and proceed.
 - **Path is an existing directory**: reject with `<path> is a directory; please supply a file path`.
-- **Parent directory does not exist** (one or more missing levels): reject with `parent directory <parent> does not exist; please create it first or supply a different path`. Do **not** `mkdir -p` silently — creating directory trees in user space without explicit consent is out of scope.
+- **Parent directory does not exist** (one or more missing levels): prompt `parent directory <parent> does not exist. OK to create it? (y/n)`. On `y`, `mkdir -p <parent>` and proceed. On `n`, restart this question. (Skill-owned data directories under `~/.claude/plugins/data/` are created freely by step 6 because they are part of the skill's own footprint; user-owned content paths require explicit consent because they shape the user's filesystem.)
 - **File does not exist** (parent exists): offer to create it. If declined, restart this question.
 - **File exists**: confirm `OK to append a managed section to <path>?`. If declined, restart this question.
+
+After the destination is confirmed, perform the **VCS-coverage check** described in the Recovery section: run `git -C <parent> rev-parse --show-toplevel`. If it fails (parent is not in a git working tree), surface the one-time warning from Recovery. Do not block init on the result.
 
 ### 3. Question 2 — layout
 
@@ -171,7 +197,7 @@ Either way, derivation is interpreted by the agent (Claude), not by regex — re
 
 For (c): ask the user to provide names and globs directly.
 
-For any layout that uses sub-sections (i.e., (b) and (c)): the final section **must** be `name: Other, cwd_glob: "*"` as the catch-all. Init appends this catch-all itself if the user-supplied or derived `sections:` array does not already end with one. Init refuses to write a sub-section config that lacks a `*` catch-all — without it, sessions in unmatched cwds cannot be classified. Flat layout (a) has no `sections:` array and therefore no catch-all requirement.
+For any layout that uses sub-sections (i.e., (b) and (c)): init normalizes the `sections:` array on write by appending `name: Other, cwd_glob: "*"` if it does not already end with that catch-all. After normalization the rule is always satisfied; the runtime `park` workflow may assume the catch-all is present. Flat layout (a) has no `sections:` array and therefore no catch-all requirement.
 
 ### 4. Question 3 — section header
 
@@ -189,7 +215,12 @@ Create `~/.claude/plugins/data/claude-materia-claude-materia/park-session/` if n
 
 ### 7. Initialize destination file
 
-If the destination file doesn't have the section header yet, append it (and a blank line, then the marker-fenced block) at the end of the file. If it has the header but no fences, insert the fence pair **at the end of the section** — after all existing user content under that header but before the next sibling heading (or end-of-file). Existing user content stays in its original position, outside the fences. The skill never reads or writes outside the fences. Never delete or rearrange any existing content in the destination file.
+**Pre-write fence scan.** Before any write, scan the destination file for any pre-existing `<!-- {fence_id}:start -->` or `<!-- {fence_id}:end -->` markers. If any are found (e.g., from a prior init under a different `section_header`, or because the file was hand-edited to contain literal fence strings), refuse to write and surface the canonical multi-fence error message (see Marker-fenced section), with guidance to remove the existing markers (or choose a different `fence_id`) before re-running init. This guards against init creating an inconsistent multi-fence file that every subsequent invocation would then reject.
+
+If no pre-existing fences are present:
+
+- If the destination file doesn't have the section header yet, append it (and a blank line, then the marker-fenced block) at the end of the file.
+- If it has the header but no fences, insert the fence pair **at the end of the section**. The section is everything from the matched header up to the next heading at the same depth (e.g., the next `##` if the section header is `## Parked Sessions`) or shallower (`#`), or end-of-file. Fences go at the very end of that span. User-authored deeper subsections (e.g., `###`) inside the section remain inside the section, above the fences, untouched. Existing user content stays in its original position, outside the fences. The skill never reads or writes outside the fences. Never delete or rearrange any existing content in the destination file.
 
 The initial fenced block contains the empty sub-sections derived from layout config:
 
@@ -221,19 +252,19 @@ Argument: `<session-id>` (or substring that uniquely matches one entry's session
      - **Exactly one match** → proceed to step 3.
      - **More than one match** → surface all candidate entries (full headers) and ask the user to disambiguate by re-running with a longer substring or the full ID. Never delete on ambiguous match.
      - **Zero matches** → report `no entry matches <arg>` and exit without modification. Do not prompt for a new argument; the user can re-invoke.
-3. Render the entry to the user and ask for confirmation.
-4. On confirm, remove the entry from the file, preserving all surrounding content (including other entries' formatting and any sub-section headers).
+3. Render the entry to the user and prompt: `Confirm unpark, or cancel?` Edit is not offered — re-run park if the entry contents are wrong; unpark only removes.
+4. On confirm, apply the **Fence-block mutation procedure** (see Marker-fenced section) to remove the entry's lines from the fenced block.
 
 ## Workflow: list
 
-Read the fenced block. Print all entries in their current order, grouped by sub-section, with a relative-age suffix on each. Suffix format: **always days**, e.g. `(parked 0d ago)`, `(parked 1d ago)`, `(parked 365d ago)`. No other units (no hours, no weeks, no years) — uniform units make the output sortable and predictable. Read-only.
+Read the fenced block. For sub-section layouts, print all entries in their current order, grouped by sub-section. For flat layout (no sub-sections), treat the entire fenced block as the implicit single section and print entries in file order. Render each entry's header line as `**<session-id>** — parked YYYY-MM-DD (Nd ago)` (with the relative-age suffix appended after the absolute date), followed by the entry body fields indented exactly as they appear in the destination file. Suffix format: **always days**, e.g. `(parked 0d ago)`, `(parked 1d ago)`, `(parked 365d ago)`. No other units (no hours, no weeks, no years) — uniform units make the output sortable and predictable. Read-only — the destination file is unchanged.
 
 ## Workflow: audit
 
-Read the fenced block. Sort entries oldest-first across all sub-sections. For each, show the entry and prompt: keep / unpark / skip / quit.
+Read the fenced block. For sub-section layouts, sort entries oldest-first across all sub-sections. For flat layout (no sub-sections), treat the entire fenced block as the implicit single section and sort the whole block oldest-first. For each entry, show it and prompt: keep / unpark / skip / quit.
 
 - **keep**: leaves the entry as-is, moves to the next.
-- **unpark**: removes the entry directly (audit performs the write itself — do not invoke the `unpark` subcommand path, since audit's per-entry prompt is itself the review step that the standalone `unpark` confirmation provides).
+- **unpark**: applies the **Fence-block mutation procedure** (see Marker-fenced section) to remove the entry directly. Audit performs the write itself — do not invoke the `unpark` subcommand path, since audit's per-entry prompt is itself the review step that the standalone `unpark` confirmation provides.
 - **skip**: same as keep but signals "I looked at this and explicitly decided not to act." No state change in v1.
 - **quit**: stops the audit loop.
 
@@ -265,8 +296,8 @@ sections:
 ```
 
 **Validation rules:**
-- For sub-section layouts: every section must have `cwd_glob`. No exceptions.
-- For sub-section layouts: the last section's `cwd_glob` must be `"*"` so unmatched cwds always classify. Init **refuses to write** a config violating this rule (and appends the catch-all itself if missing from a user-supplied or auto-derived array). The runtime `park` workflow may assume the catch-all is present.
+- For sub-section layouts: every section must have `cwd_glob`. No exceptions. Init rejects user-supplied arrays missing `cwd_glob` on any entry.
+- For sub-section layouts: the last section's `cwd_glob` must be `"*"` so unmatched cwds always classify. Init **normalizes on write** by appending `name: Other, cwd_glob: "*"` if the user-supplied or auto-derived array does not already end with the catch-all. After normalization the rule is always satisfied; the runtime `park` workflow may assume the catch-all is present.
 - For flat layout: the `sections:` array is omitted entirely. No catch-all is required because no classification is performed.
 - `fence_id` becomes the marker string: `<!-- {fence_id}:start -->` / `<!-- {fence_id}:end -->`. **Set-once**: changing `fence_id` after the destination file has been initialized leaves the old fences in place and the skill will fail to find its block. Migration is manual (rename the fences in the destination file by hand). v1 does not auto-migrate.
 
@@ -303,32 +334,47 @@ The skill manages a section inside a user-owned destination file. To find its se
 
 HTML comments are valid markdown (per CommonMark and GFM) and are stripped from rendered output by all standard renderers. They appear as comments in editors, signaling to the user that the section is tool-managed.
 
+### Fence-block mutation procedure
+
+All write paths (`park` step 6 append, `unpark` step 4 remove, `audit` unpark action) share this single contract:
+
+1. Read the destination file in full.
+2. Validate the fence pair per the Rules above. Fail loudly on any violation; do not attempt to repair.
+3. Mutate only the content between the fences in memory (insert the new entry at the top of its (sub-)section for `park`; remove the matched entry's lines for `unpark` / `audit unpark`). Preserve all surrounding content — including content outside the fences, sub-section headers, blank lines, and other entries' formatting — byte-for-byte.
+4. Write the modified file back atomically (write to a sibling temp file in the same directory, then `mv` over the original) when the platform supports it; on failure, surface the underlying error and leave the destination untouched.
+
+This procedure is referenced by name from each write path. Any future change to the contract (e.g., adding a `flock` advisory lock around steps 1–4 to address the concurrent-write limitation, or switching to a different atomic-write strategy) is made here once.
+
 ## Edge cases
 
 - **Multiple recently-modified transcripts in same cwd** (typically caused by concurrent sessions): use the probe-and-grep fallback from step 2 of park.
 - **Transcript missing or unreadable**: fall back to asking the user for context and next-move directly. Do not park with empty fields.
-- **Glob matches multiple sections**: declaration order, first match wins. Add a one-line comment above the `sections:` array in the config noting this: `# first match wins; last entry must be "*" catch-all`. No other comments in the config — keep it terse.
+- **Glob matches multiple sections**: declaration order, first match wins. Add a one-line comment above the `sections:` array in the config noting this: `# first match wins; last entry must be "*" catch-all`. No other comments in the config — keep it terse. Duplicate `cwd_glob` entries are accepted at write-time without warning; only the first by declaration order will ever match. Users editing their own config can resolve duplicates by hand.
 - **Destination file missing**: init flow offers to create it. During park, if missing, fail and direct the user to init.
 - **User edits inside the fenced block by hand**: respected — the skill re-parses the block on every read. Hand-edits to entry formatting or sub-section structure persist.
 - **User edits outside the fenced block**: untouched. The skill never reads or writes outside the fences.
-- **`uuidgen` not available**: use `python3 -c 'import uuid; print(uuid.uuid4())'` or `cat /proc/sys/kernel/random/uuid` (Linux) as fallback.
-- **Cwd contains a backtick**: replace each backtick with the escape sequence `` \` `` before wrapping in inline-code in the rendered entry. (Backticks in cwds are rare but legal on POSIX; unescaped, they break the inline-code span and corrupt the surrounding entry.)
+- **`uuidgen` not available**: use `python3 -c 'import uuid; print(uuid.uuid4())'` or `cat /proc/sys/kernel/random/uuid` (Linux) as fallback. If none of the three is available, fail loudly — do not invent a weaker probe (`$RANDOM`, `$$`, timestamps): collision risk is unacceptable for the destructive ID-resolution path in `park` step 2.
+- **Cwd contains a backtick**: wrap the cwd in a backtick-run one longer than the longest backtick run that appears inside the cwd (CommonMark inline-code-span delimiter rule — backslashes inside `` `...` `` are literal characters, so escape sequences do not work). Example: cwd `/tmp/a` followed by a backtick followed by `b` renders as `` ``/tmp/a`b`` ``. (Backticks in cwds are rare but legal on POSIX; without this, the inline-code span breaks and corrupts the surrounding entry.)
 - **Drafted context or next-move contains triple-backtick fences or newlines**: both fields must render as **single-line strings**. If the auto-draft contains triple-backtick sequences or newlines, collapse newlines to spaces and replace each triple-backtick with single-quoted code spans (e.g., rewrite ` ```pytest tests/foo.py``` ` as `` `pytest tests/foo.py` ``). If the field cannot be reduced to a clean single line, prefix the rendered draft with `(needs manual edit — see review pane)` and rely on the user to rewrite during step 6.
-- **Low-confidence draft**: if the transcript tail contains fewer than 3 substantive events (tool calls, file edits, or assistant messages over 200 chars), prefix the draft in the review pane with `(low-confidence draft — please review carefully)`. The user is more likely to rubber-stamp a confident-looking bad draft than to rewrite from scratch; the prefix is the friction.
+- **Low-confidence draft**: if the filtered transcript-tail set from park step 3 (after the 4 KB filter) contains fewer than 3 substantive events — defined as the union of `tool_use` events and assistant events whose text content exceeds 200 chars, each JSONL line counted at most once — prefix the draft in the review pane with `(low-confidence draft — please review carefully)`. The user is more likely to rubber-stamp a confident-looking bad draft than to rewrite from scratch; the prefix is the friction.
 
 ## Recovery
 
 The destination file is typically version-controlled (in stowed dotfiles, a notes repo, etc.). Deleted entries are recoverable via `git log -p <destination>`. The skill does not maintain its own archive — version control already serves that role.
 
-If the user has no version control on the destination, recommend they enable it. **During init, after the destination is set, check whether the destination's parent directory is inside a git working tree (`git -C <parent> rev-parse --show-toplevel`). If not, surface a one-time warning: `<destination> is not under version control; unpark and audit-unpark are destructive with no recovery. Consider `git init` in the directory.`** Do not block init on this; do not silently add an archive layer.
+If the user has no version control on the destination, recommend they enable it. **During init, after the destination is set (see Workflow: init step 2), check whether the destination's parent directory is inside a git working tree (`git -C <parent> rev-parse --show-toplevel`). If not, surface a one-time warning: `<destination> is not under version control; unpark and audit-unpark are destructive with no recovery. Consider `git init` in the directory.`** Do not block init on this; do not silently add an archive layer.
+
+The check is best-effort: it succeeds inside ordinary working trees, submodules, and worktrees, but the meaning differs (a submodule's toplevel is the submodule, not the parent repo; bare repos have no working tree and the command fails; worktrees of unrelated repos pass the check without offering useful recovery for the destination). The warning is a heuristic, not a guarantee — users with heavy worktree usage may still want to manually verify their recovery story.
 
 **Scale assumption:** designed for tens to low-hundreds of concurrent entries. The destination is a single markdown file read in full on every invocation. If you accumulate more (rare for the target persona), `list` and `audit` will become slow and the rendered file unwieldy — recommend periodic manual archival (move audit-skipped entries older than ~6 months into a separate file by hand). The skill does not auto-archive in v1.
 
 ## Known limitations
 
-- **Concurrent destination writes are not protected.** All three write paths (`park` append, `unpark` remove, `audit` unpark) read the destination file, mutate the fenced block in memory, then write it back. There is no file lock or atomic-rename procedure. If two `park` invocations from different sessions race against the same destination, the second writer can silently clobber the first writer's entry. This is acceptable for the v1 target persona (single user, personal markdown file, realistically zero concurrent-write contention) but the user should serialize parks if tearing down many sessions in rapid succession against the same destination.
+- **Concurrent destination writes are not protected.** All three write paths (`park` append, `unpark` remove, `audit` unpark) read the destination file, mutate the fenced block in memory, then write it back via the shared Fence-block mutation procedure (see Marker-fenced section). There is no file lock or atomic-rename procedure. If two `park` invocations from different sessions race against the same destination, the second writer can silently clobber the first writer's entry. This is acceptable for the v1 target persona because the asymmetry with concurrent sessions is deliberate: concurrent **sessions** in the same cwd are common (the probe-and-grep handles them — users routinely run multiple Claude Code sessions in the same project), but concurrent **parks** against the same destination are rare because parking is a deliberate teardown-time action, not steady-state work. Users tearing down many sessions in rapid succession against the same destination should serialize parks by hand.
 - **Probe-and-grep depends on undocumented Claude Code behavior** (bash invocations logged verbatim into per-session JSONL transcripts). See "Concurrent-session disambiguation" in `park` step 2 for the failure modes and guards.
+- **Session-invocation cwd derivation depends on transcript event `cwd` fields.** This is undocumented internal Claude Code harness behavior. If transcript events stop including `cwd` (schema change), the slug derivation fails loudly and the user is asked to supply the absolute invocation path directly. See `park` step 2.
 - **Mechanical pieces are described in prose, not extracted as helper scripts.** Session ID derivation, fence-block I/O, and glob classification are re-derived from this document on every invocation. This is a deliberate v1 choice to keep the skill self-contained; a v2 refactor could extract `helpers/session_id.sh` and `helpers/fence_io.py` for stability and testability.
+- **The init workflow is sprawling.** Init currently handles destination validation, layout selection, env-relevance-map construction, env-derived layout proposal, user-supplied catalog interpretation with inference back-stop, user-direct sub-section definition, catch-all normalization, section header configuration, free-form context capture, config schema write, destination file initialization with pre-write fence scan, fence placement, and the VCS coverage check. This is v1-acceptable but a v2 refactor candidate: factor into named sub-procedures (`validate-destination`, `propose-layout`, `write-config`, `initialize-destination-file`, `vcs-check`) with explicit handoffs.
 
 ---
 
@@ -336,7 +382,9 @@ If the user has no version control on the destination, recommend they enable it.
 
 This skill extends with environment context. Unlike workflow skills that read the environment on every invocation, park-session reads the environment only during `init` (or re-init). Subsequent `park`, `unpark`, `list`, and `audit` invocations consume the local config without re-reading the environment — this keeps action-mode fast and predictable.
 
-During `init`:
+**When environment discovery runs:** lazily, as a sub-step of init question 2(b), only when the user picks option (b). Steps 1–5 below are gated on that choice. The relevance map is shown to the user at that point. This avoids running discovery for users who pick flat layout (a) or who define sub-sections directly (c) — neither path consumes the derived Park Layout.
+
+During `init` (within question 2(b)):
 
 1. Check if `~/.claude/env/` exists.
    - If `~/.claude/env/` does not exist: bare environment. Skip the auto-derivation steps (2–5) below. Option (b) in question 2 remains available as a user-supplied catalog path. Tell the user no environment was found.
