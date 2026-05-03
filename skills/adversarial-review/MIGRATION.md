@@ -299,6 +299,7 @@ Cache value: { verdict, reasoning, audited_at, agent_name_at_audit }
 Cache structure:
 ```json
 {
+  "last_auditor_hash": "<auditor-content-hash>",
   "<auditor-content-hash>": {
     "<agent-content-hash>": {
       "verdict": "accept",
@@ -309,6 +310,8 @@ Cache structure:
   }
 }
 ```
+
+`last_auditor_hash` is a top-level sibling to the auditor-hash entries: it stores the same hash that appears as a top-level key (the most recent auditor used). When the orchestrator starts a new session, it compares the current `auditor.md` hash to `last_auditor_hash`; if different, surface the "auditor changed; full audit re-run" notice. Update `last_auditor_hash` after the session's audits complete.
 
 Pipeline integration (Step 2 of 2.5's audit pipeline):
 
@@ -519,7 +522,7 @@ Sections to rewrite:
 
 After execution and verification:
 - Delete `skills/adversarial-review/MIGRATION.md` (transient working file, this document).
-- Verify the per-session agent snapshot logic. Snapshot semantics post-migration: the per-session agent snapshot copies the resolved-and-confirmed pool (output of Stage A+B+C) into `sessions/<id>/agents/`. Filenames use namespace-prefixed form: `default__coherence.md`, `manual__custom-thing.md`, etc. — matching the output-file naming convention from 2.3. This snapshot reflects the actual locked pool, not source directory contents. Verify by: (a) grep the skill source code for hardcoded reviewer-pool paths — e.g., `grep -rn 'agents/coherence' skills/adversarial-review/ --exclude-dir=sessions` (and similar for `agents/design`, `agents/detail`) — to confirm no literal hardcoded path remains in the snapshot or discovery logic; (b) reading the snapshot code path and confirming pool location is derived from runtime discovery, not a literal string. If either check fails (literal hardcoded path found in step a, or pool location not derived from runtime discovery in step b), surface as a step 9 failure — fix before proceeding to step 10.
+- Verify the per-session agent snapshot logic. Snapshot semantics post-migration: the per-session agent snapshot copies the resolved-and-confirmed pool (output of Stage A+B+C) into `sessions/<id>/agents/`. Filenames use namespace-prefixed form: `default__coherence.md`, `manual__custom-thing.md`, etc. — matching the output-file naming convention from 2.3. This snapshot reflects the actual locked pool, not source directory contents. Verify by: (a) grep the skill source code for hardcoded reviewer-pool paths — e.g., `grep -rn 'agents/coherence' skills/adversarial-review/ --exclude-dir=sessions` (and similar for `agents/design`, `agents/detail`) — to confirm no literal hardcoded path remains in the snapshot or discovery logic; (b) reading the snapshot code path in the rewritten SKILL.md (specifically Phase 1 Step 4 of the rewritten SKILL.md, which describes per-session agent snapshot creation) and confirming pool location is derived from runtime discovery, not a literal string. If either check fails (literal hardcoded path found in step a, or pool location not derived from runtime discovery in step b), surface as a step 9 failure — fix before proceeding to step 10.
 - Confirm no other file references `<skill-directory>/agents/coherence.md` etc. directly.
 
 ### 6.7 — Execution sequence
@@ -551,11 +554,14 @@ After execution and verification:
    `review/post-migration-verification.md` regardless of outcome.
 
    Lockstep verification (alongside the full-loop dispatch): verify that
-   `agents/auditor.md` contains a canonical anchor string from
-   `agents/triage.md`'s schema declaration — e.g., grep for
-   `source_trace.shape == 'quote'` or another distinctive token from triage's
-   findings format. If absent, the lockstep coupling declared in 2.6's "New
-   system agent" subsection has been broken — surface as a step 9 failure.
+   `agents/auditor.md` contains canonical anchors from `agents/triage.md`'s
+   schema declaration. Grep `auditor.md` for **at least three of**:
+   `source_trace`, `interpretation_note`, `quote`, `region`, `synthesis`
+   (the source_trace shape names from 1.2). If fewer than three are present,
+   the lockstep coupling declared in 2.6's "New system agent" subsection has
+   been broken — surface as a step 9 failure. The multi-anchor approach is
+   robust to formatting variation (JSON, YAML, prose) since these are
+   conceptual names, not syntactic patterns.
 10. Delete MIGRATION.md.
 ```
 
