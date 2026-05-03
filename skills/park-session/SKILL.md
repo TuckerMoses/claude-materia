@@ -103,7 +103,22 @@ else
     # Ambiguous (delta < 60): probe-and-grep. The bash invocation itself gets logged
     # to the JSONL transcript, so grepping for the probe string identifies the
     # current session's transcript.
-    probe="park-probe-$(uuidgen)"
+    #
+    # UUID fallback cascade — try uuidgen, then python3 -c uuid, then
+    # /proc/sys/kernel/random/uuid. Fail loudly if none is available rather
+    # than falling back to a weaker source ($RANDOM, $$, timestamps): this is
+    # a destructive ID-resolution path and collision risk is unacceptable.
+    if uuid=$(uuidgen 2>/dev/null); then
+      :
+    elif uuid=$(python3 -c 'import uuid; print(uuid.uuid4())' 2>/dev/null); then
+      :
+    elif uuid=$(cat /proc/sys/kernel/random/uuid 2>/dev/null); then
+      :
+    else
+      echo "no UUID source available (tried uuidgen, python3 -c uuid, /proc/sys/kernel/random/uuid). Refusing to use a weaker probe on a destructive ID-resolution path. Please supply the session ID directly." >&2
+      exit 1
+    fi
+    probe="park-probe-${uuid}"
     echo "$probe" > /dev/null    # output discarded; the bash invocation itself is what gets logged
     sleep 1                       # initial flush wait; succeeds in the common case
     matches=$(grep -l "$probe" "${proj_dir}"/*.jsonl 2>/dev/null)
@@ -139,14 +154,14 @@ Failure-mode notes for the probe-and-grep path inside the consolidated block:
 
 Step 2's consolidated block emitted the chosen transcript's last 40 lines on stdout. Step 3 is **prose-only — no bash invocation** — it processes that captured tail to synthesize the entry fields. (Folding the tail-read into step 2 excises the cross-Bash-call handoff that previously discarded the disambiguation result on the probe-and-grep path.)
 
-Process the captured tail in this order: (a) take the 40 lines emitted by step 2d as the working set; (b) filter out tool-result events larger than 4 KB (typically large file reads or command output) — they bloat the read budget without adding signal; (c) within the filtered set, count **substantive events** as the union of (i) `tool_use` events and (ii) assistant events whose text content exceeds 200 chars — each JSONL line counts at most once; (d) if the count is below 3, apply the low-confidence prefix per Edge cases. If the filtered set yields fewer than 3 substantive events, re-run step 2's bash block with `tail -120` substituted for `tail -40` (the consolidated block re-derives everything inline as before) and re-filter, stopping after at most 120 lines total.
+Process the captured tail in this order: (a) take the 40 lines emitted by step 2d as the working set; (b) filter out tool-result events larger than 4 KB (typically large file reads or command output) — they bloat the read budget without adding signal; (c) within the filtered set, count **substantive events** as the union of (i) `tool_use` events and (ii) assistant events whose text content exceeds 200 chars — each JSONL line counts at most once; (d) if the count is below 3, **first re-run step 2's bash block with `tail -120` substituted for `tail -40`** (the consolidated block re-derives everything inline as before) and re-filter, stopping after at most 120 lines total. **If the post-extension count is still below 3, apply the low-confidence prefix per Edge cases.** The prefix fires only after the extension fails to recover; a 120-line tail that finds ≥3 substantive events is treated as a confident draft and no prefix is applied.
 
 Synthesize from the filtered set:
 
 - **Context**: one line describing what the user was working on. Be concrete ("debugging the auto-memory facelift on dotfiles repo"), not vague ("investigating stuff").
 - **Next move**: the first concrete action to take when this session is resumed. The most important field — without it, resumption requires re-reading the whole transcript. Example: "re-run `pytest tests/test_memory.py::test_facelift_idempotent` and inspect the diff in `memory/MEMORY.md`."
 
-Read the `context` field from the local config on every park. If it contains directives that affect drafting (phrasing rules, content to include or exclude, path-equivalence aliases, terminology preferences, anything the agent would otherwise have to guess), apply them to the draft. If the field is empty or contains only descriptive notes (not directives), draft normally.
+Read the `context` field from the local config on every park. Treat the entire field as guidance the agent considers — interpret it as a system prompt for drafting and apply anything in it that could affect the current drafting decision (phrasing rules, content to include or exclude, path-equivalence aliases, terminology preferences, descriptive background that resolves an otherwise-ambiguous classification). There is no formal "directive vs descriptive note" distinction; err on the side of "yes, apply this" when in doubt, since `context` is user-authored and intentional. If the field is empty, draft normally.
 
 (The 40-line tail is a deliberate tradeoff: enough to capture recent investigation state for typical sessions, small enough to read quickly. A long debugging session may have hundreds of relevant events further back; a quick park may happen before any meaningful events exist. The review pane in step 6 is the safety net — and the low-confidence draft prefix in Edge cases warns the user when the tail is sparse.)
 
@@ -227,7 +242,7 @@ If the stale count is at or above the audit nudge threshold (default 5 — chose
 Heads up: <N> parked entries are older than <T> days. Consider running `park-session audit`.
 ```
 
-Do not nag further; one line, then done. The nudge fires only on `park` (not `list`) by design — `list` is a quick read-only inspection, and nagging on a passive surface erodes the signal. If you want a nudge without parking, run `audit` directly.
+Do not nag further within a single park invocation; one line, then done. The nudge fires on **every** park while the stale count is at or above threshold — it is not rate-limited within a day. A user who parks 10 sessions while 5 stale entries exist will see the nudge 10 times. Suppress further nudges by running `audit` and reducing the stale count below threshold. The nudge fires only on `park` (not `list`) by design — `list` is a quick read-only inspection, and nagging on a passive surface erodes the signal. If you want a nudge without parking, run `audit` directly. (A v2 cool-down — e.g., once-per-day per destination — is a candidate refinement if the per-park firing proves too noisy in practice.)
 
 ## Workflow: init
 
@@ -263,7 +278,7 @@ Options:
 
 For (b), follow this precedence:
 
-1. **Auto-derived path (preferred).** If the Environment section's discovery has already produced a Park Layout proposal from `~/.claude/env/`, present that proposal first as a YAML draft for the user to review, edit, or reject.
+1. **Auto-derived path (preferred).** Trigger the Environment section's discovery (see Environment, below) and, if it produces a Park Layout proposal from `~/.claude/env/`, present that proposal first as a YAML draft for the user to review, edit, or reject.
 2. **User-supplied path (fallback).** If no auto-derived proposal exists (bare environment, environment misconfigured, or the user rejected the auto-derived proposal), ask the user for a catalog path. Read it. Derive sub-section names and cwd glob patterns by inspecting the catalog's structure.
 
 Either way, derivation is interpreted by the agent (Claude), not by regex — read the catalog like a human would, identify organizational categories, and propose `name + cwd_glob` for each. Present the proposal as YAML for the user to review and edit.
@@ -290,19 +305,20 @@ Create `~/.claude/plugins/data/claude-materia-claude-materia/park-session/` if n
 
 ### 7. Initialize destination file
 
-**Pre-write fence scan.** Before any write, scan the destination file for any pre-existing `<!-- {fence_id}:start -->` or `<!-- {fence_id}:end -->` markers and classify the result:
+**Pre-write fence scan.** Before any write, scan the destination file for **any** `<!-- *:start -->` or `<!-- *:end -->` park-session-style markers (regex `<!-- [a-z0-9-]+:(start|end) -->`), not just markers under the new config's `fence_id`. This catches the silent dual-fence case where a user runs init with one `fence_id`, then re-runs init with a different `fence_id` — a fence_id-scoped scan would miss the old fences and create a second parallel fenced block. Classify the scan result:
 
 - **Zero fences** (clean destination): proceed with the steps below to write the initial fenced block.
-- **Exactly one start-fence and exactly one end-fence in order** (legitimate single fence pair): this is the re-init happy path. Init step 1 has already obtained the user's consent to overwrite via the existing-config prompt. **Leave the existing fence pair (and any user-authored content between them) in place** and return without writing — the layout structure inside the fences is preserved across re-init. (The user's reason for re-running init is typically to change `section_header`, `fence_id`, or layout config; structural changes to the fenced block are out of scope for v1 re-init. To restructure entries inside an existing fence pair, edit by hand or remove the fences and re-run init.) If the new config specifies a different `fence_id` than what the file currently contains, fail loudly with `destination contains fence pair with id <existing>; new config specifies <new>. Migration is manual: remove the old fences from <path> by hand, then re-run init.`
-- **Singleton fence** (one start, no end, or vice versa): fail loudly with the canonical singleton-fence error message (see Marker-fenced section).
-- **Multiple start-fences or multiple end-fences**: fail loudly with the canonical multi-fence error message (see Marker-fenced section), with guidance to remove the extras before re-running init.
+- **Exactly one start-fence and exactly one end-fence in order, both under the new config's `fence_id`** (legitimate single fence pair): this is the re-init happy path. Init step 1 has already obtained the user's consent to overwrite via the existing-config prompt. **Leave the existing fence pair (and any user-authored content between them) in place** and return without writing — the layout structure inside the fences is preserved across re-init. (The user's reason for re-running init is typically to change `section_header` or layout config; structural changes to the fenced block are out of scope for v1 re-init. To restructure entries inside an existing fence pair, edit by hand or remove the fences and re-run init.) **Layout-mode change guard**: if the new config flips between flat layout and sub-section layout, or the new config's `sections:` array names differ from the sub-section headers present inside the existing fenced block, fail loudly with `destination's existing fenced block has layout structure that does not match the new config (existing sub-sections: <list>; new config: <list or "flat">). Layout migration is manual: remove the existing fence pair from <path> by hand, then re-run init for a fresh start.` This prevents the next park from inserting into a sub-section header that does not exist in the on-disk block.
+- **Exactly one start-fence and exactly one end-fence in order, but under a `fence_id` that does not match the new config's `fence_id`**: fail loudly with `destination contains fence pair with id <existing>; new config specifies <new>. Migration is manual: remove the old fences from <path> by hand, then re-run init.` Do not attempt automatic rename or migration in v1.
+- **Singleton fence** (one start, no end, or vice versa, regardless of `fence_id`): fail loudly with the canonical singleton-fence error message (see Marker-fenced section).
+- **Multiple start-fences or multiple end-fences anywhere in the file** (any combination of `fence_id`s): fail loudly with the canonical multi-fence error message (see Marker-fenced section), with guidance to remove the extras before re-running init.
 
-This guards against init creating an inconsistent multi-fence file that every subsequent invocation would then refuse to mutate.
+This guards against init creating an inconsistent multi-fence file that every subsequent invocation would then refuse to mutate, and against silent layout-drift between the on-disk fenced block and the new config.
 
 If no pre-existing fences are present:
 
 - If the destination file doesn't have the section header yet, append it (and a blank line, then the marker-fenced block) at the end of the file.
-- If it has the header but no fences, insert the fence pair **at the end of the section**. The section is everything from the matched header up to the next heading at the same depth (e.g., the next `##` if the section header is `## Parked Sessions`) or shallower (`#`), or end-of-file. Fences go at the very end of that span. User-authored deeper subsections (e.g., `###`) inside the section remain inside the section, above the fences, untouched. Existing user content stays in its original position, outside the fences. The skill never reads or writes outside the fences. Never delete or rearrange any existing content in the destination file.
+- If it has the header but no fences, insert the fence pair **at the end of the section**. The section is everything from the matched header up to the next heading at the same depth (e.g., the next `##` if the section header is `## Parked Sessions`) or shallower (`#`), or end-of-file. Fences go at the very end of that span. User-authored deeper subsections (e.g., `###`) inside the section remain inside the section, above the fences, untouched. Existing user content stays in its original position, outside the fences. After initialization, the skill never reads or writes outside the fences. Never delete or rearrange any existing content in the destination file.
 
 The initial fenced block contains the empty sub-sections derived from layout config:
 
@@ -323,34 +339,41 @@ For flat layout, the block is empty (entries get appended directly inside the fe
 
 ## Workflow: unpark
 
-Argument: `<session-id>` (or substring that uniquely matches one entry's session ID).
+Argument: `<session-id>` (or a **prefix** of an entry's session ID that uniquely matches one entry).
 
 1. Read the destination file's fenced block and parse all entries.
 2. Locate the entry by matching `<session-id>` against the **session ID field only** (the `<session-id>` in each entry's header). Match rules:
    - **Case-sensitive.**
-   - **Substring length**: must be at least 8 characters. Reject shorter arguments with `unpark argument must be at least 8 characters to avoid accidental wrong-entry matches`.
+   - **Prefix match only**: the argument must equal the first N characters of an entry's session ID. Substring-anywhere matching is **not** used — typing the middle or end of a UUID returns zero matches even if the substring appears within an entry. This mirrors the convention used by `git`, Docker, and other UUID-keyed systems and keeps the false-multi-match rate predictable.
+   - **Prefix length**: must be at least 8 characters. Reject shorter arguments with `unpark argument must be at least 8 characters to avoid accidental wrong-entry matches`.
    - **Field scope**: match against session IDs only — never against context, next-move, or origin fields.
    - **Result handling:**
      - **Exactly one match** → proceed to step 3.
-     - **More than one match** → surface all candidate entries (full headers) and ask the user to disambiguate by re-running with a longer substring or the full ID. Never delete on ambiguous match.
+     - **More than one match** → surface all candidate entries (full headers) and ask the user to disambiguate by re-running with a longer prefix or the full ID. Never delete on ambiguous match.
      - **Zero matches** → report `no entry matches <arg>` and exit without modification. Do not prompt for a new argument; the user can re-invoke.
 3. Render the entry to the user and prompt: `Confirm unpark, or cancel?` Edit is not offered — re-run park if the entry contents are wrong; unpark only removes.
 4. On confirm, apply the **Fence-block mutation procedure** (see Marker-fenced section) to remove the entry's lines from the fenced block.
 
 ## Workflow: list
 
-Read the fenced block. For sub-section layouts, print all entries in their current file-encountered order, grouped by sub-section (most recent first per the park-time reverse-chronological insert rule). For flat layout (no sub-sections), treat the entire fenced block as the implicit single section and print entries in file order (also most recent first per the same rule). Render each entry's header line as `**<session-id>** — parked YYYY-MM-DD (Nd ago)` (with the relative-age suffix appended after the absolute date), followed by the entry body fields indented exactly as they appear in the destination file. Suffix format: **always days**, e.g. `(parked 0d ago)`, `(parked 1d ago)`, `(parked 365d ago)`. No other units (no hours, no weeks, no years) — uniform units make the output sortable and predictable. Read-only — the destination file is unchanged.
+Read the fenced block. For sub-section layouts, print all entries in their current file-encountered order, grouped by sub-section (most recent first per the park-time reverse-chronological insert rule). For flat layout (no sub-sections), treat the entire fenced block as the implicit single section and print entries in file order (also most recent first per the same rule). Render each entry's header line as `**<session-id>** — parked YYYY-MM-DD (Nd ago)` (with the relative-age suffix appended after the absolute date), followed by the entry body fields indented exactly as they appear in the destination file. Suffix format: **always days**, e.g. `(parked 0d ago)`, `(parked 1d ago)`, `(parked 365d ago)`. No other units (no hours, no weeks, no years) — uniform units make the output sortable and predictable. **Unparseable date headers** (per the step-7 conventions for hand-edited dates) render the suffix as `(parked ?d ago)`. Read-only — the destination file is unchanged.
 
 ## Workflow: audit
 
-Read the fenced block. For sub-section layouts, sort entries oldest-first across all sub-sections. For flat layout (no sub-sections), treat the entire fenced block as the implicit single section and sort the whole block oldest-first. For each entry, show it and prompt: keep / unpark / skip / quit.
+**Audit holds the file for the duration of the loop.** Read the fenced block once at audit start and operate on that in-memory snapshot for sorting and per-entry display. Concurrent `park`, `unpark`, or other audit invocations from another session that attempt to mutate the same destination during an in-progress audit will fail with the canonical `destination is currently held by an in-progress audit on this machine; please rerun park after audit completes` error (see Concurrent-audit guard below). This makes audit's mental model simple: while audit is open, you own the file.
+
+For sub-section layouts, sort the in-memory snapshot oldest-first across all sub-sections. For flat layout (no sub-sections), treat the entire fenced block as the implicit single section and sort the whole snapshot oldest-first. **Unparseable date headers** (per the step-7 conventions for hand-edited dates) sort as `age = +infinity` so they surface first — the user encounters them early and can repair the date. For each entry, show one entry, prompt the user, wait for the reply, then proceed to the next:
 
 - **keep**: leaves the entry as-is, moves to the next.
-- **unpark**: applies the **Fence-block mutation procedure** (see Marker-fenced section) to remove the entry directly. Audit performs the write itself — do not invoke the `unpark` subcommand path, since audit's per-entry prompt is itself the review step that the standalone `unpark` confirmation provides.
+- **unpark**: applies the **Fence-block mutation procedure** (see Marker-fenced section) to remove the entry directly. The mutation procedure re-reads the file fresh per its existing contract and removes the target entry by session ID match. If the target entry no longer exists in the on-disk file (typically because audit's own previous unpark already removed it, or — rare — a hand-edit removed it before the audit hold was placed), warn-and-skip with one line: `entry <session-id> no longer present in destination; skipping.` Audit performs the write itself — do not invoke the `unpark` subcommand path, since audit's per-entry prompt is itself the review step that the standalone `unpark` confirmation provides.
 - **skip**: same as keep but signals "I looked at this and explicitly decided not to act." No state change in v1.
-- **quit**: stops the audit loop.
+- **quit**: stops the audit loop and releases the audit hold.
 
-After the loop, summarize: `N kept, N unparked, N skipped`. Counts cover only entries reviewed up to the point the loop ended. If the user used `quit`, also report `M unreviewed` where M is the remaining entry count.
+Per-entry interaction is the design: do not batch-render entries with numbered prompts — the per-entry pause forces the user to consider each entry, which is the audit's purpose. For large registries (>20 entries) the user is expected to use `quit` mid-loop and re-run audit later.
+
+After the loop (whether via `quit` or end-of-list), release the audit hold and summarize: `N kept, N unparked, N skipped`. Counts cover only entries reviewed up to the point the loop ended. If the user used `quit`, also report `M unreviewed` where M is the remaining entry count.
+
+**Concurrent-audit guard:** while audit is open, write a sentinel file at `<destination>.audit-lock` containing the audit's start timestamp and the invoking session ID. The Fence-block mutation procedure checks for this sentinel before every write and, if present and not owned by the calling session, refuses with the canonical message above. The sentinel is removed when audit exits (any of: end-of-list, `quit`, or fatal error). Stale sentinels (from a crashed audit) older than 24 hours are ignored by subsequent writers and overwritten by a fresh audit; stale sentinels under 24 hours surface a `stale audit-lock detected at <path> (started <timestamp>); remove the file by hand if the prior audit crashed` warning to the next caller.
 
 ## Local config schema
 
@@ -364,9 +387,12 @@ staleness_days: 30
 audit_nudge_threshold: 5
 
 context: |
-  Free-form notes about the user's system. Read by the skill during init,
-  re-init, and any catalog-interpretation step. Use for system quirks,
-  transitional states, or directives the catalog doesn't capture.
+  Free-form guidance about the user's system. Read by the skill during init,
+  re-init, every park (for drafting), and any catalog-interpretation step.
+  Treated as a system prompt for the agent — anything in this field that
+  could affect drafting or classification is applied. No formal distinction
+  between "directives" and "descriptive notes"; write it as you would
+  brief a colleague.
 
 sections:
   - name: Workspace sessions
@@ -383,11 +409,11 @@ sections:
 - For flat layout: the `sections:` array is omitted entirely. No catch-all is required because no classification is performed.
 - **Tilde form in `cwd_glob`**: only bare `~/` (your `$HOME`, expanded via `os.path.expanduser`) is supported. Init rejects `~user/...` (tilde-with-username) globs with `unsupported tilde form in cwd_glob '<glob>': only ~/ is supported, not ~user`. Embedded `~` not at the start of the glob is treated as a literal character.
 - **`**` in `cwd_glob`**: treated as equivalent to `*` under `fnmatch` semantics (since `*` already crosses `/`). Init normalizes `**` to `*` on write and emits a one-line warning: `cwd_glob '<glob>' uses ** which is redundant under fnmatch; rewriting to *`. Authors should write `*`.
-- `fence_id` becomes the marker string: `<!-- {fence_id}:start -->` / `<!-- {fence_id}:end -->`. **Set-once**: changing `fence_id` after the destination file has been initialized leaves the old fences in place and the skill will fail to find its block. Migration is manual (rename the fences in the destination file by hand). v1 does not auto-migrate.
+- `fence_id` becomes the marker string: `<!-- {fence_id}:start -->` / `<!-- {fence_id}:end -->`. **Set-once**: re-running init with a different `fence_id` against an already-initialized destination is rejected by the pre-write fence scan (see Workflow: init step 7). Migration is manual: remove the old fences from the destination by hand, then re-run init. v1 does not auto-migrate.
 
 ## Marker-fenced section
 
-The skill manages a section inside a user-owned destination file. To find its section reliably without clobbering user content, it uses HTML comment markers:
+The skill manages a section inside a user-owned destination file. To find its section reliably without clobbering user content, it uses HTML comment markers. The marker name is the configured `fence_id` (default `park-session`). All `{fence_id}` placeholders below are substituted with the configured value at message-emit time; the example block uses the default for readability:
 
 ```markdown
 <!-- park-session:start -->
@@ -396,22 +422,22 @@ The skill manages a section inside a user-owned destination file. To find its se
 ```
 
 **Rules:**
-- The skill reads and writes only between the fences.
+- After initialization, the skill reads and writes only between the fences (init itself writes the fence markers and, if needed, the section header).
 - **Exactly one start-fence and exactly one end-fence present**, in that order: that's the contract — proceed.
 - **Both fences missing** (destination uninitialized): fail loudly with this exact message and exit without modifying the file:
 
   ```
-  Destination file <path> is not initialized: no `<!-- park-session:start -->` / `<!-- park-session:end -->` fence pair found. Run `park-session init` to initialize.
+  Destination file <path> is not initialized: no `<!-- {fence_id}:start -->` / `<!-- {fence_id}:end -->` fence pair found. Run `park-session init` to initialize.
   ```
 - **Exactly one fence present** (singleton — file corrupted): fail loudly with this exact message and exit without modifying the file:
 
   ```
-  Destination file <path> is in an inconsistent state: found `<!-- park-session:start -->` but no matching end fence (or vice versa). The skill will not modify it. To fix: either remove the orphan fence and re-run `park-session init`, or restore the matching fence by hand.
+  Destination file <path> is in an inconsistent state: found `<!-- {fence_id}:start -->` but no matching end fence (or vice versa). The skill will not modify it. To fix: either remove the orphan fence and re-run `park-session init`, or restore the matching fence by hand.
   ```
 - **More than one start-fence OR more than one end-fence** present anywhere in the file (e.g., a markdown code block in the file contains the literal fence strings): fail loudly with this exact message and exit without modifying the file:
 
   ```
-  Destination file <path> contains multiple `<!-- park-session:start -->` or `<!-- park-session:end -->` markers; the skill cannot determine which is authoritative. Please remove the extras manually (or move them inside indented/escaped code blocks) and re-run.
+  Destination file <path> contains multiple `<!-- {fence_id}:start -->` or `<!-- {fence_id}:end -->` markers; the skill cannot determine which is authoritative. Please remove the extras manually (or move them inside indented/escaped code blocks) and re-run.
   ```
 
   Do not attempt automatic disambiguation.
@@ -422,12 +448,13 @@ HTML comments are valid markdown (per CommonMark and GFM) and are stripped from 
 
 All write paths (`park` step 6 append, `unpark` step 4 remove, `audit` unpark action) share this single contract:
 
-1. Read the destination file in full.
-2. Validate the fence pair per the Rules above. Fail loudly on any violation; do not attempt to repair.
-3. Mutate only the entry being inserted or removed; do not reflow existing entries' whitespace, blank lines, or indentation. Match the existing inter-entry separator (typically one blank line between entries) when inserting; if the (sub-)section is empty, insert directly after the (sub-)section header with one blank line before the entry. Content outside the fences — including sub-section headers, blank lines, and other entries' formatting — is never touched and remains byte-for-byte.
-4. Write the modified file back atomically: write to a sibling temp file in the same directory, then `mv` over the original (POSIX same-directory `mv` is atomic on every filesystem the skill targets — ext4, APFS, HFS+, ZFS, NTFS-via-WSL). If the temp-file write fails, surface the underlying error and leave the destination untouched. If the `mv` fails, attempt to remove the temp file (best-effort cleanup); surface the original `mv` error to the user and leave the destination untouched.
+1. **Audit-hold check.** Before reading the file, check for a sibling `<destination>.audit-lock` sentinel (see Workflow: audit — Concurrent-audit guard). If the sentinel is present and is not owned by the calling session, refuse the write with `destination is currently held by an in-progress audit on this machine; please rerun park after audit completes`. If the sentinel is present and **stale** (older than 24 hours), surface the stale-lock warning, ignore the sentinel, and proceed. Audit's own unpark action sees its own sentinel and proceeds.
+2. Read the destination file in full.
+3. Validate the fence pair per the Rules above. Fail loudly on any violation; do not attempt to repair.
+4. Mutate only the entry being inserted or removed; do not reflow existing entries' whitespace, blank lines, or indentation. Match the existing inter-entry separator (typically one blank line between entries) when inserting; if the (sub-)section is empty, insert directly after the (sub-)section header with one blank line before the entry. Content outside the fences — including sub-section headers, blank lines, and other entries' formatting — is never touched and remains byte-for-byte.
+5. Write the modified file back atomically: write to a sibling temp file in the same directory, then `mv` over the original (POSIX same-directory `mv` is atomic on every filesystem the skill targets — ext4, APFS, HFS+, ZFS, and native Linux filesystems on WSL2; note that NTFS accessed via `/mnt/c/...` from WSL2 does **not** provide guaranteed POSIX rename atomicity and is out of scope for the v1 atomicity claim). If the temp-file write fails, surface the underlying error and leave the destination untouched. If the `mv` fails, attempt to remove the temp file (best-effort cleanup); surface the original `mv` error to the user and leave the destination untouched.
 
-This procedure is referenced by name from each write path. Any future change to the contract (e.g., adding a `flock` advisory lock around steps 1–4 to address the concurrent-write limitation, or switching to a different atomic-write strategy) is made here once.
+This procedure is referenced by name from each write path. Any future change to the contract (e.g., adding a `flock` advisory lock around steps 2–5 to address the concurrent-write limitation between park and unpark, or switching to a different atomic-write strategy) is made here once.
 
 ## Edge cases
 
@@ -441,7 +468,7 @@ This procedure is referenced by name from each write path. Any future change to 
 - **`uuidgen` not available**: use `python3 -c 'import uuid; print(uuid.uuid4())'` or `cat /proc/sys/kernel/random/uuid` (Linux) as fallback. If none of the three is available, fail loudly — do not invent a weaker probe (`$RANDOM`, `$$`, timestamps): collision risk is unacceptable for the destructive ID-resolution path in `park` step 2.
 - **Cwd contains a backtick**: wrap the cwd in a backtick-run one longer than the longest backtick run that appears inside the cwd (CommonMark inline-code-span delimiter rule — backslashes inside `` `...` `` are literal characters, so escape sequences do not work). Example: cwd `/tmp/a` followed by a backtick followed by `b` renders as `` ``/tmp/a`b`` ``. (Backticks in cwds are rare but legal on POSIX; without this, the inline-code span breaks and corrupts the surrounding entry.)
 - **Drafted context or next-move contains triple-backtick fences or newlines**: both fields must render as **single-line strings**. If the auto-draft contains triple-backtick sequences or newlines, collapse newlines to spaces and replace each triple-backtick with single-quoted code spans (e.g., rewrite ` ```pytest tests/foo.py``` ` as `` `pytest tests/foo.py` ``). If the field cannot be reduced to a clean single line, prefix the rendered draft with `(needs manual edit — see review pane)` and rely on the user to rewrite during step 6.
-- **Low-confidence draft**: if the filtered transcript-tail set from park step 3 (after the 4 KB filter) contains fewer than 3 substantive events — defined as the union of `tool_use` events and assistant events whose text content exceeds 200 chars, each JSONL line counted at most once — prefix the draft in the review pane with `(low-confidence draft — please review carefully)`. The user is more likely to rubber-stamp a confident-looking bad draft than to rewrite from scratch; the prefix is the friction.
+- **Low-confidence draft**: if the post-extension filtered transcript-tail set from park step 3 (after the 4 KB filter, and after the 120-line extension if step 3(d) triggered it) contains fewer than 3 substantive events — defined as the union of `tool_use` events and assistant events whose text content exceeds 200 chars, each JSONL line counted at most once — prefix the draft in the review pane with `(low-confidence draft — please review carefully)`. The prefix fires only after the 120-line extension has been tried and still failed to recover signal; a 40-line tail with <3 events is not low-confidence on its own. The user is more likely to rubber-stamp a confident-looking bad draft than to rewrite from scratch; the prefix is the friction.
 
 ## Recovery
 
@@ -455,7 +482,7 @@ The check is best-effort: it succeeds inside ordinary working trees, submodules,
 
 ## Known limitations
 
-- **Concurrent destination writes are not protected.** All three write paths (`park` append, `unpark` remove, `audit` unpark) read the destination file, mutate the fenced block in memory, then write it back via the shared Fence-block mutation procedure (see Marker-fenced section). There is no file lock or atomic-rename procedure. If two `park` invocations from different sessions race against the same destination, the second writer can silently clobber the first writer's entry. This is acceptable for the v1 target persona because the asymmetry with concurrent sessions is deliberate: concurrent **sessions** in the same cwd are common (the probe-and-grep handles them — users routinely run multiple Claude Code sessions in the same project), but concurrent **parks** against the same destination are rare because parking is a deliberate teardown-time action, not steady-state work. Users tearing down many sessions in rapid succession against the same destination should serialize parks by hand.
+- **Concurrent destination writes between `park` and `unpark` are not protected.** The two non-audit write paths (`park` append, `unpark` remove) read the destination file, mutate the fenced block in memory, then write it back via the shared Fence-block mutation procedure (see Marker-fenced section). There is no inter-process file lock for these paths. If two `park` invocations from different sessions race against the same destination, the second writer can silently clobber the first writer's entry. This is acceptable for the v1 target persona because the asymmetry with concurrent sessions is deliberate: concurrent **sessions** in the same cwd are common (the probe-and-grep handles them — users routinely run multiple Claude Code sessions in the same project), but concurrent **parks** against the same destination are rare because parking is a deliberate teardown-time action, not steady-state work. Users tearing down many sessions in rapid succession against the same destination should serialize parks by hand. Audit is a separate case: it acquires an explicit audit-hold sentinel for the duration of its interactive loop (see Workflow: audit — Concurrent-audit guard), which extends the write window over interactive decision time and would otherwise create a much larger race surface than park/unpark alone. Concurrent parks during an open audit fail loudly with the canonical hold-in-progress message rather than silently racing; the user is told to rerun park after audit completes.
 - **Probe-and-grep depends on undocumented Claude Code behavior** (bash invocations logged verbatim into per-session JSONL transcripts). See "Concurrent-session disambiguation" in `park` step 2 for the failure modes and guards.
 - **Session-invocation cwd derivation depends on the user not having `cd`'d during the session.** Claude Code's bash tool persists working-directory state across invocations, so any user `cd` shifts `pwd` away from the invocation cwd that indexes the transcript directory under `~/.claude/projects/<slug>/`. When that happens, slug derivation returns a non-existent path and step 2b's no-transcripts-found message fires. This is a present-tense failure mode, not a future-contract concern: any session where the user has issued `cd` mid-session and then invokes `park` will hit this. Workaround: `cd` back to the invocation cwd before parking, or supply the session ID directly via a future flag (deferred for v2). See the corresponding Edge case for the user-facing remediation.
 - **Mechanical pieces are described in prose, not extracted as helper scripts.** Session ID derivation, fence-block I/O, and glob classification are re-derived from this document on every invocation. This is a deliberate v1 choice to keep the skill self-contained; a v2 refactor could extract `helpers/session_id.sh` and `helpers/fence_io.py` for stability and testability.
