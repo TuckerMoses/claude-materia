@@ -31,36 +31,31 @@ Read the local config at `~/.claude/plugins/data/claude-materia-claude-materia/p
 
 Claude Code does not expose the session ID via environment variable. Derive it from the active transcript file.
 
-**Canonical cwd derivation (deterministic, single mechanism):** the cwd Claude Code was invoked from for this session is read by scanning the most recent project-transcript JSONL events for a `cwd` field. Transcript events are the chosen mechanism because (a) they are persisted to disk so they survive system-reminder compaction on long sessions, (b) the schema includes the invocation cwd on every event that carries one, and (c) the most-recent event's cwd is authoritative even if the user `cd`'d before invoking Claude Code (the in-process invocation cwd is what wrote the events). The session-start system reminder is **not** used as the primary source because (i) it can be compacted away on long sessions, and (ii) it is plain text whose format is undocumented and subject to change.
+**Canonical cwd derivation (deterministic, single mechanism):** the cwd Claude Code was invoked from is the bash tool's `pwd`. Claude Code's bash tool runs in the session's invocation cwd — the harness does not change directories between bash invocations except where the user explicitly `cd`s, and even then the invocation cwd (the directory Claude Code itself was launched from) is what indexes the transcript directory. The slug is derived directly from `pwd` via a documented encoding (`/` → `-`, leading `-`); the project transcript dir is then `~/.claude/projects/<slug>/`. Within that dir, the active transcript is the most recently modified `*.jsonl`. The session-start system reminder is **not** used as the primary source because (i) it can be compacted away on long sessions, and (ii) it is plain text whose format is undocumented and subject to change.
 
 ```bash
-# Step 2a: find the candidate project directory.
+# Step 2a: derive the slug from the current cwd.
 # Claude Code stores transcripts under ~/.claude/projects/<slug>/<session-id>.jsonl
 # where <slug> is the invocation cwd with `/` replaced by `-` and a leading `-`.
-# We don't yet know the slug, so locate the most recently modified project dir as a
-# starting probe.
-recent_proj=$(ls -dt ~/.claude/projects/*/ 2>/dev/null | head -1)
-
-# Step 2b: read the cwd from the most recent transcript event that carries one.
-# Every project dir's most recent jsonl is one of this Claude Code instance's
-# candidates; jq pulls the last cwd field across that file.
-recent_jsonl=$(ls -t "${recent_proj}"*.jsonl 2>/dev/null | head -1)
-session_cwd=$(jq -r 'select(.cwd != null) | .cwd' "$recent_jsonl" 2>/dev/null | tail -1)
-
-# Step 2c: derive the slug from the cwd.
-if [ -z "$session_cwd" ]; then
-  # Fallback: ask the user. Do not use pwd — the bash tool's cwd is unreliable.
-  echo "unable to derive session cwd from transcript events; please supply the absolute path Claude Code was invoked from" >&2
-  exit 1
-fi
+session_cwd=$(pwd)
 slug=$(printf '%s' "$session_cwd" | sed 's|/|-|g')
 slug="-${slug#-}"  # ensure leading dash, strip duplicate if cwd already started with /
+proj_dir="$HOME/.claude/projects/${slug}"
 
-# Step 2d: find the most recently modified transcript in the project's session dir.
-ls -t ~/.claude/projects/${slug}/*.jsonl 2>/dev/null | head -1
+# Step 2b: fail loudly if the project dir doesn't exist.
+# This is the diagnostic for "wrong cwd" or "not an active Claude Code session."
+if [ ! -d "$proj_dir" ]; then
+  echo "no transcripts found for cwd ${session_cwd} at ${proj_dir}; is this an active Claude Code session?" >&2
+  exit 1
+fi
+
+# Step 2c: find the most recently modified transcript in the project dir.
+# This is the per-cwd disambiguator — multiple sessions in the same cwd are handled
+# by the probe-and-grep fallback below.
+ls -t "${proj_dir}"/*.jsonl 2>/dev/null | head -1
 ```
 
-The basename without `.jsonl` is the session ID. Mid-session `cd` does not change the slug — the invocation cwd is what indexes the transcript directory.
+The basename without `.jsonl` is the session ID. Mid-session `cd` does not change the slug — the invocation cwd is what indexes the transcript directory, and `pwd` reflects the invocation cwd because the harness does not silently rebase between bash calls.
 
 **Concurrent-session disambiguation (probe-and-grep fallback):** compute the time delta between the most-recently-modified transcript in the project dir and the second-most-recently-modified transcript. If that delta is **strictly less than 60 seconds** (i.e., the top two are nearly tied), the mtime trick is ambiguous and the fallback below applies. With three or more transcripts, only the top-two delta matters — older transcripts cannot be the current session. (60 seconds reflects the worst-case interval over which two sequential session starts could plausibly overlap; shorter thresholds risk false negatives — probe-and-grep skipped when sessions are actually concurrent — and longer ones impose probe latency on sequential parks.)
 
@@ -74,7 +69,7 @@ grep -l "$probe" ~/.claude/projects/${slug}/*.jsonl
 ```
 
 Failure-mode handling for the probe-and-grep:
-- **Zero matches** (transcript not yet flushed, or harness schema changed): wait 2 additional seconds and retry the grep once (the 2s retry handles transient flush delays beyond the 1s common case). If still zero, fail loudly with `unable to derive session ID via probe-and-grep — Claude Code transcript schema may have changed; please supply the session ID directly` and ask the user for the session ID.
+- **Zero matches**: wait 2 additional seconds and retry the grep once (the 2s retry handles transient flush delays beyond the 1s common case). If still zero, fail loudly with `unable to derive session ID via probe-and-grep — possible causes: (a) the bash invocation has not yet been flushed to disk after 3 total seconds (delayed-write filesystem or harness-buffered logging), or (b) Claude Code transcript schema may have changed. Please supply the session ID directly` and ask the user for the session ID.
 - **Exactly one match**: that file is this session's transcript. Proceed.
 - **More than one match**: a real probe collision is implausible because every supported `uuidgen` source produces a strong UUID (see Edge cases — `uuidgen` not available; if none of `uuidgen`, `python3 -c uuid`, or `/proc/sys/kernel/random/uuid` is available, the skill fails loudly rather than inventing a weaker probe — collision risk is unacceptable on a destructive ID-resolution path). Multiple matches therefore indicate cross-contamination of project transcripts; fail loudly with `probe-and-grep matched multiple transcripts; refusing to guess. Please supply the session ID directly`.
 
@@ -100,17 +95,26 @@ If the config has no `sections:` array (flat layout), skip classification — th
 Otherwise, iterate the `sections:` array in declaration order. The first entry whose `cwd_glob` matches the current cwd wins. Match order is **declaration order, first match wins** — no longest-match or specificity heuristics. The last entry is guaranteed to be `cwd_glob: "*"` (the catch-all) because init normalizes the array on write — it appends `name: Other, cwd_glob: "*"` itself if the user-supplied or derived array does not already end with one. The runtime `park` workflow may rely on the catch-all being present.
 
 **Glob semantics (pinned for stability across invocations):**
-- Matcher: Python 3.13+ `pathlib.PurePosixPath(cwd).full_match(glob)`. `full_match` is the only stdlib matcher that supports `**` as zero-or-more segments and matches the whole path (not just the tail). **No fallback.** If Python 3.13+ is not available, fail loudly with `glob classification requires Python 3.13+ (pathlib.PurePosixPath.full_match); please install python3.13 or newer`. Do not silently degrade to `fnmatch` or any other matcher — different glob semantics would silently re-route cwds to "Other" and break the load-bearing classification-stability invariant. (See Dependencies below.)
-- Tilde expansion: expand the **glob** to `$HOME` before matching (do not un-expand the cwd). The cwd is always passed as its absolute, tilde-free form.
-- `**` semantics under `full_match`: matches **zero or more** path segments. Examples (with `$HOME=/Users/u`):
-  - `~/workspaces/*/**` matches `/Users/u/workspaces/foo`, `/Users/u/workspaces/foo/bar`, `/Users/u/workspaces/foo/bar/baz`. Does not match `/Users/u/workspaces`.
-  - `~/projects/*` matches `/Users/u/projects/foo` only (single segment).
-  - `*` matches any cwd (catch-all).
-- Case sensitivity: matches the underlying filesystem (case-sensitive on Linux, case-insensitive on macOS HFS+/APFS-default). Pass `case_sensitive=` explicitly if overriding.
 
-## Dependencies
+Matcher: translate the glob to a regex using stdlib `re`, then `re.fullmatch(pattern, cwd)`. This is portable to any Python 3 install. The translation handles the supported glob constructs deterministically.
 
-- **Python 3.13+** is required for `park` (glob classification via `pathlib.PurePosixPath.full_match`) and as the `uuidgen` fallback for the probe-and-grep path. The skill fails loudly if Python 3.13+ is not available rather than silently degrading.
+**Glob-to-regex translation procedure** (implement inline; the agent must follow this exactly to keep classification stable across invocations):
+
+1. **Tilde expansion on the glob first.** If the glob starts with `~`, replace the leading `~` with the value of `$HOME`. Do not un-expand the cwd; the cwd is always passed as its absolute, tilde-free form.
+2. **Escape the glob with `re.escape`.** Every special character is now literal (e.g., `*` becomes `\*`, `?` becomes `\?`, `[` becomes `\[`).
+3. **Translate `**` before `*`** (order matters — `**` must be handled first so the multi-segment semantics survive). Replace each occurrence of the escaped form `\*\*` with a placeholder like `\x00DOUBLESTAR\x00` to protect it from the next step.
+4. **Translate `*`.** Replace each remaining `\*` with `[^/]*` (any number of characters except `/`).
+5. **Translate `?`.** Replace each `\?` with `[^/]` (single character except `/`).
+6. **Restore `**` placeholder to multi-segment semantics.** Replace `\x00DOUBLESTAR\x00` with `.*` (any characters, including `/`). Note: `**` matches **zero or more** path segments, so `~/workspaces/*/**` matches both `/Users/u/workspaces/foo` and `/Users/u/workspaces/foo/bar/baz`.
+7. **Translate character classes.** Replace each `\[` with `[` and the next matching `\]` with `]`. Inside the class, leave the contents as-is (re.escape already preserved them; ranges like `[a-z]` translate cleanly).
+8. **Match.** `re.fullmatch(pattern, cwd) is not None`.
+
+Examples (with `$HOME=/Users/u`):
+- `~/workspaces/*/**` → expand tilde → `/Users/u/workspaces/*/**` → escape → `/Users/u/workspaces/\*/\*\*` → translate → `/Users/u/workspaces/[^/]*/.*` → matches `/Users/u/workspaces/foo`, `/Users/u/workspaces/foo/bar`, `/Users/u/workspaces/foo/bar/baz`. Does not match `/Users/u/workspaces`.
+- `~/projects/*` → `/Users/u/projects/[^/]*` → matches `/Users/u/projects/foo` only (single segment).
+- `*` → `[^/]*` for the catch-all behavior; however since the catch-all entry is always evaluated last by declaration-order-first-match-wins and is intended to match any cwd, treat the literal pattern `*` as a special case that matches anything (translate to `.*`). Init normalizes the catch-all entry's `cwd_glob` to `*`; the matcher recognizes this single-character pattern and short-circuits to true.
+
+Case sensitivity: by default the regex is case-sensitive. To match the underlying filesystem semantics (case-insensitive on macOS HFS+/APFS-default), use `re.IGNORECASE` when running on macOS. The skill defaults to case-sensitive matching across platforms for stability — the user can override per-glob in their config if needed (v1 does not expose this; document the constraint here).
 
 ### 5. Render the entry
 
@@ -134,7 +138,7 @@ Show the user:
 
 Prompt: `Confirm, edit, or cancel?` On `edit`, allow modifications to **context**, **next-move**, and (for sub-section layouts) **sub-section assignment** only. Date, origin, and session-ID are derived and cannot be edited inline. Remediation differs by field: **date** is derived from the system-reminder `currentDate` and re-running park on a different day will produce a different date. **Session-ID** is derived deterministically per session — re-running park always lands on the same answer (or fails the same way); if it is wrong, the slug or probe-and-grep step misfired, so supply the session ID directly per the failure-mode handling in step 2. **Origin** is descriptive metadata derived from the invocation cwd — if it is wrong, edit the entry in the destination file by hand after writing. For flat layout, sub-section assignment is not offered.
 
-On confirm, apply the **Fence-block mutation procedure** (see Marker-fenced section) to insert the entry. For sub-section layouts, insert into the appropriate sub-section. For flat layout, insert directly inside the fences (treat the entire fenced block as the implicit sub-section). Most-recent entries go at the **top** of their (sub-)section (reverse chronological).
+On confirm, apply the **Fence-block mutation procedure** (see Marker-fenced section) to insert the entry. For sub-section layouts, insert into the appropriate sub-section. For flat layout, insert directly inside the fences (treat the entire fenced block as the implicit single section). Most-recent entries go at the **top** of their (sub-)section (reverse chronological).
 
 ### 7. Audit nudge (conditional)
 
@@ -215,7 +219,14 @@ Create `~/.claude/plugins/data/claude-materia-claude-materia/park-session/` if n
 
 ### 7. Initialize destination file
 
-**Pre-write fence scan.** Before any write, scan the destination file for any pre-existing `<!-- {fence_id}:start -->` or `<!-- {fence_id}:end -->` markers. If any are found (e.g., from a prior init under a different `section_header`, or because the file was hand-edited to contain literal fence strings), refuse to write and surface the canonical multi-fence error message (see Marker-fenced section), with guidance to remove the existing markers (or choose a different `fence_id`) before re-running init. This guards against init creating an inconsistent multi-fence file that every subsequent invocation would then reject.
+**Pre-write fence scan.** Before any write, scan the destination file for any pre-existing `<!-- {fence_id}:start -->` or `<!-- {fence_id}:end -->` markers and classify the result:
+
+- **Zero fences** (clean destination): proceed with the steps below to write the initial fenced block.
+- **Exactly one start-fence and exactly one end-fence in order** (legitimate single fence pair): this is the re-init happy path. Init step 1 has already obtained the user's consent to overwrite via the existing-config prompt. **Leave the existing fence pair (and any user-authored content between them) in place** and return without writing — the layout structure inside the fences is preserved across re-init. (The user's reason for re-running init is typically to change `section_header`, `fence_id`, or layout config; structural changes to the fenced block are out of scope for v1 re-init. To restructure entries inside an existing fence pair, edit by hand or remove the fences and re-run init.) If the new config specifies a different `fence_id` than what the file currently contains, fail loudly with `destination contains fence pair with id <existing>; new config specifies <new>. Migration is manual: remove the old fences from <path> by hand, then re-run init.`
+- **Singleton fence** (one start, no end, or vice versa): fail loudly with the canonical singleton-fence error message (see Marker-fenced section).
+- **Multiple start-fences or multiple end-fences**: fail loudly with the canonical multi-fence error message (see Marker-fenced section), with guidance to remove the extras before re-running init.
+
+This guards against init creating an inconsistent multi-fence file that every subsequent invocation would then refuse to mutate.
 
 If no pre-existing fences are present:
 
@@ -257,7 +268,7 @@ Argument: `<session-id>` (or substring that uniquely matches one entry's session
 
 ## Workflow: list
 
-Read the fenced block. For sub-section layouts, print all entries in their current order, grouped by sub-section. For flat layout (no sub-sections), treat the entire fenced block as the implicit single section and print entries in file order. Render each entry's header line as `**<session-id>** — parked YYYY-MM-DD (Nd ago)` (with the relative-age suffix appended after the absolute date), followed by the entry body fields indented exactly as they appear in the destination file. Suffix format: **always days**, e.g. `(parked 0d ago)`, `(parked 1d ago)`, `(parked 365d ago)`. No other units (no hours, no weeks, no years) — uniform units make the output sortable and predictable. Read-only — the destination file is unchanged.
+Read the fenced block. For sub-section layouts, print all entries in their current file-encountered order, grouped by sub-section (most recent first per the park-time reverse-chronological insert rule). For flat layout (no sub-sections), treat the entire fenced block as the implicit single section and print entries in file order (also most recent first per the same rule). Render each entry's header line as `**<session-id>** — parked YYYY-MM-DD (Nd ago)` (with the relative-age suffix appended after the absolute date), followed by the entry body fields indented exactly as they appear in the destination file. Suffix format: **always days**, e.g. `(parked 0d ago)`, `(parked 1d ago)`, `(parked 365d ago)`. No other units (no hours, no weeks, no years) — uniform units make the output sortable and predictable. Read-only — the destination file is unchanged.
 
 ## Workflow: audit
 
@@ -340,8 +351,8 @@ All write paths (`park` step 6 append, `unpark` step 4 remove, `audit` unpark ac
 
 1. Read the destination file in full.
 2. Validate the fence pair per the Rules above. Fail loudly on any violation; do not attempt to repair.
-3. Mutate only the content between the fences in memory (insert the new entry at the top of its (sub-)section for `park`; remove the matched entry's lines for `unpark` / `audit unpark`). Preserve all surrounding content — including content outside the fences, sub-section headers, blank lines, and other entries' formatting — byte-for-byte.
-4. Write the modified file back atomically (write to a sibling temp file in the same directory, then `mv` over the original) when the platform supports it; on failure, surface the underlying error and leave the destination untouched.
+3. Mutate only the entry being inserted or removed; do not reflow existing entries' whitespace, blank lines, or indentation. Match the existing inter-entry separator (typically one blank line between entries) when inserting; if the (sub-)section is empty, insert directly after the (sub-)section header with one blank line before the entry. Content outside the fences — including sub-section headers, blank lines, and other entries' formatting — is never touched and remains byte-for-byte.
+4. Write the modified file back atomically: write to a sibling temp file in the same directory, then `mv` over the original (POSIX same-directory `mv` is atomic on every filesystem the skill targets — ext4, APFS, HFS+, ZFS, NTFS-via-WSL). If the temp-file write fails, surface the underlying error and leave the destination untouched. If the `mv` fails, attempt to remove the temp file (best-effort cleanup); surface the original `mv` error to the user and leave the destination untouched.
 
 This procedure is referenced by name from each write path. Any future change to the contract (e.g., adding a `flock` advisory lock around steps 1–4 to address the concurrent-write limitation, or switching to a different atomic-write strategy) is made here once.
 
@@ -372,9 +383,16 @@ The check is best-effort: it succeeds inside ordinary working trees, submodules,
 
 - **Concurrent destination writes are not protected.** All three write paths (`park` append, `unpark` remove, `audit` unpark) read the destination file, mutate the fenced block in memory, then write it back via the shared Fence-block mutation procedure (see Marker-fenced section). There is no file lock or atomic-rename procedure. If two `park` invocations from different sessions race against the same destination, the second writer can silently clobber the first writer's entry. This is acceptable for the v1 target persona because the asymmetry with concurrent sessions is deliberate: concurrent **sessions** in the same cwd are common (the probe-and-grep handles them — users routinely run multiple Claude Code sessions in the same project), but concurrent **parks** against the same destination are rare because parking is a deliberate teardown-time action, not steady-state work. Users tearing down many sessions in rapid succession against the same destination should serialize parks by hand.
 - **Probe-and-grep depends on undocumented Claude Code behavior** (bash invocations logged verbatim into per-session JSONL transcripts). See "Concurrent-session disambiguation" in `park` step 2 for the failure modes and guards.
-- **Session-invocation cwd derivation depends on transcript event `cwd` fields.** This is undocumented internal Claude Code harness behavior. If transcript events stop including `cwd` (schema change), the slug derivation fails loudly and the user is asked to supply the absolute invocation path directly. See `park` step 2.
+- **Session-invocation cwd derivation depends on the bash tool's `pwd` reflecting the invocation cwd.** Claude Code's bash tool does not silently rebase between invocations, so `pwd` is the authoritative source for the invocation cwd that indexes the transcript directory under `~/.claude/projects/<slug>/`. If a future Claude Code release changes this contract (e.g., bash invocations run in a different working directory than the session's invocation cwd), slug derivation will return the wrong dir and the failure path in `park` step 2b ("no transcripts found for cwd X at <slug-path>") will fire. See `park` step 2.
 - **Mechanical pieces are described in prose, not extracted as helper scripts.** Session ID derivation, fence-block I/O, and glob classification are re-derived from this document on every invocation. This is a deliberate v1 choice to keep the skill self-contained; a v2 refactor could extract `helpers/session_id.sh` and `helpers/fence_io.py` for stability and testability.
-- **The init workflow is sprawling.** Init currently handles destination validation, layout selection, env-relevance-map construction, env-derived layout proposal, user-supplied catalog interpretation with inference back-stop, user-direct sub-section definition, catch-all normalization, section header configuration, free-form context capture, config schema write, destination file initialization with pre-write fence scan, fence placement, and the VCS coverage check. This is v1-acceptable but a v2 refactor candidate: factor into named sub-procedures (`validate-destination`, `propose-layout`, `write-config`, `initialize-destination-file`, `vcs-check`) with explicit handoffs.
+- **The init workflow is sprawling.** Init currently handles ~14 distinct responsibilities across ~95 lines: destination validation, layout selection, env-relevance-map construction, env-derived layout proposal, user-supplied catalog interpretation with inference back-stop, user-direct sub-section definition, catch-all normalization, section header configuration, free-form context capture, config schema write, destination file initialization with pre-write fence scan and re-init happy-path handling, fence placement, and the VCS coverage check. This is v1-acceptable but a v2 refactor candidate: factor into named sub-procedures (`validate-destination`, `propose-layout`, `write-config`, `initialize-destination-file`, `vcs-check`) with explicit handoffs. **Promotion criterion**: refactor when init grows by another ~20 lines or one more distinct responsibility, whichever comes first — at that point the documentation cost of holding all responsibilities in one workflow exceeds the cost of the structural split.
+
+## Dependencies
+
+- **Python 3** (any version) for `park` glob classification. The skill translates globs to regex via stdlib `re` and matches with `re.fullmatch` (see `park` step 4 — Glob semantics). The `re` module ships with every Python 3 install; no version constraint applies. Only `park` uses Python; `unpark`, `list`, and `audit` do not need it.
+- **A UUID source** for the `park` step 2 probe-and-grep fallback path. Any of the following suffices, tried in order: `uuidgen`, `python3 -c 'import uuid; print(uuid.uuid4())'` (uses stdlib `uuid`, works on any Python 3), or `cat /proc/sys/kernel/random/uuid` (Linux only). If none is available, the probe-and-grep fallback fails loudly — a weaker probe (`$RANDOM`, `$$`, timestamps) is not acceptable on a destructive ID-resolution path. The fallback is only invoked when the mtime-trick disambiguator is ambiguous (concurrent sessions in the same cwd within 60 seconds); the common-case `park` path never triggers it.
+- **`jq`** for parsing transcript JSONL events. Only `park` uses `jq`; `unpark`, `list`, and `audit` operate on the destination markdown file and do not need it.
+- **`git`** is optional and only used by init's VCS-coverage check (a one-time best-effort warning). The skill operates without it — the warning is informational only.
 
 ---
 
