@@ -1,6 +1,6 @@
 ---
 name: park-session
-description: Use when the user wants to bookmark a Claude Code session for later resumption — phrases like "park this session", "save this for later", "checkpoint before I step away", "remember where I left off", "I want to come back to this", or when they mention tearing down tmux/terminals but worry about losing track of in-flight work. Also triggers on "list parked sessions", "what did I park", "audit parked sessions", "unpark this", or any reference to a registry of saved session pointers.
+description: Use when the user wants to bookmark a Claude Code session for later resumption — phrases like "park this session", "save this for later", "checkpoint before I step away", "remember where I left off", "I want to come back to this", or when they mention tearing down tmux/terminals but worry about losing track of in-flight work. Also triggers on "list parked sessions", "what did I park", "audit parked sessions", "unpark <id>", or any reference to a registry of saved session pointers.
 ---
 
 # Park Session
@@ -38,11 +38,11 @@ slug=$(pwd | sed 's|/|-|g')
 ls -t ~/.claude/projects/${slug}/*.jsonl 2>/dev/null | head -1
 ```
 
-The basename without `.jsonl` is the session ID. **Concurrent-session caveat:** if multiple sessions share this cwd, the mtime trick can be ambiguous. To disambiguate, write a unique probe and grep for it:
+The basename without `.jsonl` is the session ID. **Concurrent-session caveat:** if multiple sessions share this cwd, the mtime trick can be ambiguous. To disambiguate, exploit the fact that Claude Code logs every bash tool invocation (the literal command string, including arguments) into the current session's JSONL transcript. Issue a bash command containing a unique probe string, then grep the project's transcripts for that probe — the only transcript that contains it is this session's:
 
 ```bash
 probe="park-probe-$(uuidgen)"
-echo "$probe" > /dev/null
+echo "$probe" > /dev/null    # output discarded; the bash invocation itself is what gets logged to the JSONL transcript
 grep -l "$probe" ~/.claude/projects/${slug}/*.jsonl
 ```
 
@@ -59,7 +59,9 @@ If the user's `context` field in the local config has guidance about phrasing or
 
 ### 4. Classify the cwd into a sub-section
 
-Iterate the `sections:` array in config in declaration order. The first entry whose `cwd_glob` matches the current cwd wins. Match order is **declaration order, first match wins** — no longest-match or specificity heuristics. The user's last entry should have `cwd_glob: "*"` to serve as catch-all.
+If the config has no `sections:` array (flat layout), skip classification — the entry will be appended directly inside the fenced block with no sub-section. Proceed to step 5.
+
+Otherwise, iterate the `sections:` array in declaration order. The first entry whose `cwd_glob` matches the current cwd wins. Match order is **declaration order, first match wins** — no longest-match or specificity heuristics. The user's last entry must have `cwd_glob: "*"` to serve as catch-all (enforced during init for any layout that uses sub-sections).
 
 Glob semantics: standard shell-style globs against the absolute cwd. Tilde-prefixed patterns expand to `$HOME`. `**` matches any number of path segments.
 
@@ -120,11 +122,16 @@ Options:
 - **(b) Sub-sections derived from a catalog** — point at a markdown file describing your organizational structure (kinds index, GTD areas, project taxonomy) and the skill proposes sub-sections from it.
 - **(c) Sub-sections you define directly** — list the sub-section names, and for each one a cwd glob pattern.
 
-For (b): ask for the catalog path. Read it. Derive sub-section names and cwd glob patterns by inspecting the catalog's structure. This is interpreted by the agent (Claude), not by regex — read the catalog like a human would, identify organizational categories, and propose `name + cwd_glob` for each. Present the proposal as YAML for the user to review and edit.
+For (b), follow this precedence:
+
+1. **Auto-derived path (preferred).** If the Environment section's discovery has already produced a Park Layout proposal from `~/.claude/env/`, present that proposal first as a YAML draft for the user to review, edit, or reject.
+2. **User-supplied path (fallback).** If no auto-derived proposal exists (bare environment, environment misconfigured, or the user rejected the auto-derived proposal), ask the user for a catalog path. Read it. Derive sub-section names and cwd glob patterns by inspecting the catalog's structure.
+
+Either way, derivation is interpreted by the agent (Claude), not by regex — read the catalog like a human would, identify organizational categories, and propose `name + cwd_glob` for each. Present the proposal as YAML for the user to review and edit.
 
 For (c): ask the user to provide names and globs directly.
 
-For all paths: append a final section `name: Other, cwd_glob: "*"` as the catch-all. This is required — without it, sessions in unmatched cwds cannot be classified.
+For any layout that uses sub-sections (i.e., (b) and (c)): append a final section `name: Other, cwd_glob: "*"` as the catch-all. This is required for sub-section layouts — without it, sessions in unmatched cwds cannot be classified. Flat layout (a) has no `sections:` array and therefore no catch-all requirement.
 
 ### 4. Question 3 — section header
 
@@ -181,7 +188,7 @@ Read the fenced block. Print all entries in their current order, grouped by sub-
 Read the fenced block. Sort entries oldest-first across all sub-sections. For each, show the entry and prompt: keep / unpark / skip / quit.
 
 - **keep**: leaves the entry as-is, moves to the next.
-- **unpark**: removes the entry (no separate confirmation since audit is itself the review step).
+- **unpark**: removes the entry directly (audit performs the write itself — do not invoke the `unpark` subcommand path, since audit's per-entry prompt is itself the review step that the standalone `unpark` confirmation provides).
 - **skip**: same as keep but signals "I looked at this and explicitly decided not to act." No state change in v1.
 - **quit**: stops the audit loop.
 
@@ -213,8 +220,9 @@ sections:
 ```
 
 **Validation rules:**
-- Every section must have `cwd_glob`. No exceptions.
-- The last section's `cwd_glob` should be `"*"` so unmatched cwds always classify. If it isn't, warn the user during init.
+- For sub-section layouts: every section must have `cwd_glob`. No exceptions.
+- For sub-section layouts: the last section's `cwd_glob` must be `"*"` so unmatched cwds always classify. If it isn't, warn the user during init.
+- For flat layout: the `sections:` array is omitted entirely. No catch-all is required because no classification is performed.
 - `fence_id` becomes the marker string: `<!-- {fence_id}:start -->` / `<!-- {fence_id}:end -->`.
 
 ## Marker-fenced section
@@ -260,8 +268,8 @@ This skill extends with environment context. Unlike workflow skills that read th
 During `init`:
 
 1. Check if `~/.claude/env/` exists.
-   - If `~/.claude/env/` does not exist: bare environment. Skip the catalog-introspection option (b) in question 2. Tell the user no environment was found.
-   - If `~/.claude/env/` exists but `index.md` is absent or unreadable: warn the user that the environment appears misconfigured. Do not silently degrade.
+   - If `~/.claude/env/` does not exist: bare environment. Skip the auto-derivation steps (2–5) below. Option (b) in question 2 remains available as a user-supplied catalog path. Tell the user no environment was found.
+   - If `~/.claude/env/` exists but `index.md` is absent or unreadable: warn the user that the environment appears misconfigured. Skip auto-derivation; option (b) still falls back to a user-supplied catalog path. Do not silently degrade.
    - If `~/.claude/env/index.md` exists: proceed to step 2.
 2. Read the index to discover available environment heuristics.
 3. Produce a **relevance map**: for each entry in the index, state whether it could inform the destination choice or sub-section structure, and a brief rationale. No silent dropping.
