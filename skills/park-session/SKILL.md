@@ -35,7 +35,28 @@ Claude Code does not expose the session ID via environment variable. Derive it f
 
 If the user has issued `cd` mid-session, `pwd` no longer reflects the invocation cwd; the derived slug will not match any transcript dir, and step 2b below fails loudly with the no-transcripts-found message. See the Edge case for the workaround.
 
-Run all of step 2 as a single bash invocation — the Claude Code Bash tool does not share shell state across calls, so variables (`$slug`, `$proj_dir`, `$active_transcript`) defined in one block are undefined in the next. The block below derives the slug, validates the project dir, and captures the active transcript path in one shot.
+Run the entire transcript-handling surface (slug derivation + project-dir validation + disambiguation + tail-read) as a **single bash invocation**. The Claude Code Bash tool does not share shell state across calls, so variables (`$slug`, `$proj_dir`, `$active_transcript`) defined in one block are undefined in the next. The consolidated block below derives the slug, validates the project dir, picks the correct transcript across the three disambiguation cases, and emits its last 40 lines (the tail consumed by step 3) — all in one shot, no cross-call handoff.
+
+**Slug encoding rule:** both `/` and `.` are replaced with `-`. Examples:
+- `/Users/u/projects/foo` → `-Users-u-projects-foo`
+- `/Users/u/.claude/foo` → `-Users-u--claude-foo` (note the double hyphen: `/` before `.claude` becomes `-`, and the leading `.` of `.claude` also becomes `-`)
+- `/Users/u/projects/foo.bar` → `-Users-u-projects-foo-bar`
+
+The basename without `.jsonl` is the session ID. The slug derivation requires that the user has not issued `cd` since the session started; if they have, the project-dir check inside the consolidated block (step 2b below) will fail loudly because the constructed `proj_dir` will not exist (see Edge cases).
+
+**Concurrent-session disambiguation (probe-and-grep fallback):** count the transcripts in the project dir, then compute the time delta between the most-recently-modified transcript and the second-most-recently-modified transcript. The disambiguation logic:
+
+- **Exactly one transcript**: that transcript is this session's by definition. Skip both the delta check and the probe-and-grep — there is nothing to disambiguate against. This is the common case on the first park in a fresh project dir.
+- **Two or more transcripts, top-two delta ≥ 60 seconds**: the most recent transcript is unambiguously this session's (a 60-second gap is large enough that two sessions could not have started within it). Use it.
+- **Two or more transcripts, top-two delta < 60 seconds**: the mtime trick is ambiguous (the top two are nearly tied). Fall through to the probe-and-grep below.
+
+(60 seconds reflects the worst-case interval over which two sequential session starts could plausibly overlap; shorter thresholds risk false negatives — probe-and-grep skipped when sessions are actually concurrent — and longer ones impose probe latency on sequential parks. With three or more transcripts, only the top-two delta matters — older transcripts cannot be the current session.)
+
+Mtimes are computed portably using Python (`os.path.getmtime`) — `stat` flags differ between macOS BSD (`stat -f %m`) and GNU Linux (`stat -c %Y`); the Python form works on both with no flag selection.
+
+The probe-and-grep fallback exploits the fact that Claude Code logs every bash tool invocation (the literal command string, including arguments) into the current session's JSONL transcript. Issue a bash command containing a unique probe string, then grep the project's transcripts for that probe — the only transcript that contains it is this session's.
+
+The consolidated block below performs all of step 2 — slug derivation (2a), project-dir validation (2b), disambiguation across the three cases (2c), and the tail-read that step 3 consumes (2d) — in one bash invocation. The single-transcript, unambiguous-mtime, and probe-and-grep paths converge on a shared `$active_transcript` variable, which step 2d tails. No cross-Bash-call handoff: the disambiguation outcome is consumed in the same shell.
 
 ```bash
 # Step 2a: derive the slug from the current cwd.
@@ -58,91 +79,67 @@ if [ ! -d "$proj_dir" ]; then
   exit 1
 fi
 
-# Step 2c: capture the most recently modified transcript in the project dir.
-# This is the per-cwd disambiguator — multiple sessions in the same cwd are handled
-# by the probe-and-grep fallback below. Captured into $active_transcript so subsequent
-# steps in this same bash block can reference it without re-running the ls.
-active_transcript=$(ls -t "${proj_dir}"/*.jsonl 2>/dev/null | head -1)
-echo "$active_transcript"
-```
-
-**Slug encoding rule:** both `/` and `.` are replaced with `-`. Examples:
-- `/Users/u/projects/foo` → `-Users-u-projects-foo`
-- `/Users/u/.claude/foo` → `-Users-u--claude-foo` (note the double hyphen: `/` before `.claude` becomes `-`, and the leading `.` of `.claude` also becomes `-`)
-- `/Users/u/projects/foo.bar` → `-Users-u-projects-foo-bar`
-
-The basename without `.jsonl` is the session ID. The slug derivation requires that the user has not issued `cd` since the session started; if they have, step 2b will fail loudly because the constructed `proj_dir` will not exist (see Edge cases).
-
-**Concurrent-session disambiguation (probe-and-grep fallback):** count the transcripts in the project dir, then compute the time delta between the most-recently-modified transcript and the second-most-recently-modified transcript. The disambiguation logic:
-
-- **Exactly one transcript**: that transcript is this session's by definition. Skip both the delta check and the probe-and-grep — there is nothing to disambiguate against. This is the common case on the first park in a fresh project dir.
-- **Two or more transcripts, top-two delta ≥ 60 seconds**: the most recent transcript is unambiguously this session's (a 60-second gap is large enough that two sessions could not have started within it). Use it.
-- **Two or more transcripts, top-two delta < 60 seconds**: the mtime trick is ambiguous (the top two are nearly tied). Fall through to the probe-and-grep below.
-
-(60 seconds reflects the worst-case interval over which two sequential session starts could plausibly overlap; shorter thresholds risk false negatives — probe-and-grep skipped when sessions are actually concurrent — and longer ones impose probe latency on sequential parks. With three or more transcripts, only the top-two delta matters — older transcripts cannot be the current session.)
-
-Mtimes are computed portably using Python (`os.path.getmtime`) — `stat` flags differ between macOS BSD (`stat -f %m`) and GNU Linux (`stat -c %Y`); the Python form works on both with no flag selection.
-
-The probe-and-grep fallback exploits the fact that Claude Code logs every bash tool invocation (the literal command string, including arguments) into the current session's JSONL transcript. Issue a bash command containing a unique probe string, then grep the project's transcripts for that probe — the only transcript that contains it is this session's.
-
-Run the entire disambiguation step (transcript count, mtime delta, probe-and-grep emission) as a **single bash invocation** so the shell-state question doesn't recur. The block re-derives `$slug` and `$proj_dir` inline at the top because Bash tool invocations do not share shell state across calls:
-
-```bash
-# Re-derive slug and proj_dir inline (Bash tool calls don't share shell state).
-session_cwd=$(pwd)
-slug=$(printf '%s' "$session_cwd" | sed -e 's|/|-|g' -e 's|\.|-|g')
-slug="-${slug#-}"
-proj_dir="$HOME/.claude/projects/${slug}"
+# Step 2c: pick the active transcript across the three disambiguation cases.
+# The single, unambiguous-mtime, and probe-and-grep paths all converge on a
+# single $active_transcript variable that step 2d then tails.
 
 # Single-transcript guard: with exactly one transcript, that file is this session's
 # by definition. Skip the delta check and the probe-and-grep entirely.
 transcript_count=$(ls -t "${proj_dir}"/*.jsonl 2>/dev/null | wc -l | tr -d ' ')
 if [ "$transcript_count" -le 1 ]; then
-  echo "single-transcript: $(ls -t "${proj_dir}"/*.jsonl 2>/dev/null | head -1)"
-  exit 0
+  active_transcript=$(ls -t "${proj_dir}"/*.jsonl 2>/dev/null | head -1)
+else
+  # Two-or-more transcripts: compute the top-two mtime delta portably.
+  mtime() { python3 -c 'import os, sys; print(int(os.path.getmtime(sys.argv[1])))' "$1"; }
+  top_two=$(ls -t "${proj_dir}"/*.jsonl 2>/dev/null | head -2)
+  t1=$(mtime "$(echo "$top_two" | sed -n 1p)")
+  t2=$(mtime "$(echo "$top_two" | sed -n 2p)")
+  delta=$((t1 - t2))
+
+  if [ "$delta" -ge 60 ]; then
+    # Unambiguous: top two are >= 60s apart, the most recent is this session's.
+    active_transcript=$(echo "$top_two" | sed -n 1p)
+  else
+    # Ambiguous (delta < 60): probe-and-grep. The bash invocation itself gets logged
+    # to the JSONL transcript, so grepping for the probe string identifies the
+    # current session's transcript.
+    probe="park-probe-$(uuidgen)"
+    echo "$probe" > /dev/null    # output discarded; the bash invocation itself is what gets logged
+    sleep 1                       # initial flush wait; succeeds in the common case
+    matches=$(grep -l "$probe" "${proj_dir}"/*.jsonl 2>/dev/null)
+    if [ -z "$matches" ]; then
+      sleep 2                     # 2s retry handles transient flush delays beyond the 1s common case
+      matches=$(grep -l "$probe" "${proj_dir}"/*.jsonl 2>/dev/null)
+    fi
+    match_count=$(printf '%s\n' "$matches" | grep -c .)
+    if [ "$match_count" -eq 0 ]; then
+      echo "unable to derive session ID via probe-and-grep — possible causes: (a) the bash invocation has not yet been flushed to disk after 3 total seconds (delayed-write filesystem or harness-buffered logging), or (b) Claude Code transcript schema may have changed. Please supply the session ID directly" >&2
+      exit 1
+    elif [ "$match_count" -gt 1 ]; then
+      echo "probe-and-grep matched multiple transcripts; refusing to guess. Please supply the session ID directly" >&2
+      exit 1
+    fi
+    active_transcript="$matches"
+  fi
 fi
 
-# Two-or-more transcripts: compute the top-two mtime delta portably.
-mtime() { python3 -c 'import os, sys; print(int(os.path.getmtime(sys.argv[1])))' "$1"; }
-top_two=$(ls -t "${proj_dir}"/*.jsonl 2>/dev/null | head -2)
-t1=$(mtime "$(echo "$top_two" | sed -n 1p)")
-t2=$(mtime "$(echo "$top_two" | sed -n 2p)")
-delta=$((t1 - t2))
-
-# If the top two are >= 60s apart, the most recent is unambiguously this session's.
-if [ "$delta" -ge 60 ]; then
-  echo "unambiguous-mtime: $(echo "$top_two" | sed -n 1p)"
-  exit 0
-fi
-
-# Otherwise (delta < 60), emit the probe so the grep below can disambiguate.
-probe="park-probe-$(uuidgen)"
-echo "$probe" > /dev/null    # output discarded; the bash invocation itself is what gets logged to the JSONL transcript
-sleep 1                       # initial flush wait; succeeds in the common case
-grep -l "$probe" "${proj_dir}"/*.jsonl
-```
-
-Failure-mode handling for the probe-and-grep:
-- **Zero matches**: wait 2 additional seconds and retry the grep once (the 2s retry handles transient flush delays beyond the 1s common case). If still zero, fail loudly with `unable to derive session ID via probe-and-grep — possible causes: (a) the bash invocation has not yet been flushed to disk after 3 total seconds (delayed-write filesystem or harness-buffered logging), or (b) Claude Code transcript schema may have changed. Please supply the session ID directly` and ask the user for the session ID.
-- **Exactly one match**: that file is this session's transcript. Proceed.
-- **More than one match**: a real probe collision is implausible because every supported `uuidgen` source produces a strong UUID (see Edge cases — `uuidgen` not available; if none of `uuidgen`, `python3 -c uuid`, or `/proc/sys/kernel/random/uuid` is available, the skill fails loudly rather than inventing a weaker probe — collision risk is unacceptable on a destructive ID-resolution path). Multiple matches therefore indicate cross-contamination of project transcripts; fail loudly with `probe-and-grep matched multiple transcripts; refusing to guess. Please supply the session ID directly`.
-
-**Known fragility:** this fallback depends on Claude Code logging bash tool invocations verbatim into the per-session JSONL transcript. This is undocumented internal harness behavior and may break across Claude Code versions. The fail-loud guards above are the defense.
-
-### 3. Read the transcript tail and draft entry fields
-
-The active transcript path was captured into `$active_transcript` in step 2c. Because Bash tool invocations don't share shell state, re-derive the path inline at the start of step 3's bash block (or, when an unambiguous match was found via probe-and-grep, use that path):
-
-```bash
-session_cwd=$(pwd)
-slug=$(printf '%s' "$session_cwd" | sed -e 's|/|-|g' -e 's|\.|-|g')
-slug="-${slug#-}"
-proj_dir="$HOME/.claude/projects/${slug}"
-active_transcript=$(ls -t "${proj_dir}"/*.jsonl 2>/dev/null | head -1)
+# Step 2d: emit the last 40 lines of the chosen transcript on stdout. Step 3
+# consumes this output (the captured tail) to synthesize Context and Next-move.
 tail -40 "$active_transcript"
 ```
 
-Process the transcript tail in this order: (a) read the last 40 lines of `$active_transcript` (`tail -40`); (b) filter out tool-result events larger than 4 KB (typically large file reads or command output) — they bloat the read budget without adding signal; (c) within the filtered set, count **substantive events** as the union of (i) `tool_use` events and (ii) assistant events whose text content exceeds 200 chars — each JSONL line counts at most once; (d) if the count is below 3, apply the low-confidence prefix per Edge cases. If the filtered set yields fewer than 3 substantive events, optionally read an additional 40 lines and re-filter, stopping after at most 120 lines total.
+Failure-mode notes for the probe-and-grep path inside the consolidated block:
+- **Zero matches after the 2s retry** (3 seconds total wait): the block exits non-zero with the canonical message above; ask the user for the session ID directly.
+- **Exactly one match**: that file is this session's transcript. Captured into `$active_transcript` and tailed by step 2d.
+- **More than one match**: a real probe collision is implausible because every supported UUID source produces a strong UUID (see Edge cases — `uuidgen` not available; if none of `uuidgen`, `python3 -c uuid`, or `/proc/sys/kernel/random/uuid` is available, the skill fails loudly rather than inventing a weaker probe — collision risk is unacceptable on a destructive ID-resolution path). Multiple matches therefore indicate cross-contamination of project transcripts; the block exits non-zero with the canonical multi-match message above.
+
+**Known fragility:** the probe-and-grep fallback depends on Claude Code logging bash tool invocations verbatim into the per-session JSONL transcript. This is undocumented internal harness behavior and may break across Claude Code versions. The fail-loud guards above are the defense.
+
+### 3. Process the transcript tail and draft entry fields
+
+Step 2's consolidated block emitted the chosen transcript's last 40 lines on stdout. Step 3 is **prose-only — no bash invocation** — it processes that captured tail to synthesize the entry fields. (Folding the tail-read into step 2 excises the cross-Bash-call handoff that previously discarded the disambiguation result on the probe-and-grep path.)
+
+Process the captured tail in this order: (a) take the 40 lines emitted by step 2d as the working set; (b) filter out tool-result events larger than 4 KB (typically large file reads or command output) — they bloat the read budget without adding signal; (c) within the filtered set, count **substantive events** as the union of (i) `tool_use` events and (ii) assistant events whose text content exceeds 200 chars — each JSONL line counts at most once; (d) if the count is below 3, apply the low-confidence prefix per Edge cases. If the filtered set yields fewer than 3 substantive events, re-run step 2's bash block with `tail -120` substituted for `tail -40` (the consolidated block re-derives everything inline as before) and re-filter, stopping after at most 120 lines total.
 
 Synthesize from the filtered set:
 
