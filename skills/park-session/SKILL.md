@@ -73,20 +73,19 @@ echo "$active_transcript"
 
 The basename without `.jsonl` is the session ID. The slug derivation requires that the user has not issued `cd` since the session started; if they have, step 2b will fail loudly because the constructed `proj_dir` will not exist (see Edge cases).
 
-**Concurrent-session disambiguation (probe-and-grep fallback):** compute the time delta between the most-recently-modified transcript in the project dir and the second-most-recently-modified transcript. If that delta is **strictly less than 60 seconds** (i.e., the top two are nearly tied), the mtime trick is ambiguous and the fallback below applies. With three or more transcripts, only the top-two delta matters — older transcripts cannot be the current session. (60 seconds reflects the worst-case interval over which two sequential session starts could plausibly overlap; shorter thresholds risk false negatives — probe-and-grep skipped when sessions are actually concurrent — and longer ones impose probe latency on sequential parks.)
+**Concurrent-session disambiguation (probe-and-grep fallback):** count the transcripts in the project dir, then compute the time delta between the most-recently-modified transcript and the second-most-recently-modified transcript. The disambiguation logic:
 
-Compute mtimes portably using Python — `stat` flags differ between macOS BSD (`stat -f %m`) and GNU Linux (`stat -c %Y`). The Python form below works on both with a single line and no flag selection:
+- **Exactly one transcript**: that transcript is this session's by definition. Skip both the delta check and the probe-and-grep — there is nothing to disambiguate against. This is the common case on the first park in a fresh project dir.
+- **Two or more transcripts, top-two delta ≥ 60 seconds**: the most recent transcript is unambiguously this session's (a 60-second gap is large enough that two sessions could not have started within it). Use it.
+- **Two or more transcripts, top-two delta < 60 seconds**: the mtime trick is ambiguous (the top two are nearly tied). Fall through to the probe-and-grep below.
 
-```bash
-mtime() { python3 -c 'import os, sys; print(int(os.path.getmtime(sys.argv[1])))' "$1"; }
-top_two=$(ls -t "${proj_dir}"/*.jsonl 2>/dev/null | head -2)
-t1=$(mtime "$(echo "$top_two" | sed -n 1p)")
-t2=$(mtime "$(echo "$top_two" | sed -n 2p)")
-delta=$((t1 - t2))
-# If delta < 60, fall through to probe-and-grep below.
-```
+(60 seconds reflects the worst-case interval over which two sequential session starts could plausibly overlap; shorter thresholds risk false negatives — probe-and-grep skipped when sessions are actually concurrent — and longer ones impose probe latency on sequential parks. With three or more transcripts, only the top-two delta matters — older transcripts cannot be the current session.)
 
-The fallback exploits the fact that Claude Code logs every bash tool invocation (the literal command string, including arguments) into the current session's JSONL transcript. Issue a bash command containing a unique probe string, then grep the project's transcripts for that probe — the only transcript that contains it is this session's. Re-derive `$slug` and `$proj_dir` inline because Bash tool invocations do not share shell state across calls:
+Mtimes are computed portably using Python (`os.path.getmtime`) — `stat` flags differ between macOS BSD (`stat -f %m`) and GNU Linux (`stat -c %Y`); the Python form works on both with no flag selection.
+
+The probe-and-grep fallback exploits the fact that Claude Code logs every bash tool invocation (the literal command string, including arguments) into the current session's JSONL transcript. Issue a bash command containing a unique probe string, then grep the project's transcripts for that probe — the only transcript that contains it is this session's.
+
+Run the entire disambiguation step (transcript count, mtime delta, probe-and-grep emission) as a **single bash invocation** so the shell-state question doesn't recur. The block re-derives `$slug` and `$proj_dir` inline at the top because Bash tool invocations do not share shell state across calls:
 
 ```bash
 # Re-derive slug and proj_dir inline (Bash tool calls don't share shell state).
@@ -95,6 +94,28 @@ slug=$(printf '%s' "$session_cwd" | sed -e 's|/|-|g' -e 's|\.|-|g')
 slug="-${slug#-}"
 proj_dir="$HOME/.claude/projects/${slug}"
 
+# Single-transcript guard: with exactly one transcript, that file is this session's
+# by definition. Skip the delta check and the probe-and-grep entirely.
+transcript_count=$(ls -t "${proj_dir}"/*.jsonl 2>/dev/null | wc -l | tr -d ' ')
+if [ "$transcript_count" -le 1 ]; then
+  echo "single-transcript: $(ls -t "${proj_dir}"/*.jsonl 2>/dev/null | head -1)"
+  exit 0
+fi
+
+# Two-or-more transcripts: compute the top-two mtime delta portably.
+mtime() { python3 -c 'import os, sys; print(int(os.path.getmtime(sys.argv[1])))' "$1"; }
+top_two=$(ls -t "${proj_dir}"/*.jsonl 2>/dev/null | head -2)
+t1=$(mtime "$(echo "$top_two" | sed -n 1p)")
+t2=$(mtime "$(echo "$top_two" | sed -n 2p)")
+delta=$((t1 - t2))
+
+# If the top two are >= 60s apart, the most recent is unambiguously this session's.
+if [ "$delta" -ge 60 ]; then
+  echo "unambiguous-mtime: $(echo "$top_two" | sed -n 1p)"
+  exit 0
+fi
+
+# Otherwise (delta < 60), emit the probe so the grep below can disambiguate.
 probe="park-probe-$(uuidgen)"
 echo "$probe" > /dev/null    # output discarded; the bash invocation itself is what gets logged to the JSONL transcript
 sleep 1                       # initial flush wait; succeeds in the common case
@@ -226,7 +247,7 @@ Ask: *"Where should I write parked-session entries?"*
 No default. Validate the path with these rules:
 
 - **Relative path**: reject with `absolute paths only — please re-supply a path beginning with / or ~`. Do not silently expand against any base.
-- **Tilde-prefixed path** (e.g., `~/notes.md`): expand to `$HOME` and proceed.
+- **Tilde-prefixed path**: only bare `~/` (followed by `/`) is supported; expand to `$HOME` via `os.path.expanduser` and proceed (e.g., `~/notes.md` → `$HOME/notes.md`). Reject `~user/...` (tilde-with-username) forms with `unsupported tilde form in destination '<path>': only ~/ is supported, not ~user`. This mirrors the `cwd_glob` tilde-form rule (see Local config schema validation rules) so the two config fields share one tilde contract.
 - **Path is an existing directory**: reject with `<path> is a directory; please supply a file path`.
 - **Parent directory does not exist** (one or more missing levels): prompt `parent directory <parent> does not exist. OK to create it? (y/n)`. On `y`, `mkdir -p <parent>` and proceed. On `n`, restart this question. (Skill-owned data directories under `~/.claude/plugins/data/` are created freely by step 6 because they are part of the skill's own footprint; user-owned content paths require explicit consent because they shape the user's filesystem.)
 - **File does not exist** (parent exists): offer to create it. If declined, restart this question.
