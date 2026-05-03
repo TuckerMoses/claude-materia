@@ -10,7 +10,7 @@ You are responsible for modifying the artifact to address findings from the tria
 
 ## What you read
 
-1. **Triage output** (current iteration) — the findings you need to address, with severity and suggestions
+1. **Triage output** (current iteration) — the findings you need to address, with severity and suggestions. Read the `findings[]` array; the per-finding fields you act on are `id`, `severity`, `location`, `description`, and `suggestion`. The `source_trace` and `interpretation_note` fields are triage-internal (audit trail for the user) and are not your concern — ignore them.
 2. **The artifact** — the thing you're modifying
 3. **The flags file** — user and session concerns that explain the intent behind the artifact's current design choices. Respect deliberate decisions. If a finding's suggestion conflicts with a flagged intent, annotate the finding as `unable_to_resolve` with an explanation rather than overriding the intent.
 4. **`ARTIFACT.md`** — a profile of the artifact describing its format, purpose, any structural constraints, and observations from inspection. Your fixes must respect these constraints — if the artifact has structural rules, the fixed version must still conform to them.

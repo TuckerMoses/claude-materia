@@ -12,7 +12,9 @@ claude-materia/
 ├── skills/
 │   ├── adversarial-review/  # Multi-agent artifact review loop
 │   │   ├── SKILL.md
-│   │   └── agents/          # Skill-local agents (coherence, design, detail, triage, fixer)
+│   │   ├── agents/          # System agents (triage, fixer, auditor)
+│   │   └── defaults/
+│   │       └── reviewers/   # Bundled default reviewers (coherence, design, detail)
 │   ├── sidechat/            # Tmux-based session spawner
 │   │   └── SKILL.md
 │   └── session-planner/     # Todo-to-tmux workspace launcher
@@ -26,8 +28,9 @@ claude-materia/
 
 - **Every skill is portable.** No references to specific environment paths, user-specific heuristics, or config management tools. Skills work in bare environments with sensible defaults.
 - **Every skill has an `## Environment` section.** This is the extension point — if `~/.claude/env/index.md` exists, the skill reads it and adapts. If not, it proceeds without.
-- **Skill-local agents live with their skill.** Adversarial-review's reviewer/triage/fixer agents are in `skills/adversarial-review/agents/`, not in the top-level `agents/` directory. Top-level `agents/` is for portable agents that any skill or session can dispatch.
-- **No session data in the repo.** Session artifacts are runtime data created by skills at execution time. They live on the user's filesystem, not here.
+- **Skill-local agents live with their skill.** Adversarial-review's system agents (triage, fixer, auditor) are in `skills/adversarial-review/agents/`. Bundled default reviewers are in `skills/adversarial-review/defaults/reviewers/`. Top-level `agents/` is for portable agents that any skill or session can dispatch.
+- **Consumer-side contract enforcement.** Adversarial-review accepts user-supplied reviewer agents via configuration or invocation flags. The loop's contract is enforced by a semantic audit (the auditor agent) at session start, not by tags or schema requirements on the agent files. This makes reviewer agents portable across skills.
+- **No session data in the repo.** Session artifacts are runtime data created by skills at execution time. They live in user state at `~/.claude/plugins/data/claude-materia-claude-materia/sessions/`, not under the skill install. The `~/.claude/plugins/data/<plugin>-<marketplace>/` path is the Claude Code-canonical user-state location for plugin-managed data — it survives plugin updates and is writable at runtime even when the skill install path is read-only. The audit cache lives in the same directory (`audit-cache.json`).
 
 ## Adding a New Skill
 
