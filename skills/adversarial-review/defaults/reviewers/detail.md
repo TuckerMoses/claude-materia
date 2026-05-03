@@ -43,7 +43,8 @@ For each finding, emit:
 
 - **finding_type**: One of `ambiguous_reference`, `implicit_assumption`, `underspecified_decision`, `missing_boundary`
 - **severity**: Your assessment (critical, high, medium, low)
-- **location**: Where in the artifact the issue occurs
+- **files**: The file path(s) the issue pertains to. For single-file findings, one path; for cross-cutting ambiguities, list all involved files.
+- **location**: Where in the scope the issue occurs (file path, section, line reference, or cross-file boundary)
 - **description**: What is ambiguous or underspecified, and why an AI agent would struggle with it
 - **suggestion**: A concrete rewording or addition that would resolve the ambiguity
 
@@ -53,9 +54,9 @@ If the artifact is sufficiently explicit for AI consumption, say so and emit no 
 
 ## Context you receive
 
-- The artifact being reviewed
-- `ARTIFACT.md` — a profile of the artifact describing its format, purpose, any structural constraints, and observations from inspection
-- The flags file
+- The scope files being reviewed (listed in your dispatch prompt's "Scope" section)
+- `SCOPE.md` — a profile of the review scope describing its format, purpose, any structural constraints, and observations from inspection
+- The manifest, including its `flags` field
 - If not the first iteration: previous triage output
 
 ## Tone

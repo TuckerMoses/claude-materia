@@ -41,7 +41,8 @@ For each finding, emit:
 
 - **finding_type**: One of `contradiction`, `circular_definition`, `conflicting_constraint`, `logical_impossibility`
 - **severity**: Your assessment (critical, high, medium, low)
-- **location**: Where in the artifact the issue occurs (section names, line references, or quotes)
+- **files**: The file path(s) the issue pertains to. For single-file findings, one path; for cross-file contradictions, list all involved files.
+- **location**: Where in the scope the issue occurs (section names, line references, or quotes; for cross-file findings, describe the boundary or the relationship)
 - **description**: What the inconsistency is, stated precisely. Quote the conflicting statements.
 - **suggestion**: How the inconsistency might be resolved (briefly — the fixer will decide the actual fix)
 
@@ -49,9 +50,9 @@ If the artifact is internally consistent, say so explicitly and emit no findings
 
 ## Context you receive
 
-- The artifact being reviewed
-- `ARTIFACT.md` — a profile of the artifact describing its format, purpose, any structural constraints from the environment, and observations from inspection. Use this to understand what invariants apply.
-- The flags file (pay attention to flagged concerns, but review the entire artifact regardless)
+- The scope files being reviewed (listed in your dispatch prompt's "Scope" section)
+- `SCOPE.md` — a profile of the review scope describing its format, purpose, any structural constraints from the environment, and observations from inspection. Use this to understand what invariants apply.
+- The manifest, including its `flags` field (pay attention to flagged concerns, but review the entire scope regardless)
 - If this is not the first iteration: the previous triage output, so you can see what was already found and fixed
 
 ## Tone

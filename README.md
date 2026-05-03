@@ -21,7 +21,7 @@ claude plugin install claude-materia@claude-materia
 
 | Materia | Type | What it does |
 |---------|------|-------------|
-| **adversarial-review** | Command | Multi-agent review loop for artifacts. Ships with three default reviewers (coherence, design, detail) and accepts user-supplied reviewers via env config or `--reviewers <ref>`. Dispatches reviewers, triage to synthesize and assign severity, and a fixer to apply changes. Loops until clean, then promotes to opus for final verification. |
+| **adversarial-review** | Command | Multi-agent review loop for a scope (one file, many files, or a YAML manifest declaring intent + locations). Ships with three default reviewers (coherence, design, detail) and accepts user-supplied reviewers via env config or `--reviewers <ref>`. Dispatches reviewers, triage to synthesize and route, fixer to apply changes, scribe to author the final summary. Loops until clean, then promotes to opus for final verification. |
 | **sidechat** | Support | Spins off a tangent into a new tmux window with its own Claude Code session. The new session gets a context briefing so it hits the ground running. Your current conversation continues uninterrupted. |
 | **session-planner** | Support | Turns a list of todos into a live tmux workspace. Analyzes tasks, decides which need Claude Code vs raw terminal, proposes a layout, and launches everything with context-aware prompts. |
 
@@ -82,7 +82,7 @@ You are reviewing an artifact for X. Your job is...
 - ...
 
 ## How to report findings
-For each finding, emit: finding_type, severity, location, description, suggestion.
+For each finding, emit: finding_type, severity, files (list), location, description, suggestion.
 ```
 
 **Where to put it**:
