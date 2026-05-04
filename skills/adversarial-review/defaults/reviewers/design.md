@@ -101,7 +101,8 @@ For each finding, emit:
 
 - **finding_type**: From the categories above (e.g., `missing_failure_mode`, `excessive_coupling`, `false_free_lunch`)
 - **severity**: Your assessment (critical, high, medium, low)
-- **location**: Where in the artifact the issue is relevant
+- **files**: The file path(s) the issue pertains to. For single-file findings, one path; for cross-cutting design issues spanning multiple files, list all involved files.
+- **location**: Where in the scope the issue is relevant (section, component, or cross-file boundary)
 - **description**: What the weakness is, why it matters, and what happens if it isn't addressed. Be specific about what could go wrong. Name the component, section, or decision. Quote the text. Include the consequence directly — e.g., "If component A fails, nothing in the design specifies who retries, so the request silently drops."
 - **suggestion**: A concrete improvement that respects the design's existing constraints. Not "add error handling" — "add a retry policy to the dispatcher, or document that A's failures are acceptable losses."
 
@@ -109,9 +110,9 @@ If the design is sound, say so explicitly and emit no findings.
 
 ## Context you receive
 
-- The artifact being reviewed
-- `ARTIFACT.md` — a profile of the artifact describing its format, purpose, any structural constraints, and observations from inspection
-- The flags file (pay attention to flagged concerns, but review the entire artifact regardless)
+- The scope files being reviewed (listed in your dispatch prompt's "Scope" section)
+- `SCOPE.md` — a profile of the review scope describing its format, purpose, any structural constraints, and observations from inspection
+- The manifest, including its `flags` field (pay attention to flagged concerns, but review the entire scope regardless)
 - If not the first iteration: previous triage output
 
 ## Tone

@@ -104,17 +104,18 @@ Triage normalizes reviewer output into structured findings with these fields:
 - `source_agent` (string, the reviewer's name)
 - `finding_type` (string, e.g., `contradiction`, `missing_failure_mode`, `ambiguous_reference`)
 - `severity` (one of: `critical`, `high`, `medium`, `low`)
-- `location` (string, where in the artifact)
+- `files` (array of strings, REQUIRED, length ≥ 1) — the file paths the finding pertains to. Single-file findings have length 1; cross-cutting findings list every involved file.
+- `location` (string) — free-form human-readable specifics (section names, line refs, quotes, cross-file boundary descriptions)
 - `description` (string, what the issue is)
 - `suggestion` (string, how to address)
 - `source_trace` (object, one of three shapes):
   - `quote`: verbatim text + reviewer name (highest audit value)
   - `region`: reviewer name + range pointer (medium audit value)
-  - `synthesis`: reviewer name + note explaining derivation (lowest audit value)
+  - `synthesis`: reviewer name + note explaining derivation (lowest audit value; natural fit for cross-file findings)
 - `interpretation_note` (string, REQUIRED for `region` and `synthesis` shapes; OPTIONAL for `quote` when text appears verbatim within a single reviewer-output paragraph)
-- `status` (string, e.g., `open`, `accepted-risk`)
+- `status` (string, e.g., `open`, `accepted-risk`, `deferred`, `obsolete`)
 
-The auditor uses this reference to evaluate whether a candidate agent's described output could plausibly be normalized into the structure above. A candidate that emits unstructured prose, free-form judgment, or content without specifics may still be auditable — triage handles `synthesis` traces — but the prompt body should give triage *something* to extract.
+The auditor uses this reference to evaluate whether a candidate agent's described output could plausibly be normalized into the structure above. A candidate that emits unstructured prose, free-form judgment, or content without specifics may still be auditable — triage handles `synthesis` traces — but the prompt body should give triage *something* to extract, including some indication of which file(s) a finding pertains to (file paths, file names, or unambiguous references that can be resolved against the iteration's scope).
 
 ## Critical rules
 
