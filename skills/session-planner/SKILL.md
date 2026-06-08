@@ -187,7 +187,7 @@ No destructive tmux command runs until the user has seen the full plan and appro
 
 ### Standard flow
 
-1. Skill presents detected state, proposed restructure (tree + after-state diagram), and generated scripts. Environment notes appear at the top under heading "Environment notes."
+1. Skill presents detected state, proposed restructure (tree + after-state diagram; for `rename`, the names-only choose-tree layout instead — see "Unified display format"), and generated scripts. Environment notes appear at the top under heading "Environment notes."
 2. User can:
    - Correct any detection inference ("pane 2.1 is actually a log tail").
    - Reject moves, request different groupings, change names.
@@ -545,7 +545,7 @@ Window name = its panes' names rolled up (single-pane window inherits; multi-pan
 6. **Approve / edit** — accept, or hand-edit any name (edit-proposal mode; names are leaf strings, so an edit re-derives nothing — none of the structural-edit rejection rules apply).
 7. **Apply** — see "Apply step" below.
 
-**`rename --panes-only`** runs steps 1–2 and applies pane titles only — no window or session rename. This is the absorbed `reannotate`: the migration path that promotes a legacy session's panes to the verified-sentinel path. `reannotate` is kept as a deprecated alias for it.
+**`rename --panes-only`** runs steps 1–2, then proposes pane titles through the approval gate (steps 5–6 restricted to panes) and applies on approval — no window or session rename. This is the absorbed `reannotate`: the migration path that promotes a legacy session's panes to the verified-sentinel path. `reannotate` is kept as a deprecated alias for it.
 
 **Naming constraints (all names):** lowercase kebab-case; length-capped (≤24 chars suggested); the chars `:` `.` `*` are forbidden (tmux-target syntax, per "Tmux command targets") and `;` is forbidden (accumulator delimiter). A subagent name violating these is rejected, that pane is re-dispatched once, then falls to `[unnamed]`. Defer to `~/.claude/env/` naming conventions when present (per the integration matrix).
 
@@ -721,7 +721,7 @@ If the environment is bare or no entries are relevant, proceed with built-in heu
 ## Migration / backward compatibility
 
 - The current `create` flow is unchanged for users who invoke `/session-planner [todos]` without a subcommand (inference rule 4 routes to `create`).
-- The display-format change (tree + after-state diagram) applies in all modes; create's tree degenerates to a one-level "all NEW" view — informative, not noisy.
+- The display-format change (tree + after-state diagram) applies to reorganize/extend/audit; create still shows the spatial after-state diagram only (no tree), and rename uses neither view (it presents the names-only choose-tree layout — see "Unified display format").
 - The Environment section is additive — bare environments see no behavior change.
 - Legacy sessions (no `sp:` titles, no `@session-planner-titles`): inference falls through to lower-weight signals; the skill recommends `rename --panes-only` to promote to the verified path.
 - `reannotate` is now a deprecated alias for `rename --panes-only`; existing invocations keep working unchanged.
