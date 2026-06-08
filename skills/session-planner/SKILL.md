@@ -1,8 +1,8 @@
 ---
 name: session-planner
-description: "Turn a list of todos into a live tmux workspace, OR reorganize/extend/audit an existing session. Five modes: create (todos → fresh session), reorganize (existing session → restructured), extend (existing session + todos), audit (analysis only), reannotate (migration path for legacy sessions). Uses sentinel-titled panes, confidence-weighted inference, and an approval gate with status annotations. Use whenever the user wants to spin up parallel terminals, dispatch todos to tmux, restructure existing windows/panes, or just survey a session — phrases like 'spin these up', 'set up a workspace', 'reorganize my session', 'audit this layout', 'add these todos to', 'what would change if'."
+description: "Turn a list of todos into a live tmux workspace, OR reorganize/extend/audit/rename an existing session. Five modes — create (todos → fresh session), reorganize (existing session → restructured), extend (existing session + todos), audit (analysis only), rename (subagent-powered pane→window→session naming) — plus reannotate, a deprecated alias for rename --panes-only. Names every pane and window by default; uses sentinel-titled panes, confidence-weighted inference, and an approval gate with status annotations. Use whenever the user wants to spin up parallel terminals, dispatch todos to tmux, restructure existing windows/panes, name/label panes or windows or a session, or just survey a session — phrases like 'spin these up', 'set up a workspace', 'reorganize my session', 'name these panes', 'rename my windows', 'audit this layout', 'add these todos to', 'what would change if'."
 user-invocable: true
-argument-hint: "[subcommand] [args] — create [todos], reorganize [session], extend [session] [todos], audit [session] [todos], reannotate [session]"
+argument-hint: "[subcommand] [args] — create [todos], reorganize [session], extend [session] [todos], audit [session] [todos], rename [session], reannotate [session]"
 ---
 
 # Session Planner
@@ -19,9 +19,12 @@ The skill operates as a **tmux-state diff engine**: it reads existing state, com
 | `reorganize` | existing session, optional rename ops | restructured session | yes — moves, kills, renames |
 | `extend` | existing session + todos | session with new panes, possibly restructured | yes |
 | `audit` | existing session, optional todos | analysis + suggested restructure, no execution | no |
-| `reannotate` | existing session | sentinel-titled panes; layout unchanged | yes — only `select-pane -T` and `set-option` writes |
+| `rename` | existing session | sentinel-titled panes + renamed windows + renamed session | yes — titles, `rename-window`, `rename-session` (no moves/kills) |
+| `reannotate` | existing session | *(deprecated alias for `rename --panes-only`)* sentinel-titled panes; layout unchanged | yes — only `select-pane -T` and `set-option` writes |
 
 `audit` is `(reorganize ∪ extend) --dry-run` — accepts the same `[<session-name>] [todos]` arg shape as extend; absent todos behaves as `reorganize --dry-run`.
+
+**Naming is not optional.** Every mode proposes a name for each pane and window (see "Naming"); `rename` is the dedicated, subagent-powered pass that also names the session.
 
 ## Subcommands and routing
 
@@ -30,7 +33,8 @@ The skill operates as a **tmux-state diff engine**: it reads existing state, com
 - `/session-planner reorganize [<session-name>]` — defaults to current session if invoked from inside tmux.
 - `/session-planner extend [<session-name>] [todos]` — defaults likewise.
 - `/session-planner audit [<session-name>] [todos]` — analysis only.
-- `/session-planner reannotate [<session-name>]` — runs inspection, prompts for confirmation, then writes `sp:`-prefixed titles and populates the `@session-planner-titles` accumulator. Migration path for legacy sessions.
+- `/session-planner rename [<session-name>]` — the naming pass. Dispatches one subagent per pane (the **only** mode that uses agents), rolls names up pane → window → session, proposes a `choose-tree` layout, and applies on approval. `rename --panes-only` stops after pane titles. Single-session scoped. See "Naming."
+- `/session-planner reannotate [<session-name>]` — **deprecated alias for `rename --panes-only`.** Writes `sp:`-prefixed titles and populates the `@session-planner-titles` accumulator; migration path for legacy sessions.
 - `--dry-run` flag — accepted by `reorganize`/`extend`; generates scripts only (no `report.md`, no `plan.json`). `audit` is the report-producing variant.
 
 ### Inference rules (no subcommand)
@@ -42,15 +46,18 @@ Deterministic decision tree over `(args, inside_tmux, current_session)`. First m
 3. Args reference a tmux session AND no new todos → `reorganize`.
 4. Args contain todo-shaped phrases AND no session reference → `create`.
 5. Args explicitly request analysis without execution → `audit` on current session if inside tmux, else ask.
-6. No args, inside tmux → `audit` of the current session (read-only default).
-7. No args, outside tmux → `create`.
-8. Multiple rules could fire (genuine ambiguity) → ask once, quoting the args back with candidate routings.
+6. Args explicitly request naming/labeling ("name these panes", "rename the windows", "label this session") → `rename` on the current session if inside tmux, else ask.
+7. No args, inside tmux → `audit` of the current session (read-only default).
+8. No args, outside tmux → `create`.
+9. Multiple rules could fire (genuine ambiguity) → ask once, quoting the args back with candidate routings.
 
 "Recognized as a tmux session" = exact match against `tmux list-sessions -F '#{session_name}'`. "Todo-shaped" = imperative task description (verb-led, present tense, action-object).
 
-## Inspection protocol (reorganize / extend / audit / reannotate)
+## Inspection protocol (reorganize / extend / audit / rename)
 
 The skill reads existing tmux state up-front and presents a proposed restructure. **No separate "what is each pane?" quiz** — corrections happen at the approval gate. When inference confidence is too low, the bulk-correction pre-step kicks in (see "Approval gate").
+
+`rename` (and its `--panes-only` form) uses a **light** variant of this read pass: it enumerates windows/panes/IDs but the parent does **not** run `capture-pane` — each per-pane subagent captures its own pane content, so the scrollbacks never enter parent context (see "Naming"). The other modes read pane content in the parent as below.
 
 ### Read pass
 
@@ -134,7 +141,7 @@ Names containing `:`, `.`, or `*` are **rejected at inference time** (conflict w
 
 ## Unified display format
 
-Two views — tree (hierarchy + status) and spatial diagram (proportions + arrangement). Both render in reorganize/extend/audit; only the spatial diagram in create. The spatial diagram shows the **after-state only**.
+Two views — tree (hierarchy + status) and spatial diagram (proportions + arrangement). Both render in reorganize/extend/audit; only the spatial diagram in create. The spatial diagram shows the **after-state only**. `rename` uses neither — it has no structural ops, so it presents the names-only `choose-tree` layout defined under "Naming."
 
 ### Tree view (annotation grammar)
 
@@ -259,7 +266,7 @@ Two-script structure (`structure.sh` + sleep + `inject.sh`) preserved for create
 
 ### Order of operations
 
-1. **Renames** (windows and session) — names referenced downstream by humans only; scripts use IDs.
+1. **Renames** (windows and session) — names referenced downstream by humans only; scripts use IDs. **Universal invariant: every `rename-window` is immediately followed by `set-window-option <@n> automatic-rename off`** — otherwise tmux reverts the name to the foreground process command the next time it changes, silently rotting the rename. `rename-session` needs no such pairing (sessions do not auto-rename).
 2. **Breaks and joins** — `break-pane` to extract, `join-pane` to merge, before bulk moves.
 3. **Moves and swaps** — `move-pane`, `swap-pane`. Preserve running processes.
 4. **Kills** — `kill-pane`, `kill-window`. Destructive; require explicit user approval.
@@ -393,9 +400,10 @@ tmux set-option -t "$OLD_SESSION" '@session-planner-incident' \
     "planner-time:$OLD_SESSION,checkpoint:$CHECKPOINT" \
   || echo "warning: could not set incident breadcrumb." >&2
 
-# Step 1: renames
+# Step 1: renames (every rename-window is immediately pinned with automatic-rename off)
 run_step "rename session"  tmux rename-session -t "$OLD_SESSION" "$NEW_SESSION"
 run_step "rename window @2" tmux rename-window -t '@2' 'infra'
+run_step "pin name @2"      tmux set-window-option -t '@2' automatic-rename off
 
 # Step 2: breaks / joins (omitted if none)
 
@@ -466,9 +474,13 @@ Annotate each new pane in the tree with `[placed: rule 1/2/3]`.
 
 Runs the full inspection-and-propose pipeline, stops short of execution. Writes scripts + `report.md` + `plan.json` to `/tmp/session-planner-audit-<timestamp>/`. Prints the path at end. Cannot fail destructively.
 
-### Reannotate
+### Rename
 
-Migration path for legacy sessions whose panes pre-date the `sp:` sentinel convention. Runs inspection, prompts for confirmation/correction, then writes sentineled `sp:` titles for every pane and populates `@session-planner-titles`. Does NOT change layout, kill, or move panes — only `select-pane -T` and `set-option` writes.
+The dedicated naming pass — full spec in "Naming." Applies via a single `rename.sh` of checked `run_step` tmux calls, but with two simplifications versus `restructure.sh`: **no** incident breadcrumb (non-destructive — there is nothing to roll back) and **no** sidecar dispatch (renames do not disrupt the active pane's running process, so active-pane clause (c) does not apply). The **only** mode that dispatches subagents and the **only** mode that renames the session.
+
+### Reannotate (deprecated)
+
+Deprecated alias for `rename --panes-only`, retained for backward compatibility — new usage should call `rename --panes-only` directly. Writes sentineled `sp:` titles for every pane and populates `@session-planner-titles`; changes no layout. Migration path for legacy sessions whose panes pre-date the `sp:` sentinel convention.
 
 ## Pane titles (sentinel + accumulator)
 
@@ -478,7 +490,7 @@ The `sp:` prefix is the skill's signature; the `@session-planner-titles` session
 
 - `sp:` title AND pane in `@session-planner-titles` → +5 (authoritative).
 - `sp:` title BUT pane NOT in accumulator → +1 (advisory; surface as forged/accidental at gate).
-- `@session-planner-titles` absent (legacy) → all `sp:` titles weigh +1; recommend `reannotate`.
+- `@session-planner-titles` absent (legacy) → all `sp:` titles weigh +1; recommend `rename --panes-only`.
 - Title without `sp:` → +1 (advisory).
 
 ### Accumulator format
@@ -486,9 +498,83 @@ The `sp:` prefix is the skill's signature; the `@session-planner-titles` session
 Each entry: `<pane_id>:<title-text>;` (semicolon-terminated; `;` forbidden in title text — planner rejects todos whose condensed title would contain literal `;`).
 
 Lifecycle:
-- **`set-title`** (step 6) — rewrite the accumulator with the updated title.
+- **`set-title`** (step 6, and `rename` apply) — rewrite the accumulator with the updated title.
 - **`kill-pane`** — script emits a follow-up `set-option` write that rewrites the accumulator without the killed pane's entry.
 - **`move-pane`** — entry persists unchanged (pane IDs are stable across `move-pane`).
+
+**Scope: pane-only, by design.** The accumulator exists solely as the anti-spoofing second factor for *pane-type inference* — panes get classified; windows and sessions never are (their names are display-only and cannot mislead a structural op). So there is no window/session ledger. Window names get durability from `automatic-rename off`; session names do not auto-rename. Do not extend the accumulator to other levels without an inference consumer that needs it.
+
+## Naming (default proposal + the `rename` pipeline)
+
+Two depths of naming. **Default naming** runs in every mode from signals already gathered — cheap, no subagents. The **`rename` subcommand** is the dedicated, subagent-powered pass that names panes → windows → session and is the only path that dispatches agents or renames the session.
+
+**Invariants:**
+- **Subagents fire ⟺ `rename` is invoked.** No other entrypoint dispatches naming agents.
+- **The session is renamed ⟺ `rename` is invoked.** Default modes propose pane + window names only.
+- All proposed names ride the **approval gate** — proposed, never silently applied. `create` is the sole exception: it has no prior state to clobber, so its names apply as the session is built. (This is what "name by default" means: a name is always *part of the plan*, never absent — not "renamed without asking.")
+- Every applied name is sentineled: panes get `sp:` titles + an accumulator entry (see "Pane titles").
+
+### Default naming (all modes)
+
+Every mode proposes a name for each pane and window — no pane left `(none)`, no window left as its raw process name (`zsh`). Names come from signals the inspection read pass **already captured**; the parent condenses them inline. No extra reads, no agents.
+
+| Pane type | Cheap name source (priority order) |
+|---|---|
+| `claude` | the `※ recap:` line (purpose-built one-line goal); else the sidechat session name in the separator; else status-bar cwd basename |
+| `claude-exited` | last `※ recap:` still visible in scrollback; else cwd basename + `-exited` |
+| `raw` dev-server / log-tail | the watch argv → `dev-server`; `tail -f auth.log` → `log-auth` |
+| `raw` idle-shell | cwd basename |
+| `remote-or-nested` | visible host/target; else `remote` |
+
+Window name = its panes' names rolled up (single-pane window inherits; multi-pane uses the roll-up rules below). Proposed names ride the approval gate; in `create` they apply directly. A pane whose signals yield nothing is proposed as `[unnamed]` — the skill does **not** silently escalate to a subagent (that is `rename`'s job). Default naming proposes **panes and windows only**; the session is left alone (only `rename` renames it).
+
+### The `rename` subcommand
+
+`/session-planner rename [<session-name>]` — single-session scoped (current session by default; one named session otherwise; never multi-session). The full naming pass:
+
+1. **Light read pass** — enumerate windows/panes/IDs only (`list-windows`/`list-panes`). The parent loads **no** pane content.
+2. **Pane-naming fan-out** — dispatch one subagent per pane (parallel). Each subagent:
+   - receives its `pane_id` (+ cwd);
+   - runs `tmux capture-pane -t <pane_id> -p -S -200` itself;
+   - returns **only** `{name, basis}` — `name` per the constraints below, `basis` ≤8 words explaining the choice.
+
+   The parent receives just those short strings — the N scrollbacks never enter parent context. This is the context-hygiene guarantee that lets `rename` run standalone.
+3. **Window roll-up (parent-side).** Single-pane window → inherits the pane name. Multi-pane window → the parent proposes a best-guess (shared theme if the panes have one, else the anchor/active pane's name) **and flags the window** `⚑ your take?` so the user resolves it at the gate — a multi-pane window name is a judgment call, not an auto-decision.
+4. **Session roll-up (parent-side).** The parent proposes a session name from the window names. If the current session name is **non-default** (anything other than a bare auto-number like `1`/`2`), flag it `⚑ your take?` — clobbering a deliberately-chosen session name is the highest-stakes rename. Default-numbered sessions take the roll-up unflagged.
+5. **Propose** — the choose-tree layout (below). `⚑`-flagged nodes and any `[unnamed]` panes are surfaced for explicit resolution.
+6. **Approve / edit** — accept, or hand-edit any name (edit-proposal mode; names are leaf strings, so an edit re-derives nothing — none of the structural-edit rejection rules apply).
+7. **Apply** — see "Apply step" below.
+
+**`rename --panes-only`** runs steps 1–2 and applies pane titles only — no window or session rename. This is the absorbed `reannotate`: the migration path that promotes a legacy session's panes to the verified-sentinel path. `reannotate` is kept as a deprecated alias for it.
+
+**Naming constraints (all names):** lowercase kebab-case; length-capped (≤24 chars suggested); the chars `:` `.` `*` are forbidden (tmux-target syntax, per "Tmux command targets") and `;` is forbidden (accumulator delimiter). A subagent name violating these is rejected, that pane is re-dispatched once, then falls to `[unnamed]`. Defer to `~/.claude/env/` naming conventions when present (per the integration matrix).
+
+### Choose-tree proposal (rename presentation)
+
+`rename` presents a `choose-tree`-style layout (the `Ctrl-b w` aesthetic) — **not** the reorganize tree, which carries structural `[NEW]`/`[killed]`/move annotations that `rename` never has. Names-only, `old → new`, with the per-pane basis and any flags:
+
+```
+rename plan — session "1" → "materia-dev"
+├─ win 1  zsh → astro-restructure          recap: "astrodynamics tier-restructure"
+├─ win 2  zsh → adv-review                 recap: "adversarial-review 0.7.0 fixes"
+├─ win 3  zsh → weekly-planner   ⚑ 2 panes — your take?
+│   ├─ %3  → weekly-planner                git claude-config + recap "weekly-planner hardening"
+│   └─ %4  → shape-spec                     recap "shape subcommand spec / sc-allocate"
+├─ win 8  zsh → michael-outreach           recap: "team-transfer outreach"
+│   └─ [unnamed]  %12                       no recap, opaque remote
+└─ win 9  (this session — left alone)
+```
+
+The basis column is display-only — never written to the title or accumulator. The session line carries `old → new` at the top, with `⚑ your take?` when the current name is non-default (step 4).
+
+### Apply step (and the `automatic-rename` invariant)
+
+On approval, `rename` writes (via `run_step` checked calls):
+- **panes** → `tmux select-pane -t '%n' -T 'sp:<name>'`, then rewrite `@session-planner-titles` with all entries.
+- **windows** → `tmux rename-window -t '@n' '<name>'` **immediately followed by** `tmux set-window-option -t '@n' automatic-rename off`.
+- **session** → `tmux rename-session -t <old> '<name>'`.
+
+`[unnamed]` panes are skipped at apply (left untitled, not in the accumulator). The `automatic-rename off` pairing is the **universal invariant** declared in "Order of operations" step 1 — it applies to *every* `rename-window` the skill emits anywhere, `restructure.sh` included, not just here.
 
 ## Pane indexing and ID stability
 
@@ -530,6 +616,7 @@ Per-mode:
 | Reorganize — only existing panes | no |
 | Extend — new + existing | yes — active wait per new pane between `restructure.sh` and `inject.sh` |
 | Audit — no execution | n/a |
+| Rename — only existing panes (titles/renames) | no |
 
 If active wait is infeasible (spawned process is not a shell), fall back to fixed 5s sleep.
 
@@ -545,26 +632,26 @@ Recorded in audit report and approval prompt.
 
 ## Session collision and defaults
 
-- `reorganize` / `extend` / `audit` invoked without session name: default to current session if inside tmux; else ask.
+- `reorganize` / `extend` / `audit` / `rename` invoked without session name: default to current session if inside tmux; else ask.
 - Target session does not exist: error and suggest `create`.
 - `create` with colliding session name: append numeric suffix.
 
 ## Multi-session scope
 
-Out of scope for v1. All four modes operate on a single session at a time.
+Out of scope for v1. All modes operate on a single session at a time — `rename` included (it targets exactly one session per invocation, never a fan-out across sessions).
 
 ## Environment integration matrix
 
 How env-derived session context flows into each mode:
 
-| Concern | create | reorganize | extend | audit |
-|---|---|---|---|---|
-| Working directory | applies (per-pane default cwd) | n/a (existing panes keep cwd) | applies (new panes only) | advisory (report cwd anomalies) |
-| Naming conventions | applies (new names) | advisory (suggest renames; never auto-rename) | advisory (new windows) | advisory (report violations) |
-| Classification override | applies (new todos) | advisory (suggest at gate; never auto-override) | applies (new panes); advisory (existing) | advisory (report mismatches) |
-| Prompt framing | applies (new claude panes) | n/a | applies (new claude panes) | n/a |
+| Concern | create | reorganize | extend | audit | rename |
+|---|---|---|---|---|---|
+| Working directory | applies (per-pane default cwd) | n/a (existing panes keep cwd) | applies (new panes only) | advisory (report cwd anomalies) | n/a |
+| Naming conventions | applies (new names) | applies (proposed pane/window names, via gate) | applies (new + proposed names, via gate) | advisory (report violations) | applies (drives pane/window/session names) |
+| Classification override | applies (new todos) | advisory (suggest at gate; never auto-override) | applies (new panes); advisory (existing) | advisory (report mismatches) | advisory (informs the pane name a subagent picks) |
+| Prompt framing | applies (new claude panes) | n/a | applies (new claude panes) | n/a | n/a |
 
-`applies` = drives the decision automatically. `advisory` = surfaces a recommendation at the approval gate; user accepts or overrides. `n/a` = doesn't arise.
+`applies` = drives the decision automatically (proposed names still pass through the approval gate). `advisory` = surfaces a recommendation at the approval gate; user accepts or overrides. `n/a` = doesn't arise.
 
 ## Environment
 
@@ -616,6 +703,15 @@ If the environment is bare or no entries are relevant, proceed with built-in heu
 - No execution path; cannot fail destructively. Output written to `/tmp/session-planner-audit-<timestamp>/`.
 - Audit running on a partial-failure state: valid use case; flags the unexpected layout.
 
+### Rename
+- **Single-pane, single-window session:** still valid — proposes pane + window (+ session) names.
+- **Subagent returns a constraint-violating name** (`:`/`.`/`*`/`;`, too long, non-kebab): reject, re-dispatch that pane once, then `[unnamed]`.
+- **A subagent fails or times out:** that pane is `[unnamed]`; the rest proceed (no whole-run abort).
+- **`[unnamed]` panes at the gate:** user can hand-edit a name or leave the pane untitled (skipped at apply).
+- **Invoked against the active pane's own session:** safe — renames don't disrupt running processes, so no sidecar (clause (c)) is needed.
+- **Non-default session name:** the session-rename line is flagged `⚑ your take?` rather than silently overwritten.
+- **Empty session (no panes):** reject, as with reorganize — nothing to name.
+
 ### All non-create modes
 - **tmux not installed or not running:** error.
 - **Inferring pane type fails:** annotate `[unknown]`; surface during approval.
@@ -627,4 +723,6 @@ If the environment is bare or no entries are relevant, proceed with built-in heu
 - The current `create` flow is unchanged for users who invoke `/session-planner [todos]` without a subcommand (inference rule 4 routes to `create`).
 - The display-format change (tree + after-state diagram) applies in all modes; create's tree degenerates to a one-level "all NEW" view — informative, not noisy.
 - The Environment section is additive — bare environments see no behavior change.
-- Legacy sessions (no `sp:` titles, no `@session-planner-titles`): inference falls through to lower-weight signals; the skill recommends `reannotate` to promote to the verified path.
+- Legacy sessions (no `sp:` titles, no `@session-planner-titles`): inference falls through to lower-weight signals; the skill recommends `rename --panes-only` to promote to the verified path.
+- `reannotate` is now a deprecated alias for `rename --panes-only`; existing invocations keep working unchanged.
+- Default naming is additive: panes formerly shown as `(none)` and windows left as their process name are now *proposed* names through the same approval gate — no new silent-apply behavior, and `create`'s names apply exactly as before.
