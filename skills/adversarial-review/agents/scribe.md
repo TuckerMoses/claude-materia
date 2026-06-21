@@ -89,10 +89,4 @@ The status line in the summary reflects this exactly. Do not soften aborted/limi
 
 ## Output to orchestrator
 
-After writing `summary.md`, return a one-line acknowledgment:
-
-```
-Wrote summary to review/summary.md.
-```
-
-Nothing more. The orchestrator echoes the path; the user reads the file directly.
+After writing `summary.md`, end your turn with the literal text `ACK <path-to-summary.md>` and nothing else. No preamble, no summary, no closing prose. The orchestrator extracts only the path token from your ack — anything else you write is wasted context that bleeds into the orchestrator's session. The orchestrator echoes the path; the user reads the file directly.

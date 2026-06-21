@@ -51,6 +51,39 @@ Inside Phase 2, **triage owns all surfacing of substance**. The orchestrator sur
 
 All three are procedural, not substantive — bounded one-liners.
 
+### Dispatch-discipline rule
+
+When dispatching a subagent (reviewer, triage, fixer, scribe, auditor), the orchestrator MUST use this exact wrapper template — verbatim — and add no other content:
+
+```
+You are <agent-bare-name>. Adopt the role at <session-dir>/agents/<agent_filename>.
+Execute the task at <prompt_path>.
+End your turn with literal "ACK <output-path>" and nothing else.
+```
+
+Three substitutions only: `<agent-bare-name>`, `<agent_filename>` (with namespace prefix where applicable), `<prompt_path>` (and a corresponding `<output-path>` the subagent writes to). The wrapper MUST NOT contain:
+
+- Iteration context, diagnosis priorities, focus reminders, or "be careful about X" prose
+- Restatements of the manifest or scope
+- Re-explanations of the agent's role beyond the role file path
+- Anything the path-passed prompt file at `<prompt_path>` already contains
+
+Triage's authored prompt file is the only authoritative input to the subagent. The orchestrator's wrapper is plumbing, not coordination — every line the orchestrator adds is substance bleeding into orchestrator context that should have stayed agent-local.
+
+For the auditor in Phase 1 (no triage exists yet), the orchestrator authors the brief at `review/audit-briefs/<candidate>.md` and uses the same three-line wrapper. Same discipline.
+
+### Acknowledgment-discipline rule
+
+Subagents MUST end their turns with literal `ACK <output-path>` — no other text after that line, no preamble. The orchestrator MUST NOT read or summarize anything in the subagent's response beyond extracting the path token. Treat the response as an opaque parse for the path; ignore the rest.
+
+If a subagent's response does not match the literal ack format, treat it as an agent-failed exception (the orchestrator surfaces under case 3 of the Surfacing exclusivity rule). Do not "salvage" substance from a malformed ack — that re-creates the leak the discipline prevents.
+
+### Known platform leak: file-modification reminders
+
+When a subagent (typically the fixer) modifies a file in scope via Edit/Write, the platform's harness inserts a `<system-reminder>` into the orchestrator's context showing the modification — including substantial portions of the modified file. This is platform behavior, not skill behavior, and **cannot be suppressed from inside the skill**.
+
+Practical impact: budget for ~3-10k tokens of orchestrator-context bleed per fixer dispatch on a moderate-sized scope, scaling roughly with the number and size of files the fixer touches. This is the dominant residual leak after the dispatch- and ack-discipline rules above. If it becomes the binding cost constraint, mitigation is engineering work outside this skill (e.g., having the fixer write a patch file the orchestrator applies via Bash, where Bash output may be terser than subagent file-edit reminders) — backlog item, not a 0.6.0/0.7.0 problem.
+
 ### Iteration validity invariant
 
 An iteration is only valid if (a) each reviewer ran as an independent subagent — one Agent tool call per reviewer, never combined, (b) triage ran as its own subagent and produced a `route.json` file, and (c) the orchestrator's branching decisions reference only fields in `route.json`, never substance from any other file.
@@ -68,7 +101,7 @@ Reviewer agents are discovered from three categories of source. All sources are 
 | Source | Namespace | Trust | When |
 |---|---|---|---|
 | Bundled defaults at `<skill-directory>/defaults/reviewers/` | `default` | Trusted (skip semantic audit) | Always |
-| Environment-configured paths | `env` | Audited | Always (if env declares any) |
+| Per-install-configured paths (from `~/.claude/adversarial-review.local.md`) | `binding` | Audited | Always (if the `.local.md` declares any) |
 | Invocation-flag paths via `--reviewers <ref>` | `override` | Audited | Per invocation |
 | Confirmation-time additions | `manual` | Audited | Per session, during confirmation |
 
@@ -82,19 +115,19 @@ Reviewer agents are discovered from three categories of source. All sources are 
 | Starts with `./` or `../` | Cwd-relative path |
 | Starts with `~/` | Home-relative path |
 | Contains `/` (anywhere else) | Treated as path |
-| Starts with `<known-namespace>:` (default, env, override, manual) | Namespace-prefixed reference; name resolves within that source's discovered candidates. **If a colon is present but the prefix is not a known namespace, it is a hard error** — do not fall through. |
+| Starts with `<known-namespace>:` (default, binding, override, manual) | Namespace-prefixed reference; name resolves within that source's discovered candidates. **If a colon is present but the prefix is not a known namespace, it is a hard error** — do not fall through. |
 | Otherwise (bare name) | Resolved via traversal of `~/.claude/agents/` for a matching `*.md` file |
 
 A path can resolve to a file (single-agent source) or directory (multi-agent source, non-recursive walk).
 
-### Environment configuration
+### Per-install pool configuration
 
-If `~/.claude/env/index.md` exists and declares `adversarial-review.reviewers_dir`, the value (a path or list of paths) becomes the env-configured pool source. Each path is walked non-recursively. If unset, no env pool exists.
+If `~/.claude/adversarial-review.local.md` declares `reviewers_dir` (directly, or via a pointer it forwards to), the value (a path or list of paths) becomes the per-install-configured pool source under the `binding` namespace. Each path is walked non-recursively. If the `.local.md` is absent or declares nothing, no `binding` pool exists.
 
 Edge cases:
 - Path doesn't exist → warn at discovery, exclude, continue
 - Path is a file (not directory) → treat as single-file source
-- Path is empty directory → warn ("env declares X but found no `*.md` files"), continue
+- Path is empty directory → warn ("the binding declares X but found no `*.md` files"), continue
 - Malformed YAML value → warn and skip that entry
 
 ### Namespace display
@@ -140,7 +173,7 @@ Distinct from raw `Task` dispatch in that `run` performs the same scope resoluti
    - Resolve `locations` (with `exclude` filtering) using Bash globbing. The resulting absolute path list is the **resolved scope**.
      - Empty resolution → hard error. Surface to user, abort.
      - For `scope_mode: pinned`, also write the resolved list to `sessions/<id>/scope-pinned.json` for later iterations.
-   - Run the environment discovery protocol (see `## Environment`).
+   - Run the per-install-binding discovery protocol (see `## Per-install binding`).
    - Compose `SCOPE.md` — a profile of the review scope that every agent receives. Written to `review/SCOPE.md` when the session directory is created in step 4.
 
      ```markdown
@@ -154,15 +187,15 @@ Distinct from raw `Task` dispatch in that `run` performs the same scope resoluti
      ## Files in scope
      [Bulleted list of resolved file paths with brief role/format per file. For single-file scope, this is one entry; for multi-file scope, group by directory or component.]
 
-     ## Environment source
+     ## Binding source
      [One of:]
-     - "Environment discovered at ~/.claude/env/index.md. Relevant entries: [list]. See below."
-     - "Environment exists but no entries were relevant to this review. Reason: [why]."
-     - "No environment found at ~/.claude/env/. Review proceeds on the scope's own merits."
-     - "Environment at ~/.claude/env/ appears misconfigured (index.md absent/unreadable). Warned user. Proceeding without."
+     - "Per-install binding found at ~/.claude/adversarial-review.local.md. Heuristics discovered via its pointer. Relevant entries: [list]. See below."
+     - "Per-install binding found but no entries were relevant to this review. Reason: [why]."
+     - "No per-install binding found (~/.claude/adversarial-review.local.md absent). Review proceeds on the scope's own merits."
+     - "Per-install binding at ~/.claude/adversarial-review.local.md is unreadable or its pointer is broken. Warned user. Proceeding without."
 
      ## Structural constraints
-     [If env provided spec checklists, read/write contracts, naming conventions, routing rules, or other structural requirements applying to any file in scope, list them here.]
+     [If the binding's heuristics provided spec checklists, read/write contracts, naming conventions, routing rules, or other structural requirements applying to any file in scope, list them here.]
 
      ## Observations from inspection
      [Anything notable about the scope that reviewers should be aware of — cross-file relationships, conventions, format mixes.]
@@ -183,7 +216,7 @@ Distinct from raw `Task` dispatch in that `run` performs the same scope resoluti
 
    ```
    Step 1: Pre-check (cheap, deterministic, runs on all candidates)
-     - Walk all configured sources (bundled defaults, env paths, --reviewers paths).
+     - Walk all configured sources (bundled defaults, binding paths, --reviewers paths).
      - For each *.md file: parse frontmatter, validate hard contract.
      - Hard rejects (excluded from pool):
        * Frontmatter doesn't parse as YAML
@@ -282,9 +315,9 @@ c-1/
 ├── user-surface.md                        triage-authored; orchestrator echoes path
 ├── user-response.md                       iff requires_response: true and user responded
 ├── fixer-changelog.md                     iff gate was blocked
-└── dispatches/                            written by THIS iter's triage for the NEXT iter
-    ├── default__coherence.md              per-agent dispatch prompt
-    └── fixer.md                           fixer brief (iff blocked this iter)
+└── dispatches/                            consumed in THIS iter
+    ├── default__coherence.md              reviewer prompt — written by PREVIOUS iter's triage (or tier-init)
+    └── fixer.md                           fixer brief — written by THIS iter's triage (iff blocked this iter)
 
 c-2/, c-3/ ...                             same shape
 
@@ -306,12 +339,12 @@ Convention: **dispatches live in the iteration where they're consumed**. Triage 
 3. **Branch on `control`:**
 
    - **`continue`**:
-     a. If `fixer_brief_path` is present: dispatch the fixer as a subagent with `Adopt the role defined in <session-dir>/agents/fixer.md. Execute the task described in <fixer_brief_path>.` Wait for one-line acknowledgment. VCS commit:
+     a. If `fixer_brief_path` is present: dispatch the fixer as a subagent using the dispatch-discipline wrapper (see Phase 2 architectural rules). Wait for the literal `ACK <output-path>` acknowledgment. VCS commit:
         - jj: `jj new -m "adversarial-review: iteration <tier>-<N> fixes"`
         - git: `git add <scope files> && git commit -m "adversarial-review: iteration <tier>-<N> fixes"`
      b. Increment iteration counter (or transition to next iteration's directory).
-     c. For each entry in `next_dispatches`, dispatch the reviewer subagent in parallel with `Adopt the role defined in <session-dir>/agents/<agent_filename>. Execute the task described in <prompt_path>.` Wait for one-line acknowledgments.
-     d. Dispatch triage as a subagent with paths to: this iteration's reviewer outputs, prior triage outputs, fixer changelogs, accepted-risks.json, deferred-lows.json, manifest.yml, SCOPE.md, all agent spec files. Triage authors `triage-output.json`, the next `route.json`, and (if blocked) the next iteration's dispatch prompts. Wait for one-line acknowledgment.
+     c. For each entry in `next_dispatches`, dispatch the reviewer subagent in parallel using the dispatch-discipline wrapper. Wait for literal `ACK <output-path>` acknowledgments.
+     d. Dispatch triage as a subagent (using the dispatch-discipline wrapper) with paths to: this iteration's reviewer outputs, prior triage outputs, fixer changelogs, accepted-risks.json, deferred-lows.json, manifest.yml, SCOPE.md, all agent spec files. Triage authors `triage-output.json`, the next `route.json`, and (if blocked) the next iteration's dispatch prompts. Wait for the literal `ACK <route.json path>` acknowledgment.
      e. Echo new `route.json`'s `surface.breadcrumb` and `surface.path`. Loop to step 0 of the new iteration.
 
    - **`exit_clean`**:
@@ -350,7 +383,7 @@ When opus exits clean (or any tier exits aborted/limit-reached):
    - Path to accepted-risks.json
    - Path to deferred-lows.json
    - `termination_kind`: `clean | aborted | limit_reached`
-2. Wait for scribe's one-line acknowledgment.
+2. Wait for the literal `ACK <summary.md path>` acknowledgment.
 3. Echo: "Review complete. Summary at `<session-path>/review/summary.md`."
 4. Terminate.
 
@@ -384,19 +417,21 @@ The self-audit in step 7 is a point-in-time check against the auditor heuristics
 
 ---
 
-## Environment
+## Per-install binding
 
-This skill extends with environment context. Before executing:
+If `~/.claude/adversarial-review.local.md` exists, read it and follow its per-install instructions before proceeding. This file is the skill's only per-install coupling point: it may point to a set of environment heuristics (for structural constraints) and/or declare a reviewer pool (`reviewers_dir`). If it is absent, proceed with the built-in defaults — bare install, fallback-safe.
 
-1. Check if `~/.claude/env/` exists.
-   - If not: bare environment. Note this in `SCOPE.md` and proceed.
-   - If exists but `index.md` is absent or unreadable: warn that environment appears misconfigured. Note in `SCOPE.md` and proceed.
-   - If `~/.claude/env/index.md` exists: proceed to step 2.
-2. Read the index to discover available environment heuristics.
-3. Produce a **relevance map**: for each entry in the index, state whether it applies to this review and a brief rationale. No silent dropping — every entry gets an explicit disposition.
+When the `.local.md` points to a set of environment heuristics, discover structural constraints from them:
+
+1. Check if `~/.claude/adversarial-review.local.md` exists.
+   - If not: bare install. Note this in `SCOPE.md` and proceed with bundled defaults.
+   - If present but unreadable, or its pointer is broken: warn that the binding appears misconfigured. Note in `SCOPE.md` and proceed.
+   - Otherwise: follow its pointer to the heuristics and proceed to step 2.
+2. Read the heuristics the `.local.md` points to.
+3. Produce a **relevance map**: for each entry, state whether it applies to this review and a brief rationale. No silent dropping — every entry gets an explicit disposition.
 4. For relevant entries, read those files and extract any structural constraints, spec checklists, naming conventions, routing rules, or other heuristics that apply to any file in the resolved scope.
-5. Include all discovered information in `SCOPE.md` under "Environment source" and "Structural constraints."
+5. Include all discovered information in `SCOPE.md` under "Binding source" and "Structural constraints."
 
 ### Pool source configuration
 
-If `~/.claude/env/index.md` (or a referenced env file) declares `adversarial-review.reviewers_dir`, the value (a path or list of paths) becomes the env-configured pool source. Each path is walked non-recursively. If unset, no env pool exists — the skill runs with bundled defaults only unless the user supplies `--reviewers <ref>` or adds references at confirmation.
+If `~/.claude/adversarial-review.local.md` declares `reviewers_dir` (directly, or via a pointer it forwards to), the value (a path or list of paths) becomes the per-install-configured pool source under the `binding` namespace. Each path is walked non-recursively. If unset, no `binding` pool exists — the skill runs with bundled defaults only unless the user supplies `--reviewers <ref>` or adds references at confirmation.

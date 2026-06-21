@@ -27,7 +27,7 @@ The first time you trigger `park`, the skill notices there's no config and walks
 
 2. **Layout** — how entries should be grouped within the section:
    - **(a) Flat list** — most recent on top, no sub-sections.
-   - **(b) Sub-sections derived from a catalog** — point at a markdown file describing your organizational structure; the skill proposes sub-sections from it. If you have a `~/.claude/env/index.md` set up, the skill discovers it automatically.
+   - **(b) Sub-sections derived from a catalog** — point at a markdown file describing your organizational structure; the skill proposes sub-sections from it. If you set up a per-install binding (`~/.claude/park-session.local.md`) that points to your organizational heuristics, the skill discovers the catalog automatically.
    - **(c) Sub-sections you define directly** — list sub-section names and a `cwd_glob` pattern for each.
 
 3. **Section header** — defaults to `## Parked Sessions`. Configurable in case of name collision in your destination.

@@ -98,26 +98,33 @@ Then **continue the current conversation** as if nothing happened. The whole poi
 
 ---
 
-## Environment
+## Per-install binding
 
-This skill extends with environment context. Before executing:
+If `~/.claude/sidechat.local.md` exists, read it and follow its per-install
+instructions before proceeding. This file is the skill's only per-install
+coupling point: it may point to a set of environment heuristics, bind the skill
+to a resource, or override defaults. If it is absent, execute with the built-in
+defaults — bare install, fallback-safe, and note that no binding was found.
 
-1. Check if `~/.claude/env/` exists.
-   - If `~/.claude/env/` does not exist: bare environment. Execute with defaults
-     and note that no environment was found.
-   - If `~/.claude/env/` exists but `index.md` is absent or unreadable: warn the
-     user that the environment appears misconfigured. Do not silently degrade.
-   - If `~/.claude/env/index.md` exists: proceed to step 2.
-2. Read the index to discover available environment heuristics.
-3. Produce a **relevance map**: for each entry in the index, state whether
-   it applies to this task and a brief rationale. No silent dropping —
-   every entry gets an explicit disposition.
-4. For relevant entries, read those files and derive
-   **Session Context** scoped to the current task. Specifically:
+When the `.local.md` points to a set of environment heuristics, derive
+**Session Context** to forward into the new session:
+
+1. Check if `~/.claude/sidechat.local.md` exists.
+   - If absent: bare install. Execute with defaults and note that no binding was
+     found.
+   - If present but unreadable, or its pointer is broken: warn the user that the
+     binding appears misconfigured. Do not silently degrade.
+   - Otherwise: follow its pointer to the heuristics and proceed to step 2.
+2. Read the heuristics the `.local.md` points to.
+3. Produce a **relevance map**: for each entry, state whether it applies to this
+   task and a brief rationale. No silent dropping — every entry gets an explicit
+   disposition.
+4. For relevant entries, read those files and derive **Session Context** scoped
+   to the current task. Specifically:
    - **Routing**: if the sidechat involves creating artifacts, the new session
-     should know where artifacts land in this environment.
+     should know where artifacts land.
    - **Conventions**: the new session should follow the same naming, commit,
      and workflow conventions as the parent.
    - Other entries: include if the sidechat's topic intersects that concern.
 5. Include the derived Session Context in the composed prompt (step 3 above)
-   so the new Claude session inherits environment awareness.
+   so the new Claude session inherits the parent's per-install awareness.

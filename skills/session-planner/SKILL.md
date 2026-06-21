@@ -547,7 +547,7 @@ Window name = its panes' names rolled up (single-pane window inherits; multi-pan
 
 **`rename --panes-only`** runs steps 1–2, then proposes pane titles through the approval gate (steps 5–6 restricted to panes) and applies on approval — no window or session rename. This is the absorbed `reannotate`: the migration path that promotes a legacy session's panes to the verified-sentinel path. `reannotate` is kept as a deprecated alias for it.
 
-**Naming constraints (all names):** lowercase kebab-case; length-capped (≤24 chars suggested); the chars `:` `.` `*` are forbidden (tmux-target syntax, per "Tmux command targets") and `;` is forbidden (accumulator delimiter). A subagent name violating these is rejected, that pane is re-dispatched once, then falls to `[unnamed]`. Defer to `~/.claude/env/` naming conventions when present (per the integration matrix).
+**Naming constraints (all names):** lowercase kebab-case; length-capped (≤24 chars suggested); the chars `:` `.` `*` are forbidden (tmux-target syntax, per "Tmux command targets") and `;` is forbidden (accumulator delimiter). A subagent name violating these is rejected, that pane is re-dispatched once, then falls to `[unnamed]`. Defer to per-install naming conventions when present (sourced via `~/.claude/session-planner.local.md`, per the integration matrix).
 
 ### Choose-tree proposal (rename presentation)
 
@@ -640,9 +640,9 @@ Recorded in audit report and approval prompt.
 
 Out of scope for v1. All modes operate on a single session at a time — `rename` included (it targets exactly one session per invocation, never a fan-out across sessions).
 
-## Environment integration matrix
+## Binding integration matrix
 
-How env-derived session context flows into each mode:
+How per-install-derived session context (sourced via `~/.claude/session-planner.local.md`) flows into each mode:
 
 | Concern | create | reorganize | extend | audit | rename |
 |---|---|---|---|---|---|
@@ -653,29 +653,37 @@ How env-derived session context flows into each mode:
 
 `applies` = drives the decision automatically (proposed names still pass through the approval gate). `advisory` = surfaces a recommendation at the approval gate; user accepts or overrides. `n/a` = doesn't arise.
 
-## Environment
+## Per-install binding
 
-This skill extends with environment context. Before launching:
+If `~/.claude/session-planner.local.md` exists, read it and follow its per-install instructions before proceeding. This file is the skill's only per-install coupling point: it may bind the skill to a resource (e.g. a vault, see below), point to a set of environment heuristics, or override defaults. If it is absent, proceed with the built-in defaults — bare install, fallback-safe.
 
-1. Check if `~/.claude/env/` exists.
-   - If not: bare environment. Proceed with built-in heuristics.
-   - If `~/.claude/env/index.md` is absent or unreadable: warn and proceed. Surface the warning as a bullet under "Environment notes" at the top of the approval prompt. For audit mode, print before the audit summary.
-   - Otherwise: read the index.
-2. Produce a relevance map. An entry is **relevant** iff it defines or constrains one of:
+When the `.local.md` points to a set of environment heuristics, derive **session context** from the relevant entries:
+
+1. Read the heuristics the `.local.md` points to. Produce a relevance map. An entry is **relevant** iff it defines or constrains one of:
    - Working-directory defaults / workspace-relative path conventions.
    - Session/window naming conventions.
    - Pane-type classification overrides (e.g., "research → claude").
    - Prompt-construction framing for new claude panes.
 
    Entries that do not address any of these four concerns are **not relevant** — skip silently. If an entry's name is unclear, read its first heading to decide. Do not load full bodies of clearly off-topic entries.
-3. For relevant entries, derive **session context**:
+2. For relevant entries, derive **session context**:
    - Default working directory for each pane (workspace-relative paths).
    - Naming conventions for sessions and windows.
-   - Prompt-construction heuristics (env-aware framing, conventions to forward).
+   - Prompt-construction heuristics (binding-aware framing, conventions to forward).
    - Classification overrides.
-4. Apply derived session context per the per-mode integration matrix above — not just at launch.
+3. Apply derived session context per the per-mode integration matrix above — not just at launch.
 
-If the environment is bare or no entries are relevant, proceed with built-in heuristics and note this once.
+If the `.local.md` is absent, unreadable, or points to nothing relevant, proceed with built-in heuristics and note this once — surface it as a bullet under "Environment notes" at the top of the approval prompt (for audit mode, print it before the audit summary).
+
+### Vault binding (one-shot consumer)
+
+When `~/.claude/session-planner.local.md` binds this skill to a knowledge vault, session-planner acts as a **one-shot puller**. Its intrinsic listened-for label is **`session-seed`** (user-overridable in the `.local.md`). On a bound invocation it:
+
+1. Queries the vault for notes labeled `session-seed AND self ∉ handled`.
+2. Spins up sessions for the returned notes (feeding them through `create`/`extend` as todos).
+3. Appends `session-planner` to the `handled` field of **every note it evaluated** (mark-all-seen, not just the ones it used) — so a note is evaluated exactly once, ever.
+
+The vault's binding schema and query surface — note shape, field ownership, query preference order, the `handled` idempotency contract — live in the vault's own `INSTRUCTION.md`, which the `.local.md` points to and which is read **live** on every invocation. Reference it; do not restate it here. Never hardcode a vault path in this skill body — the path lives only in the `.local.md`, and a stale path must fail loudly ("vault not found").
 
 ## Edge cases per mode
 
@@ -722,7 +730,7 @@ If the environment is bare or no entries are relevant, proceed with built-in heu
 
 - The current `create` flow is unchanged for users who invoke `/session-planner [todos]` without a subcommand (inference rule 4 routes to `create`).
 - The display-format change (tree + after-state diagram) applies to reorganize/extend/audit; create still shows the spatial after-state diagram only (no tree), and rename uses neither view (it presents the names-only choose-tree layout — see "Unified display format").
-- The Environment section is additive — bare environments see no behavior change.
+- The Per-install binding section is additive — bare installs see no behavior change.
 - Legacy sessions (no `sp:` titles, no `@session-planner-titles`): inference falls through to lower-weight signals; the skill recommends `rename --panes-only` to promote to the verified path.
 - `reannotate` is now a deprecated alias for `rename --panes-only`; existing invocations keep working unchanged.
 - Default naming is additive: panes formerly shown as `(none)` and windows left as their process name are now *proposed* names through the same approval gate — no new silent-apply behavior, and `create`'s names apply exactly as before.

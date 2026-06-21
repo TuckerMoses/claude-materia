@@ -1,1 +1,4 @@
 .worktrees/
+
+# Stray local runtime artifacts — session state belongs in user-state, not the skill install
+skills/**/sessions/

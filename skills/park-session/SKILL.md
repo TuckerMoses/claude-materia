@@ -301,8 +301,8 @@ Options:
 
 For (b), follow this precedence:
 
-1. **Auto-derived path (preferred).** Trigger the Environment section's discovery (see Environment, below) and, if it produces a Park Layout proposal from `~/.claude/env/`, present that proposal first as a YAML draft for the user to review, edit, or reject.
-2. **User-supplied path (fallback).** If no auto-derived proposal exists (bare environment, environment misconfigured, or the user rejected the auto-derived proposal), ask the user for a catalog path. Read it. Derive sub-section names and cwd glob patterns by inspecting the catalog's structure.
+1. **Auto-derived path (preferred).** Trigger the per-install-binding discovery (see Per-install binding, below) and, if it produces a Park Layout proposal from the heuristics the binding points to, present that proposal first as a YAML draft for the user to review, edit, or reject.
+2. **User-supplied path (fallback).** If no auto-derived proposal exists (no binding, binding misconfigured, or the user rejected the auto-derived proposal), ask the user for a catalog path. Read it. Derive sub-section names and cwd glob patterns by inspecting the catalog's structure.
 
 Either way, derivation is interpreted by the agent (Claude), not by regex — read the catalog like a human would, identify organizational categories, and propose `name + cwd_glob` for each. Present the proposal as YAML for the user to review and edit.
 
@@ -520,7 +520,7 @@ The check is best-effort: it succeeds inside ordinary working trees, submodules,
 - **Probe-and-grep depends on undocumented Claude Code behavior.** Specifically, the disambiguator depends on Claude Code's bash tool logging the resolved command (post-shell-substitution, with `${uuid}` already substituted) into the session's JSONL transcript. If this behavior changes in a future Claude Code release (e.g., the harness logs the pre-substitution command parameter instead), the disambiguator will fail closed: no probe match, fall back to the manual session-ID supply path, never silently misidentifies. See "Concurrent-session disambiguation" in `park` step 2 for the failure modes and guards.
 - **Session-invocation cwd derivation depends on the user not having `cd`'d during the session.** Claude Code's bash tool persists working-directory state across invocations, so any user `cd` shifts `pwd` away from the invocation cwd that indexes the transcript directory under `~/.claude/projects/<slug>/`. When that happens, slug derivation returns a non-existent path and step 2b's no-transcripts-found message fires. This is a present-tense failure mode, not a future-contract concern: any session where the user has issued `cd` mid-session and then invokes `park` will hit this. Workaround: `cd` back to the invocation cwd before parking, or supply the session ID directly via a future flag (deferred for v2). See the corresponding Edge case for the user-facing remediation.
 - **Mechanical pieces are described in prose, not extracted as helper scripts.** Session ID derivation, fence-block I/O, and glob classification are re-derived from this document on every invocation. This is a deliberate v1 choice to keep the skill self-contained; a v2 refactor could extract `helpers/session_id.sh` and `helpers/fence_io.py` for stability and testability.
-- **The init workflow is sprawling.** Init currently handles ~14 distinct responsibilities across ~95 lines: destination validation, layout selection, env-relevance-map construction, env-derived layout proposal, user-supplied catalog interpretation with inference back-stop, user-direct sub-section definition, catch-all normalization, section header configuration, free-form context capture, config schema write, destination file initialization with pre-write fence scan and re-init happy-path handling, fence placement, and the VCS coverage check. This is v1-acceptable but a v2 refactor candidate: factor into named sub-procedures (`validate-destination`, `propose-layout`, `write-config`, `initialize-destination-file`, `vcs-check`) with explicit handoffs. **Promotion criterion**: refactor when init grows by another ~20 lines or one more distinct responsibility, whichever comes first — at that point the documentation cost of holding all responsibilities in one workflow exceeds the cost of the structural split.
+- **The init workflow is sprawling.** Init currently handles ~14 distinct responsibilities across ~95 lines: destination validation, layout selection, binding relevance-map construction, binding-derived layout proposal, user-supplied catalog interpretation with inference back-stop, user-direct sub-section definition, catch-all normalization, section header configuration, free-form context capture, config schema write, destination file initialization with pre-write fence scan and re-init happy-path handling, fence placement, and the VCS coverage check. This is v1-acceptable but a v2 refactor candidate: factor into named sub-procedures (`validate-destination`, `propose-layout`, `write-config`, `initialize-destination-file`, `vcs-check`) with explicit handoffs. **Promotion criterion**: refactor when init grows by another ~20 lines or one more distinct responsibility, whichever comes first — at that point the documentation cost of holding all responsibilities in one workflow exceeds the cost of the structural split.
 
 ## Dependencies
 
@@ -532,21 +532,23 @@ The check is best-effort: it succeeds inside ordinary working trees, submodules,
 
 ---
 
-## Environment
+## Per-install binding
 
-This skill extends with environment context. Unlike workflow skills that read the environment on every invocation, park-session reads the environment only during `init` (or re-init). Subsequent `park`, `unpark`, `list`, and `audit` invocations consume the local config without re-reading the environment — this keeps action-mode fast and predictable.
+If `~/.claude/park-session.local.md` exists, read it and follow its per-install instructions. This file is the skill's only per-install coupling point: it may point to a set of environment heuristics (used to auto-derive a Park Layout), or override defaults. If it is absent, proceed with built-in defaults — bare install, fallback-safe.
 
-**When environment discovery runs:** lazily, as a sub-step of init question 2(b), only when the user picks option (b). Steps 1–5 below are gated on that choice. The relevance map is shown to the user at that point. This avoids running discovery for users who pick flat layout (a) or who define sub-sections directly (c) — neither path consumes the derived Park Layout.
+Unlike workflow skills that read the binding on every invocation, park-session reads it only during `init` (or re-init). Subsequent `park`, `unpark`, `list`, and `audit` invocations consume the local config without re-reading the binding — this keeps action-mode fast and predictable.
+
+**When binding discovery runs:** lazily, as a sub-step of init question 2(b), only when the user picks option (b). Steps 1–5 below are gated on that choice. The relevance map is shown to the user at that point. This avoids running discovery for users who pick flat layout (a) or who define sub-sections directly (c) — neither path consumes the derived Park Layout.
 
 During `init` (within question 2(b)):
 
-1. Check if `~/.claude/env/` exists.
-   - If `~/.claude/env/` does not exist: bare environment. Skip the auto-derivation steps (2–5) below. Option (b) in question 2 remains available as a user-supplied catalog path. Tell the user no environment was found.
-   - If `~/.claude/env/` exists but `index.md` is absent or unreadable: warn the user that the environment appears misconfigured. Skip auto-derivation; option (b) still falls back to a user-supplied catalog path. Do not silently degrade.
-   - If `~/.claude/env/index.md` exists: proceed to step 2.
-2. Read the index to discover available environment heuristics.
-3. Produce a **relevance map**: print to the user as a brief table (`entry | relevant? | rationale`) listing every entry in the index. The user sees which entries were considered and why each was kept or excluded. "No silent dropping" means no entry is omitted from the printed table — exclude by marking `relevant?: no`, never by leaving a row out.
+1. Check if `~/.claude/park-session.local.md` exists.
+   - If absent: bare install. Skip the auto-derivation steps (2–5) below. Option (b) in question 2 remains available as a user-supplied catalog path. Tell the user no binding was found.
+   - If present but unreadable, or its pointer is broken: warn the user that the binding appears misconfigured. Skip auto-derivation; option (b) still falls back to a user-supplied catalog path. Do not silently degrade.
+   - Otherwise: follow its pointer to the heuristics and proceed to step 2.
+2. Read the heuristics the `.local.md` points to.
+3. Produce a **relevance map**: print to the user as a brief table (`entry | relevant? | rationale`) listing every entry. The user sees which entries were considered and why each was kept or excluded. "No silent dropping" means no entry is omitted from the printed table — exclude by marking `relevant?: no`, never by leaving a row out.
 4. For relevant entries (typically those describing organizational categories — kinds, areas, taxonomy, container types), read those files and derive **Park Layout**: a list of `name + cwd_glob` pairs suitable for the `sections:` array in config.
 5. Present the derived Park Layout to the user as a YAML proposal during question 2(b). The user reviews, edits, and confirms.
 
-When the user re-runs `init` later (e.g., after restructuring their environment), the `context` field from the existing config is read and included in the relevance-map reasoning so the skill can incorporate the user's running narrative about system changes.
+When the user re-runs `init` later (e.g., after restructuring their setup), the `context` field from the existing config is read and included in the relevance-map reasoning so the skill can incorporate the user's running narrative about system changes.

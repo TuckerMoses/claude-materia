@@ -117,6 +117,9 @@ Only agents whose logged evaluation says `met` may appear in `next_dispatches`. 
 
 ## Your task
 Run your review per your agent spec on the listed scope. Emit findings to `iterations/<tier>-<N+1>/<agent_filename-without-md>-output.md`.
+
+## Acknowledgment
+End your turn with the literal text `ACK <path-to-output-file>` and nothing else. No summary, no preamble, no closing prose. The orchestrator extracts only the path; anything else you write is wasted context that bleeds into the orchestrator's session.
 ```
 
 The reviewer subagent reads its own agent file (for role) plus this dispatch prompt (for task) and produces output. **You author this prompt; the orchestrator never reads it.**
@@ -138,6 +141,9 @@ Read `iterations/<tier>-<N>/triage-output.json`. Act on `findings[]` where `stat
 
 ## Output
 Write your changelog to `iterations/<tier>-<N>/fixer-changelog.md`. Apply changes to the listed scope files only.
+
+## Acknowledgment
+End your turn with the literal text `ACK iterations/<tier>-<N>/fixer-changelog.md` and nothing else. No summary, no preamble. The orchestrator extracts only the path token; anything else you write is wasted context.
 ```
 
 Trigger evaluation is **Phase 1 only** — the orchestrator filters optional agents by their `trigger` field at pool composition (see SKILL.md Stage B). Trigger-excluded agents are not in your locked pool. You evaluate **preconditions only** per iteration; do not re-evaluate triggers.
@@ -295,7 +301,7 @@ This pulls precondition evaluation entirely out of the orchestrator and gives ev
 
 You raise `control: escalate` (with `surface.requires_response: true`) in these cases:
 
-- **Iteration limit approaching**: when `iteration >= tier_max - 1` and gate still blocked, surface options: `bump <N>` / `accept-risk <ids>` / `abort`.
+- **Iteration limit approaching**: when `iteration >= tier_max - 1` and gate still blocked, surface options: `bump <N>` / `accept-risk <ids>` / `abort`. **Post-bump behavior**: after a user-issued `bump <N>` increments `tier_max`, the limit is the *new* `tier_max`. Re-arm the escalation trigger against the post-increment value — at the new `tier_max - 1` with gate still blocked, escalate again. Do not assume the original session-start `tier_max` once a bump has been applied.
 - **Oscillation acknowledged but persistent**: same finding pattern recurring across 3+ iterations after user has been notified once. Re-surface for explicit decision.
 - **Unable-to-resolve findings from fixer**: parse the previous iteration's `fixer-changelog.md`; if it contains `unable_to_resolve` entries, surface them with the user's decision space (accept-risk for those IDs / abort / continue with manual fix).
 - **Material scope change** (live globs): when scope expands by more than ~25% file count, surface for confirmation before dispatching reviewers against the expanded scope.
@@ -341,3 +347,4 @@ You receive every path you need; you do not compute paths.
 - You are the only legitimate consumer of finding substance during the loop. Reviewers and fixer have narrower roles. The orchestrator never reads findings. Treat this as a structural invariant.
 - Tier-init mode produces no `triage-output.json` (no findings exist yet). Every other mode produces one.
 - When updating `accepted-risks.json` or `deferred-lows.json`, write atomically (read → modify in memory → write back). Never partial-write.
+- **End your turn with the literal text `ACK <path-to-route.json>` and nothing else.** No summary of findings, no diagnosis recap, no closing prose. The orchestrator extracts only the path token from your ack — anything else you write bleeds substance into the orchestrator's session and defeats the blind-orchestrator design. Your route.json + the other files you authored are the only authoritative outputs; the ack is plumbing.
