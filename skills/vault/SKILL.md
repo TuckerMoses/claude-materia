@@ -177,3 +177,35 @@ A lens can only reference labels that already exist in `labels.yml`, so on a fre
 (action/seed labels only) `add-source` lenses are limited to that vocabulary. Richer lenses become
 available as the bank grows via ongoing-ingest. Surface this to the user rather than silently dropping
 an unknown lens label — an unknown label is a hard validation failure, not a warning.
+
+## discuss
+
+Meta-conversation about how the vault and this skill work — architecture questions, why a flat
+label-based pool, how the contracts fit together, when a vault-local skill (ongoing-ingest,
+synthesizer) is warranted vs. an addition here.
+
+Operates against the vault named in `~/.claude/vault.local.md` when one is registered (so discussion
+can reference the live vocabulary), but does not require it for pure meta-discussion.
+
+**Routes the env-registration taxonomy question to `kind-bootstrapper discuss`.** The question — does
+the singleton definition widen to admit a *reusably-bootstrapped per-environment singleton*, or is
+that a new category? — is **not** decided here. This skill never writes to env itself; the taxonomy
+decision is decoupled and does not block builds or behavior. When the conversation reaches that
+question, hand it to `kind-bootstrapper discuss` rather than answering it inline.
+
+## Invariants (cross-cutting, hard)
+
+- **Content-preservation iron rule** — Phase D of `create` is body-verbatim + hash-verified,
+  abort-on-mismatch (see "Iron rule" under create). The exact step that nearly lost the corpus before.
+- **Born-correct** — `create` produces the final architecture directly (flat `notes/`, separate
+  `journal/`, `labels[]`, **no `status`** in new notes, `labels.yml` + `INSTRUCTION.md` present), so a
+  fresh vault never needs migrating.
+- **Templates-as-spec** — `assets/` is the single source of truth; Scaffold only instantiates it. This
+  is what carries cross-environment consistency.
+- **Env-agnostic** — no hardcoded env-directory paths anywhere in this skill. Any env reachability is
+  via `~/.claude/vault.local.md`, never a hardcoded env path.
+- **Output-contract sharing** — Phase D and the future ongoing-ingest skill both emit notes conforming
+  to `INSTRUCTION.md`'s note shape. They share that *contract*, not filing code (Phase D is a one-time
+  bulk scripted pass; ongoing-ingest is recurring incremental classification).
+- **Decoupled env-taxonomy** — singleton-vs-kind registration is handled via `kind-bootstrapper
+  discuss`; it gates only the small registration action in the user's env, not this skill.
