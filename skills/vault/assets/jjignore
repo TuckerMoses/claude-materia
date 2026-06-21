@@ -1,0 +1,5 @@
+_inbox/
+_archive/
+.obsidian/workspace*
+.obsidian/cache/
+.obsidian/community-plugins.json

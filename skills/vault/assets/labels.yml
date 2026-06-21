@@ -1,0 +1,57 @@
+# Label Bank — the shared label vocabulary / inter-skill API for this vault.
+# Machine-read (ingest uses when_to_apply for classification) AND machine-written
+# (manager skills register labels; the project retirement gate flips status active→retired).
+# status: active is the default; ingest applies only active labels to new notes.
+# status: retired = marked-not-deleted: stays valid on existing notes for provenance,
+# but ingest won't apply it to anything new. Lets container labels (esp. project:) be
+# retired on completion without losing history.
+#
+# This is a SEED bank. The four action labels below are vault-invariant and ship with
+# every vault. Domain / topic / type / facet labels are DERIVED PER VAULT at create time
+# (Structure-lock, spec §3B) and appended here in this same schema — they are intentionally
+# absent from the template.
+#
+# Container labels (workspace:<name>, project:<name>) are pull-vocabulary registered by
+# their manager skills (workspace-manager, project-manager) — NOT by ingest, and NOT seeded
+# here. The schemes are documented below as comments only; no concrete <name> entries ship.
+#
+# workspace:<name> scheme: one label per active workspace, registered by the workspace-manager
+# skill at workspace creation, in this schema with status: active. Quote the key (it contains
+# a colon): "workspace:<name>".
+#
+# project:<name> scheme: registered by the project-manager skill at project creation, in this
+# schema with status: active. Subject to a RETIREMENT GATE: on project completion the manager
+# flips that entry to status: retired (marked-not-deleted), so ingest stops applying it while
+# existing notes keep their provenance. Quote the key: "project:<name>".
+
+labels:
+  # --- Action / type labels (vault-invariant; ship with every vault) ---
+  todo:
+    when_to_apply: >
+      The canonical actionability label. Apply when a note requires a concrete action
+      from you (vs. knowledge / observation / reference). Orthogonal to
+      subject/container/type labels — a note can be [idea, todo] or bare todo. Apply with
+      discipline (actionable, not aspirational) or it over-applies. Pairs with note-level
+      status: open|done.
+    status: active
+  session-seed:
+    when_to_apply: >
+      A genuine "work-through-this-WITH-Claude" invitation, not knowledge to file. Handled
+      by a session-planner puller. Orthogonal to container labels (a note may carry
+      project:<name> + session-seed, or session-seed alone).
+    status: active
+  idea:
+    when_to_apply: "An undeveloped concept / insight worth keeping."
+    status: active
+  observation:
+    when_to_apply: "A noticed fact / pattern; knowledge, not action."
+    status: active
+
+  # --- Container labels (pull-vocabulary; registered later by manager skills) ---
+  # workspace:<name> and project:<name> entries are added here by workspace-manager /
+  # project-manager, NOT seeded at create. See the scheme comments in the header.
+
+  # --- Domain / topic / type / facet labels ---
+  # DERIVED PER VAULT at Structure-lock (corpus-seeded) or confirmed as a minimal seed
+  # (cold start), then appended here in the {when_to_apply, status: active} schema above.
+  # None ship in this template.

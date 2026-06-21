@@ -1,0 +1,4 @@
+// Syncthing ignore patterns (for later Phase 3 sync setup).
+// Archive is cold storage — excluded from sync. .jj internal state is not synced.
+_archive/
+.jj/

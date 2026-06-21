@@ -1,0 +1,9 @@
+# jj honors .gitignore (not .jjignore). Mirrors .jjignore so exclusions actually apply.
+# Inbox is synced separately (iCloud/Syncthing), not jj-tracked. Archive is cold storage,
+# excluded from BOTH jj and Syncthing.
+_inbox/
+_archive/
+.obsidian/workspace*
+.obsidian/cache/
+.obsidian/community-plugins.json
+.obsidian/plugins/

@@ -1,0 +1,17 @@
+# Ingest source registry — the input-side pull registry (additive-surface model).
+# Each entry is a deliberate accepted-read-exposure: "I agree to send this source through ingest."
+# Written by `vault add-source` (new entries). The future ongoing-ingest skill writes the
+# `last_read` watermark on vcs entries ONLY (destructive entries carry no stored state — the
+# residue is by definition unprocessed). Two writers, one schema; defined here and in INSTRUCTION.md.
+#
+# Entry schema:
+#   - path: <absolute path to the source>
+#     track: vcs | destructive          # vcs = read commits since last_read; destructive = drained
+#     lens: [<label>, ...]              # a subset of _machine/labels.yml; every label MUST exist there
+#     description: "<non-selector human note>"   # optional
+#     # --- vcs only ---
+#     remote: <git/jj remote>
+#     branch: <branch>
+#     last_read: <commit>               # baseline; initialized at registration, advanced by ingest
+
+sources: []
