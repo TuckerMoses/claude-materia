@@ -133,3 +133,47 @@ of this rule and is **mandatory** — it is the exact step that nearly lost the 
 original bootstrap. Procedure, per note: `before = md5(body)` → write note → `after = md5(body_read_back)`
 → assert `before == after` and assert `not (len(body) > 0 and len(body_read_back) == 0)`; on any failure,
 abort the pass and leave all originals untouched.
+
+## add-source
+
+Register an external source in the vault's `_machine/ingest_paths.yml` (the input-side **pull**
+registry). The logic is invariant across vaults (pure schema + procedure), which is why it lives here
+rather than being re-implemented in each vault's local ingest skill.
+
+Operates on the vault named in `~/.claude/vault.local.md`. If that pointer is absent, fail loudly.
+
+### Accept
+
+- `path` — the source location.
+- `track: vcs | destructive` — vcs = read commits since a watermark; destructive = drained residue.
+- `lens` — a **subset of `_machine/labels.yml`** (the label-lens for this source).
+- `remote` / `branch` — **vcs only**.
+- `description` — optional, non-selector human note.
+
+### Validate
+
+- `path` resolves.
+- **Every lens label exists in `_machine/labels.yml`.** (This is why a freshly cold-started vault's
+  lenses are limited to the action/seed vocabulary — see "Cold-start interaction".)
+- For `vcs`: the repo + `branch` resolve. Initialize the `last_read` baseline (current tip commit).
+- For `destructive`: store **no** `last_read` state — the residue is by definition unprocessed.
+
+### Append
+
+Append a conformant entry to `sources:` in `_machine/ingest_paths.yml`. This append **is** the
+deliberate accepted-read-exposure registration (additive-surface model — every entry is an explicit
+"I agree to send this source through ingest").
+
+### Two writers, one schema (no conflict)
+
+`add-source` writes **new entries** (invariant registration). The future ongoing-ingest skill writes
+**`last_read` watermarks** (runtime state) on **vcs** entries only — destructive entries have no
+watermark. Same pattern as `labels.yml` (managers register, ingest reads). The schema is defined once,
+here and in `INSTRUCTION.md`; do not fork it.
+
+### Cold-start interaction
+
+A lens can only reference labels that already exist in `labels.yml`, so on a freshly cold-started vault
+(action/seed labels only) `add-source` lenses are limited to that vocabulary. Richer lenses become
+available as the bank grows via ongoing-ingest. Surface this to the user rather than silently dropping
+an unknown lens label — an unknown label is a hard validation failure, not a warning.
