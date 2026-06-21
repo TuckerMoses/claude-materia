@@ -132,7 +132,8 @@ dropping body content. Phase D's hash-verify/abort-on-mismatch procedure is the 
 of this rule and is **mandatory** — it is the exact step that nearly lost the corpus during the
 original bootstrap. Procedure, per note: `before = md5(body)` → write note → `after = md5(body_read_back)`
 → assert `before == after` and assert `not (len(body) > 0 and len(body_read_back) == 0)`; on any failure,
-abort the pass and leave all originals untouched.
+abort the pass and leave all originals untouched. On abort, emit a clear error naming the offending note
+and reporting both the before and after `md5(body)` hashes so the failure is never silent or vague.
 
 ## add-source
 
@@ -152,7 +153,7 @@ Operates on the vault named in `~/.claude/vault.local.md`. If that pointer is ab
 
 ### Validate
 
-- `path` resolves.
+- `path` resolves; if it does not, fail loudly (do not register a source at an unresolvable path).
 - **Every lens label exists in `_machine/labels.yml`.** (This is why a freshly cold-started vault's
   lenses are limited to the action/seed vocabulary — see "Cold-start interaction".)
 - For `vcs`: the repo + `branch` resolve. Initialize the `last_read` baseline (current tip commit).
