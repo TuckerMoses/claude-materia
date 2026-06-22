@@ -24,7 +24,7 @@ status:                            # ABSENT at creation; written later by a cons
                                    # Read per label: absent ⇒ open (todos) / seedling (knowledge)
 created: 2026-…
 captured: 2026-…                   # capture-unit date; split-siblings share it
-source: obsidian-inbox             # may be a compound `remote + path + commit` for external sources
+source: journal/YYYY-MM-DD         # or a compound `remote + path + commit` for external sources
 handled: []                        # consumer names; written by consumers (or human), never ingest
 related: ["[[…]]"]                 # Tier-1 factual links only
 ---
@@ -32,6 +32,19 @@ related: ["[[…]]"]                 # Tier-1 factual links only
 
 Iron rule: note **bodies preserve the full source verbatim**; `title` is a derived label only and
 never licenses dropping body content.
+
+## Journal day-files
+
+Files in `journal/` (`YYYY-MM-DD.md`) are **not** atomic notes — they do not carry the full frontmatter
+contract above. They are the daily-notes capture surface and the permanent ingest source. Ingest writes
+one marker on each processed day-file:
+
+```yaml
+ingested: true   # set by ingest when the day-file has been fully processed; absent = unprocessed
+```
+
+Day-files are never extracted to `notes/` — only the atomic thoughts *within* them are. The day-file
+itself is the immutable source diary (permanent; never deleted or drained).
 
 ## Field ownership (no overlap, no gap)
 

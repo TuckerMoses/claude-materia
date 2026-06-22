@@ -40,6 +40,13 @@ labels:
       by a session-planner puller. Orthogonal to container labels (a note may carry
       project:<name> + session-seed, or session-seed alone).
     status: active
+  needs-label:
+    when_to_apply: >
+      Holding label for a knowledge-worthy thought ingest extracted from the journal that
+      no existing label fits — parked here, never dropped. The synthesizer's resolve pass
+      proposes a real label and clears this. Distinct from `needs-development` (that = an
+      underdeveloped stub).
+    status: active
   idea:
     when_to_apply: "An undeveloped concept / insight worth keeping."
     status: active

@@ -1,7 +1,6 @@
-# jj honors .gitignore (not .jjignore). Mirrors .jjignore so exclusions actually apply.
-# Inbox is synced separately (iCloud/Syncthing), not jj-tracked. Archive is cold storage,
-# excluded from BOTH jj and Syncthing.
-_inbox/
+# jj honors .gitignore (not .jjignore); .jjignore is present but inert (bootstrap lesson #9).
+# This file is the authoritative exclusion set for both jj and git.
+# Archive is cold storage, excluded from BOTH jj and Syncthing.
 _archive/
 .obsidian/workspace*
 .obsidian/cache/

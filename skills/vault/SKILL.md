@@ -95,9 +95,11 @@ the spec; this phase only stamps them (plus the locked vocabulary). Steps:
 1. Create the vault directory; `jj init` (jj honors `.gitignore`).
 2. Stamp ignore files: `assets/gitignore → .gitignore`, `assets/jjignore → .jjignore`,
    `assets/stignore → .stignore` (rename — add the leading dot).
-3. Stamp `assets/obsidian/ → .obsidian/`.
-4. Create `_inbox/inbox.md` (single append-only inbox), `notes/` (flat pool), `journal/` (separate
-   folder), `_archive/`, `_machine/`.
+3. Stamp `assets/obsidian/ → .obsidian/` (includes `daily-notes.json` — configures the daily-notes
+   plugin: `"folder": "journal"`, `"format": "YYYY-MM-DD"`, `"autorun": false` — the "open daily note
+   on startup" toggle; suppresses empty root-note creation on app launch).
+4. Create `notes/` (flat pool), `journal/` (daily-notes capture surface and permanent ingest source),
+   `_archive/`, `_machine/`.
 5. Stamp `assets/labels.yml → _machine/labels.yml`, then **append the locked domain/topic vocabulary**
    from Phase B, each entry conforming to the bank schema (`label → {when_to_apply, status: active}`).
    The four action labels are already present from the template; the container schemes stay as
