@@ -1,0 +1,216 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1450" height="1040" viewBox="0 0 1450 1040" font-family="Helvetica, Arial, sans-serif">
+  <rect width="1450" height="1040" fill="#fafaf8"/>
+
+  <!-- ═══════════ Header ═══════════ -->
+  <text x="40" y="48" font-size="22" font-weight="bold" fill="#2a2a2a">synthesizer — design decisions</text>
+  <text x="40" y="72" font-size="13" fill="#777">claude-materia skill · pure-pull consumer of the populated vault · 2026-07-03 · topics 1–7 + two-sensors amendment</text>
+
+  <!-- ═══════════ LEFT: The Vault ═══════════ -->
+  <rect x="40" y="100" width="300" height="560" rx="8" fill="#f5f0e8" stroke="#b8a888" stroke-width="1.5"/>
+  <text x="60" y="130" font-size="15" font-weight="bold" fill="#6b5a3e">THE VAULT  ~/Vault</text>
+
+  <rect x="60" y="150" width="260" height="64" rx="5" fill="#fffdf8" stroke="#c9baa0"/>
+  <text x="72" y="171" font-size="12" font-weight="bold" fill="#444">notes/</text>
+  <text x="72" y="187" font-size="11" fill="#666">flat pool · 303 atomic notes</text>
+  <text x="72" y="201" font-size="11" fill="#666">scan reads · merge/link/mint edit</text>
+
+  <rect x="60" y="228" width="260" height="64" rx="5" fill="#fffdf8" stroke="#c9baa0"/>
+  <text x="72" y="249" font-size="12" font-weight="bold" fill="#444">journal/</text>
+  <text x="72" y="265" font-size="11" fill="#666">day-files · immutable source diary</text>
+  <text x="72" y="279" font-size="11" fill="#666">never touched by the synthesizer</text>
+
+  <rect x="60" y="306" width="260" height="64" rx="5" fill="#fffdf8" stroke="#c9baa0"/>
+  <text x="72" y="327" font-size="12" font-weight="bold" fill="#444">_machine/labels.yml</text>
+  <text x="72" y="343" font-size="11" fill="#666">the label bank · scan blocks on it</text>
+  <text x="72" y="357" font-size="11" fill="#666">minter registers new labels here</text>
+
+  <rect x="60" y="384" width="260" height="64" rx="5" fill="#fff8ef" stroke="#c98f41" stroke-width="1.5"/>
+  <text x="72" y="405" font-size="12" font-weight="bold" fill="#8a5a1a">_machine/synthesizer-state.yml</text>
+  <text x="72" y="421" font-size="11" fill="#8a5a1a">NEW · seen-set only (no rejection ledger)</text>
+  <text x="72" y="435" font-size="11" fill="#8a5a1a">vault-resident → syncs across machines</text>
+
+  <rect x="60" y="462" width="260" height="64" rx="5" fill="#fffdf8" stroke="#c9baa0"/>
+  <text x="72" y="483" font-size="12" font-weight="bold" fill="#444">_archive/</text>
+  <text x="72" y="499" font-size="11" fill="#666">absorbed merge-losers land here,</text>
+  <text x="72" y="513" font-size="11" fill="#666">verbatim — nothing is ever deleted</text>
+
+  <rect x="60" y="540" width="260" height="64" rx="5" fill="#fffdf8" stroke="#c9baa0"/>
+  <text x="72" y="561" font-size="12" font-weight="bold" fill="#444">INSTRUCTION.md</text>
+  <text x="72" y="577" font-size="11" fill="#666">external handshake · read live</text>
+  <text x="72" y="591" font-size="11" fill="#666">two cascade edits (see red panel)</text>
+
+  <!-- Binding chain -->
+  <rect x="40" y="690" width="300" height="130" rx="8" fill="#f4f4f6" stroke="#999" stroke-width="1.5"/>
+  <text x="60" y="718" font-size="14" font-weight="bold" fill="#444">Per-install binding</text>
+  <text x="60" y="742" font-size="11.5" fill="#555">SKILL.md (portable, no env paths)</text>
+  <text x="60" y="760" font-size="11.5" fill="#555">→ ~/.claude/synthesizer.local.md</text>
+  <text x="60" y="778" font-size="11.5" fill="#555">→ falls back to ~/.claude/vault.local.md</text>
+  <text x="60" y="796" font-size="11.5" fill="#555">→ INSTRUCTION.md + labels.yml read live</text>
+  <text x="60" y="812" font-size="10.5" fill="#888">absent pointer ⇒ fail loudly, never guess</text>
+
+  <!-- Iron rule note -->
+  <rect x="40" y="840" width="300" height="160" rx="8" fill="#f0ede8" stroke="#a89f90" stroke-width="1.5"/>
+  <text x="60" y="868" font-size="14" font-weight="bold" fill="#544">Iron-rule scope (clarified)</text>
+  <text x="60" y="892" font-size="11.5" fill="#555">Filing stays verbatim — minting and all</text>
+  <text x="60" y="908" font-size="11.5" fill="#555">label edits never alter bodies.</text>
+  <text x="60" y="930" font-size="11.5" fill="#555">A merge rewrite is a distinct sanctioned</text>
+  <text x="60" y="946" font-size="11.5" fill="#555">refactor: human-approved in full, and</text>
+  <text x="60" y="962" font-size="11.5" fill="#555">licensed by archived originals —</text>
+  <text x="60" y="978" font-size="11.5" fill="#555">absorbed → _archive/ · survivor → jj history</text>
+
+  <!-- vault ↔ scan arrows -->
+  <line x1="340" y1="260" x2="380" y2="260" stroke="#8a7a5a" stroke-width="1.5" marker-end="url(#arr)"/>
+  <text x="360" y="252" font-size="9" fill="#8a7a5a" text-anchor="middle">reads</text>
+  <line x1="380" y1="520" x2="340" y2="520" stroke="#8a7a5a" stroke-width="1.5" marker-end="url(#arr)"/>
+  <text x="360" y="512" font-size="9" fill="#8a7a5a" text-anchor="middle">writes</text>
+  <defs>
+    <marker id="arr" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L7,3 L0,6 z" fill="#8a7a5a"/>
+    </marker>
+    <marker id="arrG" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L7,3 L0,6 z" fill="#5a8a60"/>
+    </marker>
+  </defs>
+
+  <!-- ═══════════ CENTER TOP: scan pipeline ═══════════ -->
+  <rect x="380" y="100" width="600" height="560" rx="8" fill="#eef3fa" stroke="#7f9fc4" stroke-width="1.5"/>
+  <text x="400" y="130" font-size="15" font-weight="bold" fill="#3a5a80">/synthesizer scan [scope?] [--full]</text>
+  <text x="400" y="146" font-size="11" fill="#5a7aa0">one computation, three verdicts: merge · link · new-label (sensor 1)</text>
+
+  <rect x="410" y="158" width="540" height="56" rx="5" fill="#fdfeff" stroke="#a8c0d8"/>
+  <text x="422" y="177" font-size="12" font-weight="bold" fill="#3a5a80">1 · scope the run</text>
+  <text x="422" y="192" font-size="11" fill="#556">scope = label list or free-text resolved against labels.yml · default whole vault</text>
+  <text x="422" y="206" font-size="11" fill="#556">incremental default: new notes (pool − seen-set) × their neighborhoods · --full = fresh re-pass</text>
+
+  <rect x="410" y="222" width="540" height="52" rx="5" fill="#fdfeff" stroke="#a8c0d8"/>
+  <text x="422" y="241" font-size="12" font-weight="bold" fill="#3a5a80">2 · label-blocking — rg frontmatter only</text>
+  <text x="422" y="257" font-size="11" fill="#556">group note paths by shared label → candidate neighborhoods · zero body reads</text>
+
+  <rect x="410" y="282" width="540" height="52" rx="5" fill="#fdfeff" stroke="#a8c0d8"/>
+  <text x="422" y="301" font-size="12" font-weight="bold" fill="#3a5a80">3 · global title sweep — one subagent</text>
+  <text x="422" y="317" font-size="11" fill="#556">all titles + label sets in one context → nominates cross-domain pairs labels can't see</text>
+
+  <rect x="410" y="342" width="540" height="52" rx="5" fill="#fdfeff" stroke="#a8c0d8"/>
+  <text x="422" y="361" font-size="12" font-weight="bold" fill="#3a5a80">4 · fan-out — one subagent per neighborhood</text>
+  <text x="422" y="377" font-size="11" fill="#556">body reads scoped to cluster · big clusters shard by facet · return structured proposals only</text>
+
+  <rect x="410" y="402" width="540" height="44" rx="5" fill="#fdf3dd" stroke="#d9a441" stroke-width="1.5"/>
+  <text x="422" y="421" font-size="12" font-weight="bold" fill="#8a5a1a">5 · aggregate + dedup cross-cluster → ONE propose-confirm gate</text>
+  <text x="422" y="437" font-size="11" fill="#8a5a1a">never auto-applies · every proposal shows its evidence</text>
+
+  <rect x="410" y="458" width="250" height="130" rx="5" fill="#fdfeff" stroke="#a8c0d8"/>
+  <text x="422" y="477" font-size="12" font-weight="bold" fill="#3a5a80">6a · MERGE (on confirm)</text>
+  <text x="422" y="493" font-size="10.5" fill="#556">survivor absorbs at its path — no new file</text>
+  <text x="422" y="507" font-size="10.5" fill="#556">default: drafted rewrite shown in full</text>
+  <text x="422" y="521" font-size="10.5" fill="#556">accept · append-verbatim · reject</text>
+  <text x="422" y="535" font-size="10.5" fill="#556">frontmatter union · provenance</text>
+  <text x="422" y="549" font-size="10.5" fill="#556">absorbed → _archive/ verbatim</text>
+  <text x="422" y="563" font-size="10.5" fill="#556">backlink sweep → survivor</text>
+
+  <rect x="672" y="458" width="132" height="130" rx="5" fill="#fdfeff" stroke="#a8c0d8"/>
+  <text x="684" y="477" font-size="12" font-weight="bold" fill="#3a5a80">6b · LINK</text>
+  <text x="684" y="493" font-size="10.5" fill="#556">[[wikilink]] into</text>
+  <text x="684" y="507" font-size="10.5" fill="#556">both notes'</text>
+  <text x="684" y="521" font-size="10.5" fill="#556">related:</text>
+  <text x="684" y="535" font-size="10.5" fill="#556">bidirectional</text>
+  <text x="684" y="549" font-size="10.5" fill="#556">no new field</text>
+
+  <rect x="816" y="458" width="134" height="130" rx="5" fill="#eef7ef" stroke="#5a8a60" stroke-width="1.5"/>
+  <text x="828" y="477" font-size="12" font-weight="bold" fill="#3a6a44">6c · NEW LABEL</text>
+  <text x="828" y="493" font-size="10.5" fill="#3a6a44">emergent theme:</text>
+  <text x="828" y="507" font-size="10.5" fill="#3a6a44">notes circle a</text>
+  <text x="828" y="521" font-size="10.5" fill="#3a6a44">concept no bank</text>
+  <text x="828" y="535" font-size="10.5" fill="#3a6a44">label names</text>
+  <text x="828" y="553" font-size="10.5" font-weight="bold" fill="#3a6a44">→ the minting</text>
+  <text x="828" y="567" font-size="10.5" font-weight="bold" fill="#3a6a44">machine ↓</text>
+
+  <rect x="410" y="600" width="540" height="40" rx="5" fill="#fdfeff" stroke="#a8c0d8"/>
+  <text x="422" y="624" font-size="12" font-weight="bold" fill="#3a5a80">7 · update seen-set  →  _machine/synthesizer-state.yml</text>
+
+  <!-- 6c → minting machine arrow -->
+  <line x1="883" y1="588" x2="883" y2="686" stroke="#5a8a60" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#arrG)"/>
+
+  <!-- ═══════════ CENTER BOTTOM: resolve + minting machine ═══════════ -->
+  <rect x="380" y="690" width="600" height="310" rx="8" fill="#edf5ee" stroke="#85ab8a" stroke-width="1.5"/>
+  <text x="400" y="720" font-size="15" font-weight="bold" fill="#3a6a44">/synthesizer resolve  +  the shared minting machine</text>
+  <text x="400" y="736" font-size="11" fill="#5a8a60">vocabulary growth: two sensors (scan's themes · resolve's parked orphans), ONE minter</text>
+
+  <rect x="410" y="748" width="540" height="38" rx="5" fill="#fdfffd" stroke="#a0c4a6"/>
+  <text x="422" y="771" font-size="12" font-weight="bold" fill="#3a6a44">1 · sensor 2 — gather all needs-label notes · stateless, self-draining</text>
+
+  <rect x="410" y="794" width="540" height="46" rx="5" fill="#fdfffd" stroke="#a0c4a6"/>
+  <text x="422" y="813" font-size="12" font-weight="bold" fill="#3a6a44">2 · recheck against the current bank first</text>
+  <text x="422" y="829" font-size="11" fill="#556">vocabulary grew since parking → some notes fit existing labels · no minting needed</text>
+
+  <rect x="410" y="848" width="540" height="56" rx="5" fill="#fdfffd" stroke="#a0c4a6"/>
+  <text x="422" y="867" font-size="12" font-weight="bold" fill="#3a6a44">3 · cluster residue (+ scan's theme proposals) → one label per coherent cluster</text>
+  <text x="422" y="882" font-size="11" fill="#556">name (bank conventions) + drafted when_to_apply + member notes shown</text>
+  <text x="422" y="896" font-size="11" fill="#556">near-dup guard: "did you mean existing X?" · singletons default to stay parked</text>
+
+  <rect x="410" y="912" width="540" height="40" rx="5" fill="#fdf3dd" stroke="#d9a441" stroke-width="1.5"/>
+  <text x="422" y="930" font-size="12" font-weight="bold" fill="#8a5a1a">4 · MINT (on confirm, per label) → register in labels.yml · apply to members · clear needs-label</text>
+  <text x="422" y="945" font-size="11" fill="#8a5a1a">approve / rename / reject each · unresolved notes stay parked — parking is not failure</text>
+
+  <rect x="410" y="958" width="540" height="34" rx="5" fill="#fdfffd" stroke="#a0c4a6"/>
+  <text x="422" y="979" font-size="12" font-weight="bold" fill="#3a6a44">5 · retroactive sweep on every mint — propose existing notes that should carry it (skippable)</text>
+
+  <!-- ═══════════ RIGHT: decisions ═══════════ -->
+  <rect x="1010" y="100" width="400" height="560" rx="8" fill="#f4f4f6" stroke="#999" stroke-width="1.5"/>
+  <text x="1030" y="130" font-size="15" font-weight="bold" fill="#444">Decisions (topics 1–7, amended)</text>
+
+  <text x="1030" y="160" font-size="12" font-weight="bold" fill="#444">1 · Home</text>
+  <text x="1030" y="176" font-size="11.5" fill="#555">Separate claude-materia skill "synthesizer" — an operational</text>
+  <text x="1030" y="191" font-size="11.5" fill="#555">consumer (session-planner archetype), not a vault subcommand.</text>
+
+  <text x="1030" y="219" font-size="12" font-weight="bold" fill="#444">2 · Surface</text>
+  <text x="1030" y="235" font-size="11.5" fill="#555">scan [scope?] [--full] + resolve · scan emits merge / link /</text>
+  <text x="1030" y="250" font-size="11.5" fill="#555">new-label proposals · help via kernel convention · no discuss.</text>
+
+  <text x="1030" y="278" font-size="12" font-weight="bold" fill="#444">3 · Re-run model</text>
+  <text x="1030" y="294" font-size="11.5" fill="#555">Seen-set only; no rejection ledger — incremental never re-judges</text>
+  <text x="1030" y="309" font-size="11.5" fill="#555">old pairs, and --full SHOULD re-litigate (fresh look is the point).</text>
+
+  <text x="1030" y="337" font-size="12" font-weight="bold" fill="#444">4 · Merge</text>
+  <text x="1030" y="353" font-size="11.5" fill="#555">Rewrite-by-default, approved in full; append-verbatim as runtime</text>
+  <text x="1030" y="368" font-size="11.5" fill="#555">downgrade; originals always survive (archive + jj).</text>
+
+  <text x="1030" y="396" font-size="12" font-weight="bold" fill="#444">5 · Links</text>
+  <text x="1030" y="412" font-size="11.5" fill="#555">One related: field for all links; the Tier-1/Tier-2 split constrains</text>
+  <text x="1030" y="427" font-size="11.5" fill="#555">who may write (ingest vs synthesizer+human), not where links live.</text>
+
+  <text x="1030" y="455" font-size="12" font-weight="bold" fill="#444">6 · Vocabulary growth (amended)</text>
+  <text x="1030" y="471" font-size="11.5" fill="#555">Two sensors, one minter: scan detects emergent themes among</text>
+  <text x="1030" y="486" font-size="11.5" fill="#555">labeled notes; resolve drains parked orphans. Bank-recheck before</text>
+  <text x="1030" y="501" font-size="11.5" fill="#555">minting · retroactive sweep on every mint · ingest stays frozen.</text>
+
+  <text x="1030" y="529" font-size="12" font-weight="bold" fill="#444">7 · Scale</text>
+  <text x="1030" y="545" font-size="11.5" fill="#555">Cheap metadata (labels, titles) shortlists; bodies read only for</text>
+  <text x="1030" y="560" font-size="11.5" fill="#555">candidates; subagents read, orchestrator stays lean.</text>
+
+  <rect x="1030" y="578" width="360" height="66" rx="5" fill="#fff8ef" stroke="#c98f41"/>
+  <text x="1042" y="597" font-size="11.5" font-weight="bold" fill="#8a5a1a">NEW consumer archetype: pairwise consumer</text>
+  <text x="1042" y="612" font-size="11" fill="#8a5a1a">Judges pairs, not notes → never writes handled; state is a seen-</text>
+  <text x="1042" y="626" font-size="11" fill="#8a5a1a">set file in _machine/; confirmed outcomes are effect-checked</text>
+  <text x="1042" y="640" font-size="11" fill="#8a5a1a">(merged note gone, link visible, label registered).</text>
+
+  <!-- ═══════════ RIGHT BOTTOM: cascades ═══════════ -->
+  <rect x="1010" y="690" width="400" height="310" rx="8" fill="#faf0ee" stroke="#c48f85" stroke-width="1.5"/>
+  <text x="1030" y="720" font-size="15" font-weight="bold" fill="#8a4a3e">Cascade edits (shipped with this skill)</text>
+
+  <text x="1030" y="750" font-size="12" font-weight="bold" fill="#8a4a3e">vault/SKILL.md — Identity section</text>
+  <text x="1030" y="766" font-size="11.5" fill="#666">Stop claiming the synthesizer belongs vault-local; its logic is</text>
+  <text x="1030" y="781" font-size="11.5" fill="#666">invariant across vaults (reads vocabulary live at runtime).</text>
+
+  <text x="1030" y="811" font-size="12" font-weight="bold" fill="#8a4a3e">INSTRUCTION.md + vault assets template</text>
+  <text x="1030" y="827" font-size="11.5" fill="#666">· related: comment → "Tier-1 factual (ingest) + confirmed</text>
+  <text x="1030" y="842" font-size="11.5" fill="#666">  associative (synthesizer / human)"</text>
+  <text x="1030" y="858" font-size="11.5" fill="#666">· field ownership → labels written by ingest at creation;</text>
+  <text x="1030" y="873" font-size="11.5" fill="#666">  thereafter only by confirmed minting or the human</text>
+
+  <text x="1030" y="903" font-size="12" font-weight="bold" fill="#8a4a3e">Live ~/Vault (runtime, at first use)</text>
+  <text x="1030" y="919" font-size="11.5" fill="#666">_machine/synthesizer-state.yml created on first scan ·</text>
+  <text x="1030" y="934" font-size="11.5" fill="#666">INSTRUCTION.md edits mirrored into the live vault copy</text>
+
+  <text x="1030" y="964" font-size="11" fill="#997" font-style="italic">Not touched: ~/.claude/plans/vault-design.md (owned by the</text>
+  <text x="1030" y="979" font-size="11" fill="#997" font-style="italic">parallel session) · journal/ · any env file</text>
+</svg>
