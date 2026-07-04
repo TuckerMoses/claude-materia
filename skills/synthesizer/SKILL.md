@@ -159,3 +159,58 @@ read and approved in full is neither.
   auto-create only factual links; associative links require synthesizer-propose + human-confirm),
   not a storage schema. No consumer queries "factual links only"; a second field would fragment
   the link graph for a distinction nothing uses.
+
+## Vocabulary growth — two sensors, one minter
+
+Ingest never mints vocabulary; manager skills register container labels. **All topical vocabulary
+growth happens here**, through two sensors feeding one minting machine:
+
+**Sensor 1 — scan's theme detector.** Neighborhood subagents may report "these N notes circle a
+concept no bank label names." Recurring themes become new-label proposals in scan's confirm gate.
+This is how the vocabulary grows from notes that already fit *existing* labels — without it, the
+vocabulary could only grow from its failures (unlabelable notes), never from emergent themes.
+
+**Sensor 2 — `resolve`, the parked-orphan drain:**
+
+1. **Gather** all `needs-label` notes (`rg`; the set itself is the scope — no scope argument).
+2. **Recheck against the current bank first.** The vocabulary grew since parking; some notes now
+   fit *existing* labels — apply those (propose-confirm), no minting. The cheapest defense against
+   minting near-duplicates.
+3. **Cluster the residue** → one proposed label per coherent cluster → the minting machine.
+
+**The minting machine (shared by both sensors):**
+
+- Proposal shape: proposed name (bank conventions: kebab-case; `parent/facet` paths allowed) +
+  drafted `when_to_apply` + the member notes. The user approves / renames / rejects **per label**,
+  not per note.
+- **Near-duplicate guard:** check every proposed label against the bank; present overlap as "did
+  you mean existing `X`?" before minting.
+- **Singletons stay parked by default.** A cluster of one is a weak basis for permanent
+  vocabulary; shown but flagged, default disposition "keep parked." Parked is the holding pen
+  working, not a failure state.
+- **On confirm:** register the label in `labels.yml` per INSTRUCTION.md's protocol
+  (`status: active`) → apply it to the member notes → clear `needs-label` from them. Unresolved
+  notes stay parked.
+- **Retroactive sweep on every mint (skippable):** a title sweep nominates existing notes across
+  the vault that should also carry the new label; targeted body reads verify; propose-confirm.
+  Without this, a new label only ever covers the notes that birthed it.
+
+**Field ownership refinement:** `labels` is written by ingest **at creation**; thereafter only by
+this skill's **confirmed** minting/resolve passes or the human.
+
+## Invariants (cross-cutting, hard)
+
+- **Propose-confirm only** — never auto-merge, auto-link, or auto-mint. Every proposal shows its
+  evidence.
+- **Never writes `handled`; never writes `status`** — the pairwise consumer's idempotency is the
+  seen-set + effect-checking, nothing else.
+- **Filter-then-read** — labels and titles shortlist; bodies are read only for shortlisted
+  candidates, only by subagents; never a full-vault read.
+- **Originals always survive a merge** — absorbed → `_archive/` verbatim; survivor's pre-merge
+  body → jj history. This is what licenses the rewrite-by-default proposal.
+- **Ingest stays frozen** — this skill is the only minter of topical vocabulary, and only through
+  user confirmation.
+- **Env-agnostic** — no environment paths in the skill body; binding via
+  `~/.claude/synthesizer.local.md` → `~/.claude/vault.local.md` → loud failure.
+- **`journal/` untouched** — day-files are never scanned, merged, linked, or relabeled; the
+  synthesizer works the atomic-note pool (`notes/`) only.
