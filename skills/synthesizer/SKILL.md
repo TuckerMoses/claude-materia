@@ -64,3 +64,65 @@ archetype), propose mirroring those edits into the live copy before the first sc
 
 **`help` subcommand:** when invoked as `/synthesizer help`, summarize this skill and its
 subcommands from the sections below rather than executing them.
+
+## scan
+
+The relatedness pass over `notes/`. One computation, **three verdicts**: merge proposals, link
+proposals, and new-label (emergent-theme) proposals. Never a full-vault read — cheap metadata
+(labels, titles) decides what is worth comparing; bodies are read only for shortlisted candidates,
+and only by subagents.
+
+1. **Scope the run.** `scope` is optional: a label list or a free-text subset description, resolved
+   against `labels.yml` (e.g. "everything philosophy-adjacent" → the philosophy domain + its facet
+   labels). Default = the whole vault. Default mode is **incremental**: the working set is the
+   notes not yet in the seen-set (see "Re-run model"), each compared against its
+   label-neighborhoods. `--full` clears the working-set restriction and re-passes the whole vault.
+2. **Label-blocking — `rg` over frontmatter only.** Group note paths by shared label → candidate
+   neighborhoods. Zero body reads. Notes sharing a label are where merges and links concentrate.
+3. **Global title sweep — one subagent.** All titles + label sets fit one context (titles are
+   derived-searchable by design). It nominates cross-domain candidate pairs that share **no**
+   label — the pairs label-blocking structurally misses, and exactly the cross-domain surfacing
+   this skill exists for.
+4. **Fan-out — one subagent per neighborhood**, plus one for the title sweep's cross-domain
+   nominations. Large neighborhoods shard by facet label. Each subagent reads bodies **only within
+   its assigned set** and returns **structured proposals only** — merge / link / emergent-theme,
+   each with evidence (the specific overlapping claims, not vibes). Never file dumps; the
+   orchestrator stays context-lean.
+5. **Aggregate + dedup.** The same pair can surface via two shared labels; dedup cross-cluster,
+   then present **one propose-confirm gate**. Confirmed merges and links execute per "Merge
+   execution" / "Link execution" below. Emergent-theme proposals route to the minting machine
+   (see "Vocabulary growth").
+6. **Update the seen-set** in `_machine/synthesizer-state.yml` — every note evaluated this run,
+   including ones that produced no proposal.
+
+## Re-run model — the pairwise consumer
+
+The synthesizer is **neither** of the handshake's existing consumer archetypes:
+
+- `handled` (one-shot) is wrong: relatedness is *pairwise* — a note judged today must re-enter
+  consideration whenever a new neighbor arrives. **This skill never writes `handled`.**
+- A `status` filter (lifecycle) is wrong: no per-note status can express a *pair* verdict.
+  **This skill never writes `status` either.**
+
+**Third archetype — pairwise consumer.** State: `_machine/synthesizer-state.yml` in the target
+vault, created by this skill on first `scan`:
+
+```yaml
+# Synthesizer working state (pairwise-consumer watermark; see INSTRUCTION.md).
+# seen: note paths already evaluated by scan. Incremental scan = (pool − seen) × neighborhoods.
+# No rejection ledger, deliberately: incremental never re-judges old pairs by construction,
+# and --full SHOULD re-litigate (a fresh look is its purpose).
+seen:
+  - notes/example-note.md
+```
+
+- **Confirmed outcomes are effect-checked, never stored:** a confirmed merge visibly removes a
+  note; a confirmed link sits in `related:`; a minted label sits in `labels.yml`.
+- **Vault-resident state, deliberately:** the seen-set is per-vault and travels with it (the vault
+  syncs across machines; state stranded in a plugin data dir would re-propose everything on the
+  second machine). This is the sanctioned runtime-state category (`handled`, `last_read`) — not a
+  derive-don't-store violation, and not consumer-routing knowledge on notes or in `labels.yml`.
+- **Accepted trade:** incremental never re-judges old-vs-old pairs; improved judgment or
+  merge-shifted meaning is caught only by a `--full` pass — the same efficiency-over-re-evaluation
+  trade `handled` makes.
+- `resolve` is **stateless**: the `needs-label` set is self-draining.
