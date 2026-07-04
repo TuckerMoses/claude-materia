@@ -18,8 +18,12 @@ of any particular vault's content or vocabulary.
 
 - **Invariant-across-vaults → here.** Create the structure; register an ingest source. These don't
   depend on a vault's content, so they live here, once.
-- **Content-dependent → vault-local (NOT here).** Ongoing-ingest *classification* and the synthesizer
-  depend on a vault's derived vocabulary; they belong in vault-local skills.
+- **Content-dependent → vault-local (NOT here).** Ongoing-ingest *classification* depends on a
+  vault's derived vocabulary; it belongs in a vault-local skill.
+- **Consumers that read the vocabulary live → their own portable skills.** The synthesizer
+  (`claude-materia:synthesizer`) is invariant logic — it blocks on labels, judges relatedness, and
+  batch-mints vocabulary by reading `labels.yml`/`INSTRUCTION.md` live at runtime. The
+  content-dependence is in the *data*, not the *skill*.
 
 **The templates in `assets/` ARE the spec.** Cross-environment consistency rides in this skill: two
 vaults stay consistent because they were stamped from the same `assets/` templates, not because any
@@ -184,8 +188,8 @@ an unknown lens label — an unknown label is a hard validation failure, not a w
 ## discuss
 
 Meta-conversation about how the vault and this skill work — architecture questions, why a flat
-label-based pool, how the contracts fit together, when a vault-local skill (ongoing-ingest,
-synthesizer) is warranted vs. an addition here.
+label-based pool, how the contracts fit together, when a vault-local skill (ongoing-ingest) or a
+separate consumer skill (the synthesizer) is warranted vs. an addition here.
 
 Operates against the vault named in `~/.claude/vault.local.md` when one is registered (so discussion
 can reference the live vocabulary), but does not require it for pure meta-discussion.

@@ -26,7 +26,7 @@ created: 2026-…
 captured: 2026-…                   # capture-unit date; split-siblings share it
 source: journal/YYYY-MM-DD         # or a compound `remote + path + commit` for external sources
 handled: []                        # consumer names; written by consumers (or human), never ingest
-related: ["[[…]]"]                 # Tier-1 factual links only
+related: ["[[…]]"]                 # Tier-1 factual (ingest) + confirmed associative (synthesizer / human)
 ---
 ```
 
@@ -51,6 +51,8 @@ itself is the immutable source diary (permanent; never deleted or drained).
 - **Ingest** writes content-derived fields: `title`, `labels`, `created` / `captured` / `source`.
   Ingest writes **neither** `status` **nor** `handled`.
 - **Consumers** (and the human) write `status` and `handled`.
+- **`labels` after creation:** written only by the synthesizer's **confirmed** minting/resolve
+  passes or the human (ingest owns it at creation; no other consumer touches it).
 
 ## Query surface (preference order)
 
@@ -101,12 +103,17 @@ records:
 **Brittleness:** only the vault *path* can go stale. Fail **loudly** ("vault not found"); the fix is
 a one-line re-bootstrap.
 
-## Consumer idempotency (two archetypes)
+## Consumer idempotency (three archetypes)
 
 - **One-shot consumer** (e.g. session-planner): queries `label == X AND self ∉ handled`, then appends
   its own name to `handled` for **every note it evaluates** (seen, not just used) — so skipped notes
   don't re-enter its context. Evaluates each note exactly once, ever.
 - **Lifecycle consumer** (e.g. a scheduler): queries `label AND status:open`, does **not** write
   `handled`, and re-sees still-open items until they resolve (`status → done`).
+- **Pairwise consumer** (e.g. the synthesizer): judges *pairs/clusters* of notes, not single notes,
+  so neither mechanism above fits. It never writes `handled` (a note must re-enter consideration
+  when new neighbors arrive); its idempotency is a **seen-set watermark** in a `_machine/` state
+  file (incremental runs = unseen × neighborhoods), and confirmed outcomes are **effect-checked**
+  (a merged note is gone; a link sits in `related:`; a minted label sits in the bank).
 
 Ingest never writes `handled`.
