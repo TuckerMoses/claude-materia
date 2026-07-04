@@ -126,3 +126,37 @@ seen:
   merge-shifted meaning is caught only by a `--full` pass — the same efficiency-over-re-evaluation
   trade `handled` makes.
 - `resolve` is **stateless**: the `needs-label` set is self-draining.
+
+## Merge execution (on confirm)
+
+Survivor + absorbed — never a synthesized third file:
+
+1. One note (typically the richer/older) **survives at its existing path**; the other is absorbed.
+   The proposal names which is which; the user may swap them at the gate. No new file — a third
+   note would break every existing wikilink to both and erase the audit trail.
+2. **Default proposal = a full drafted rewording** of the merged note, always shown in full at the
+   gate. At confirm the user chooses: **accept the rewrite · downgrade to append-verbatim ·
+   reject.** Never applied sight-unseen.
+3. **Frontmatter union:** labels union; earliest `created` wins; `related:` union minus
+   self-references; merge provenance recorded on the survivor (absorbed title, its
+   `source`/`created`, merge date).
+4. **Absorbed note → `_archive/` verbatim.** Never deleted. (jj history additionally preserves the
+   survivor's pre-merge body.)
+5. **Backlink sweep:** `rg` for the absorbed note's `[[wikilink]]` across `notes/`; rewrite each
+   hit to the survivor's wikilink.
+
+**Iron-rule relationship (explicit):** 
+the content-preservation iron rule governs *filing* —
+bodies verbatim at creation; minting/resolve never alter bodies. A human-approved merge rewrite
+is a **distinct sanctioned refactor**, licensed by the archived originals (absorbed → `_archive/`
+verbatim; survivor → jj history). The rule guards against *silent, unreviewed* loss; a rewrite
+read and approved in full is neither.
+
+## Link execution (on confirm)
+
+- Write the `[[wikilink]]` into **both** notes' `related:` (bidirectional; `related:` has no
+  directionality semantics).
+- **One link field, not two.** The Tier-1/Tier-2 distinction is a *writer* constraint (ingest may
+  auto-create only factual links; associative links require synthesizer-propose + human-confirm),
+  not a storage schema. No consumer queries "factual links only"; a second field would fragment
+  the link graph for a distinction nothing uses.
