@@ -145,8 +145,7 @@ Survivor + absorbed — never a synthesized third file:
 5. **Backlink sweep:** `rg` for the absorbed note's `[[wikilink]]` across `notes/`; rewrite each
    hit to the survivor's wikilink.
 
-**Iron-rule relationship (explicit):** 
-the content-preservation iron rule governs *filing* —
+**Iron-rule relationship (explicit):** the content-preservation iron rule governs *filing* —
 bodies verbatim at creation; minting/resolve never alter bodies. A human-approved merge rewrite
 is a **distinct sanctioned refactor**, licensed by the archived originals (absorbed → `_archive/`
 verbatim; survivor → jj history). The rule guards against *silent, unreviewed* loss; a rewrite
