@@ -27,8 +27,10 @@ Two jobs (one skill because they share the minting machinery — see "Vocabulary
   deferred Tier-2 link tier and the deferred semantic-dedup layer, landing in their designed home.
 - **Vocabulary growth** (`resolve` + scan's theme sensor) — own the `needs-label` backlog and the
   evolution of the topical vocabulary. Ingest stays frozen (applies existing labels or parks under
-  `needs-label`; never mints); manager skills register container labels; **all topical vocabulary
-  growth happens here**, batched, through user confirmation.
+  `needs-label`; never mints); manager skills register container labels; **all post-bootstrap
+  topical vocabulary growth happens here**, batched, through user confirmation. (Bootstrap
+  vocabulary is vault's domain — `vault create` derives and mints the seed domain/topic labels
+  during scaffold; this skill takes over from that point forward.)
 
 **Hard posture: propose-confirm only.** The synthesizer never auto-merges, never auto-links, never
 auto-mints. Every proposal shows its evidence; nothing is applied sight-unseen. A confirmed merge is
@@ -162,8 +164,10 @@ read and approved in full is neither.
 
 ## Vocabulary growth — two sensors, one minter
 
-Ingest never mints vocabulary; manager skills register container labels. **All topical vocabulary
-growth happens here**, through two sensors feeding one minting machine:
+Ingest never mints vocabulary; manager skills register container labels. **All post-bootstrap
+topical vocabulary growth happens here**, through two sensors feeding one minting machine:
+(Bootstrap vocabulary is vault's domain — `vault create` derives the seed domain/topic labels
+during scaffold; this skill takes over from that point forward.)
 
 **Sensor 1 — scan's theme detector.** Neighborhood subagents may report "these N notes circle a
 concept no bank label names." Recurring themes become new-label proposals in scan's confirm gate.
@@ -208,8 +212,9 @@ this skill's **confirmed** minting/resolve passes or the human.
   candidates, only by subagents; never a full-vault read.
 - **Originals always survive a merge** — absorbed → `_archive/` verbatim; survivor's pre-merge
   body → jj history. This is what licenses the rewrite-by-default proposal.
-- **Ingest stays frozen** — this skill is the only minter of topical vocabulary, and only through
-  user confirmation.
+- **Ingest stays frozen** — this skill is the only minter of post-bootstrap topical vocabulary
+  (runtime vocabulary growth after `vault create`'s seed-label phase), and only through user
+  confirmation.
 - **Env-agnostic** — no environment paths in the skill body; binding via
   `~/.claude/synthesizer.local.md` → `~/.claude/vault.local.md` → loud failure.
 - **`journal/` untouched** — day-files are never scanned, merged, linked, or relabeled; the

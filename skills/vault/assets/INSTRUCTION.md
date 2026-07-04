@@ -50,9 +50,13 @@ itself is the immutable source diary (permanent; never deleted or drained).
 
 - **Ingest** writes content-derived fields: `title`, `labels`, `created` / `captured` / `source`.
   Ingest writes **neither** `status` **nor** `handled`.
-- **Consumers** (and the human) write `status` and `handled`.
+- **Consumers** (and the human) write `status` and `handled` — **except pairwise consumers**
+  (e.g. the synthesizer), which use a seen-set watermark for idempotency and never write either
+  field. See "Consumer idempotency" below.
 - **`labels` after creation:** written only by the synthesizer's **confirmed** minting/resolve
   passes or the human (ingest owns it at creation; no other consumer touches it).
+- **`related:`** written by ingest at creation for Tier-1 factual links; written by the synthesizer
+  on confirm for associative links; human may edit directly.
 
 ## Query surface (preference order)
 
