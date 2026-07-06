@@ -10,6 +10,12 @@
       "description": "Portable skills and agents for Claude Code",
       "source": "./",
       "category": "productivity"
+    },
+    {
+      "name": "vault",
+      "description": "A portable personal knowledge system: create a label-based markdown vault, ingest captured thoughts, synthesize the pool. Three linked skills — vault, ingest, synthesizer.",
+      "source": "./plugins/vault",
+      "category": "productivity"
     }
   ]
 }

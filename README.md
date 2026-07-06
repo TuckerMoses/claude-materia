@@ -25,17 +25,20 @@ claude plugin install claude-materia@claude-materia
 | **sidechat** | Support | Spins off a tangent into a new tmux window with its own Claude Code session. The new session gets a context briefing so it hits the ground running. Your current conversation continues uninterrupted. |
 | **session-planner** | Support | Turns todos into a live tmux workspace OR reorganizes an existing one. Five modes: `create` (todos → fresh session), `reorganize` (existing session → restructured), `extend` (existing session + todos), `audit` (analysis only), `reannotate` (migration). Confidence-weighted pane-type inference, sentinel-titled panes, an approval gate before any destructive op, and a non-transactional failure path with checkpoint logs and an incident breadcrumb. |
 | **park-session** | Command | Bookmarks a Claude Code session by writing a structured pointer (session ID, when, what, next move) into a destination file you control. Lets you tear down ephemeral environments without losing the thread of mid-investigation work. Subcommands: `park` (default), `init`, `unpark`, `list`, `audit`. |
-| **vault** | Command | Portable knowledge-vault skill. `create` scaffolds a born-correct vault (flat `notes/` + `journal/`, parseable `_machine/labels.yml`, `INSTRUCTION.md` with local path filled, `.obsidian/` config) with a four-phase workflow (Analyze → Structure-lock → Scaffold → File). `add-source` registers an external source in the vault's ingest pull registry (`_machine/ingest_paths.yml`). `discuss` routes vault strategy questions to the right advisor (kind-bootstrapper or inline). Binds to `~/.claude/vault.local.md`. |
-| **synthesizer** | Command | Vault synthesis consumer. `scan` proposes note merges (semantic dedup as the degenerate case), associative links, and new labels for emergent cross-note themes — incremental via a seen-set, `--full` for a whole-vault re-pass, always propose-confirm. `resolve` drains the `needs-label` backlog: rechecks against the current bank, clusters the residue, mints coherent labels on confirm, retroactive sweep per mint. Never writes `handled`/`status`. Binds via `~/.claude/synthesizer.local.md` → `~/.claude/vault.local.md`. |
-| **ingest** | Command | Vault intake pipeline. Drains closed journal day-files (three-way label-driven extraction; `--today` for same-day actionables) and registered `ingest_paths` sources (vcs hunks-delta or destructive archive-not-delete drain, lens-filtered) into labeled atomic notes through one propose-confirm gate. Deterministic shell: shipped scripts own windows, deltas, idempotent verbatim filing (md5-verified), and ordered commit points. Never writes `status`/`handled`; never mints vocabulary. Binds via `~/.claude/ingest.local.md` → `~/.claude/vault.local.md`. |
 
 ### Agents
 
 _No portable agents migrated yet. Coming soon: researcher, architect, debugger, house-wrecker, house-cleaner, teacher, expert._
 
-## The vault system
+## The vault plugin
 
-**vault**, **ingest**, and **synthesizer** link together into a complete personal knowledge system — a linked materia combo. Full documentation, including architecture and workflow diagrams, lives at [`skills/vault/README.md`](skills/vault/README.md).
+This marketplace also ships **vault** — a separate plugin containing a complete personal knowledge system as three linked skills (`vault`, `ingest`, `synthesizer`): create a label-based markdown vault, drain captured thoughts into it, keep the pool coherent and grow its vocabulary. A linked materia combo, installable on its own:
+
+```bash
+claude plugin install vault@claude-materia
+```
+
+Full documentation, including architecture and workflow diagrams, lives at [`plugins/vault/README.md`](plugins/vault/README.md).
 
 ## Per-install binding
 

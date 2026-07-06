@@ -1,28 +1,35 @@
 # claude-materia
 
-Claude Code plugin providing portable skills and agents.
+Marketplace repo hosting two Claude Code plugins: **claude-materia** (portable session/review skills, repo root) and **vault** (the knowledge-vault system, `plugins/vault/`).
 
 ## Repository Structure
 
 ```
 claude-materia/
 ├── .claude-plugin/
-│   ├── plugin.json          # Plugin manifest (name, version, metadata)
-│   └── marketplace.json     # Marketplace definition for plugin distribution
-├── skills/
-│   ├── adversarial-review/  # Multi-agent artifact review loop
-│   │   ├── SKILL.md
-│   │   ├── agents/          # System agents (triage, fixer, auditor)
-│   │   └── defaults/
-│   │       └── reviewers/   # Bundled default reviewers (coherence, design, detail)
+│   ├── plugin.json          # claude-materia plugin manifest
+│   └── marketplace.json     # Marketplace definition — lists BOTH plugins
+├── skills/                  # claude-materia plugin skills
+│   ├── adversarial-review/  # Multi-agent artifact review loop (agents/, defaults/reviewers/)
 │   ├── sidechat/            # Tmux-based session spawner
-│   │   └── SKILL.md
-│   └── session-planner/     # Todo-to-tmux workspace launcher
-│       └── SKILL.md
+│   ├── session-planner/     # Todo-to-tmux workspace launcher
+│   └── park-session/        # Session bookmarking
+├── plugins/
+│   └── vault/               # The vault plugin (own manifest, own version)
+│       ├── .claude-plugin/plugin.json
+│       ├── README.md        # Vault-system docs (architecture + workflow SVGs in docs/)
+│       └── skills/
+│           ├── vault/       # create / add-source / discuss (+ assets/ templates-as-spec)
+│           ├── ingest/      # intake pipeline (+ scripts/ deterministic shell + tests)
+│           └── synthesizer/ # pool coherence + vocabulary growth
 ├── agents/                  # Portable agents (empty — migrations pending)
+├── docs/superpowers/        # Design history: specs, decision SVGs, implementation plans
+├── BACKLOG.md               # Deferred work (container convention: top = next)
 ├── CLAUDE.md                # This file
 └── README.md                # FF7-themed user-facing docs
 ```
+
+**Two plugins, one repo.** Skills in `skills/` belong to the claude-materia plugin; skills in `plugins/vault/skills/` belong to the vault plugin (fully-qualified names `vault:vault`, `vault:ingest`, `vault:synthesizer`). Each plugin versions independently in its own `plugin.json`; bump the one whose content changed.
 
 ## Design Conventions
 

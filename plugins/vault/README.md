@@ -13,7 +13,7 @@ bank and source registry. Everything an external skill needs to integrate lives 
 
 | Materia | Role | Subcommands |
 |---------|------|-------------|
-| **vault** (this skill) | Creation & registration | `create` (stamp a born-correct vault from the `assets/` templates — corpus-seeded or cold), `add-source` (register an external ingest source), `discuss` (architecture meta) |
+| **vault** (the anchor skill) | Creation & registration | `create` (stamp a born-correct vault from the `assets/` templates — corpus-seeded or cold), `add-source` (register an external ingest source), `discuss` (architecture meta) |
 | **ingest** | Intake | `[source?] [--today]` (drain closed journal day-files + registered sources: split → label → file through one confirm gate), `status` (read-only health) |
 | **synthesizer** | Pool coherence & vocabulary growth | `scan [scope?] [--full]` (propose merges, links, and labels for emergent themes), `resolve` (drain the `needs-label` backlog into coherent new labels) |
 
@@ -50,7 +50,8 @@ without approval:
 ## Contracts (defined once, in the vault)
 
 The authoritative integration contract is the stamped `INSTRUCTION.md` — see
-[`assets/INSTRUCTION.md`](assets/INSTRUCTION.md), which is the template every vault is born with.
+[`skills/vault/assets/INSTRUCTION.md`](skills/vault/assets/INSTRUCTION.md), which is the template
+every vault is born with.
 Highlights:
 
 - **Field ownership:** ingest writes `title`/`labels`/dates/`source`; consumers (and the human)
@@ -64,6 +65,7 @@ Highlights:
 
 ## Design history
 
-The full design record (specs, decision diagrams, implementation plans) lives in
-[`docs/superpowers/`](../../docs/superpowers/) — see the `vault-skill`, `synthesizer-skill`, and
-`ingest-skill` documents.
+The full design record (specs, decision diagrams, implementation plans) lives in the marketplace
+repo at [`docs/superpowers/`](https://github.com/TuckerMoses/claude-materia/tree/main/docs/superpowers)
+— see the `vault-skill`, `synthesizer-skill`, and `ingest-skill` documents. (Absolute URL so the
+link survives a standalone plugin install.)

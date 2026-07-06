@@ -19,7 +19,7 @@ of any particular vault's content or vocabulary.
 - **Invariant-across-vaults → here.** Create the structure; register an ingest source. These don't
   depend on a vault's content, so they live here, once.
 - **Consumers and processors that read the vocabulary live → their own portable skills.** The
-  synthesizer (`claude-materia:synthesizer`) and ongoing ingest (`claude-materia:ingest`) are
+  synthesizer (`vault:synthesizer`) and ongoing ingest (`vault:ingest`) are
   invariant logic — they classify, relate, and mint against `labels.yml`/`INSTRUCTION.md` read
   live at runtime. The content-dependence is in the *data*, not the *skill*. Nothing vault-local
   remains.
@@ -172,7 +172,7 @@ deliberate accepted-read-exposure registration (additive-surface model — every
 
 ### Two writers, one schema (no conflict)
 
-`add-source` writes **new entries** (invariant registration). The ingest skill (`claude-materia:ingest`)
+`add-source` writes **new entries** (invariant registration). The ingest skill (`vault:ingest`)
 writes **`last_read` watermarks** (runtime state) on **vcs** entries only — destructive entries have no
 watermark. Same pattern as `labels.yml` (managers register, ingest reads). The schema is defined once,
 here and in `INSTRUCTION.md`; do not fork it.
