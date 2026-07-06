@@ -13,12 +13,14 @@ OUT=$(python3 "$SCRIPT" "$V" "$MF")
 assert_contains "note written" "test-thought.md" "$OUT"
 assert_eq "body verbatim" "A verbatim thought." "$(sed -n '/^---$/,/^---$/!p' "$V/notes/test-thought.md" | sed '/^$/d')"
 assert_contains "no status field" "" "$(grep -c '^status:' "$V/notes/test-thought.md" | grep -x 0)"
+assert_eq "no status field (strict)" "0" "$(grep -c '^status:' "$V/notes/test-thought.md" || true)"
 assert_contains "marker written" "ingested: true" "$(cat "$V/journal/2026-01-02.md")"
 assert_contains "raw text preserved under marker" "raw day text" "$(cat "$V/journal/2026-01-02.md")"
 # Idempotent re-run: same manifest → skipped, not duplicated
 OUT2=$(python3 "$SCRIPT" "$V" "$MF")
 assert_contains "re-run skips by source+body" '"skipped"' "$OUT2"
 assert_eq "no duplicate file" "1" "$(ls "$V/notes" | grep -c 'test-thought')"
+assert_eq "marker written once after re-run" "1" "$(grep -c '^ingested: true$' "$V/journal/2026-01-02.md")"
 # Empty-body rejection (iron rule)
 MF2=$(mktemp)
 cat > "$MF2" <<EOF
