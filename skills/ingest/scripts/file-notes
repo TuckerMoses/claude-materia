@@ -1,0 +1,104 @@
+#!/usr/bin/env python3
+"""Serial filer: write confirmed notes idempotently, verify, then commit watermarks.
+
+Usage: file-notes VAULT_PATH MANIFEST_JSON
+Order (hard): write+verify ALL notes -> ingested markers -> last_read advances -> staging moves.
+Aborts (exit 1) before any commit point on: empty body, md5 mismatch after write.
+Idempotency: a note is already-filed iff an existing note has identical `source:` AND identical body.
+"""
+import hashlib, json, re, shutil, sys
+from pathlib import Path
+
+def slugify(title: str) -> str:
+    s = re.sub(r'[^a-z0-9]+', '-', title.lower()).strip('-')
+    return s[:80] or 'untitled'
+
+def md5(s: str) -> str:
+    return hashlib.md5(s.encode('utf-8')).hexdigest()
+
+def split_note(text: str):
+    """Return (frontmatter, body) for a note file's text."""
+    if not text.startswith('---\n'):
+        return '', text
+    end = text.find('\n---\n', 4)
+    if end == -1:
+        return '', text
+    return text[4:end], text[end + 5:].lstrip('\n')
+
+def existing_match(notes_dir: Path, source: str, body: str):
+    """Path of an existing note with this exact source + verbatim body, else None."""
+    for p in notes_dir.glob('*.md'):
+        fm, b = split_note(p.read_text(encoding='utf-8'))
+        if re.search(r'^source:\s*' + re.escape(source) + r'\s*$', fm, re.M) and b.rstrip('\n') == body.rstrip('\n'):
+            return p
+    return None
+
+def emit_frontmatter(n: dict) -> str:
+    lines = ['---', f'title: "{n["title"]}"', f'labels: [{", ".join(n["labels"])}]',
+             f'created: {n["created"]}', f'captured: {n["captured"]}', f'source: {n["source"]}']
+    if n.get('related'):
+        lines.append('related: [' + ', '.join(f'"{r}"' for r in n['related']) + ']')
+    lines.append('---')
+    return '\n'.join(lines) + '\n\n'
+
+def main():
+    if len(sys.argv) != 3:
+        sys.exit('usage: file-notes VAULT_PATH MANIFEST_JSON')
+    vault = Path(sys.argv[1]).expanduser()
+    notes_dir = vault / 'notes'
+    if not notes_dir.is_dir():
+        sys.exit(f'vault not found (no notes/ under {vault})')
+    manifest = json.loads(Path(sys.argv[2]).read_text(encoding='utf-8'))
+    report = {'written': [], 'skipped': [], 'marked': [], 'advanced': [], 'moved': []}
+
+    # Phase 1 — write + verify every note (no commit points yet).
+    for n in manifest.get('notes', []):
+        body = n['body']
+        if not body.strip():
+            sys.exit(f'ABORT (iron rule): empty body for "{n["title"]}" — nothing committed')
+        if existing_match(notes_dir, n['source'], body):
+            report['skipped'].append(n['title'])
+            continue
+        before = md5(body.rstrip('\n'))
+        dest, i = notes_dir / f'{slugify(n["title"])}.md', 2
+        while dest.exists():
+            dest, i = notes_dir / f'{slugify(n["title"])}-{i}.md', i + 1
+        dest.write_text(emit_frontmatter(n) + body.rstrip('\n') + '\n', encoding='utf-8')
+        _, back = split_note(dest.read_text(encoding='utf-8'))
+        after = md5(back.rstrip('\n'))
+        if before != after or (len(body) > 0 and len(back) == 0):
+            sys.exit(f'ABORT (iron rule): body verify failed for {dest.name} '
+                     f'(before md5 {before}, after md5 {after}) — no watermarks committed')
+        report['written'].append(str(dest.relative_to(vault)))
+
+    # Phase 2 — commit points, strictly ordered.
+    for rel in manifest.get('mark_ingested', []):
+        p = vault / rel
+        text = p.read_text(encoding='utf-8')
+        if re.search(r'^ingested:\s*true\s*$', text[4:text.find('\n---', 4)] if text.startswith('---\n') else '', re.M):
+            pass
+        elif text.startswith('---\n'):
+            p.write_text(text.replace('---\n', '---\ningested: true\n', 1), encoding='utf-8')
+        else:
+            p.write_text('---\ningested: true\n---\n' + text, encoding='utf-8')
+        report['marked'].append(rel)
+    if manifest.get('advance'):
+        import yaml
+        ip = vault / '_machine' / 'ingest_paths.yml'
+        data = yaml.safe_load(ip.read_text(encoding='utf-8')) or {'sources': []}
+        for adv in manifest['advance']:
+            for s in data.get('sources') or []:
+                if s.get('path') == adv['path']:
+                    s['last_read'] = adv['last_read']
+                    report['advanced'].append(adv['path'])
+        ip.write_text(yaml.safe_dump(data, sort_keys=False), encoding='utf-8')
+    for mv in manifest.get('archive_moves', []):
+        dest_dir = vault / '_machine' / 'logs' / 'ingest' / mv['date']
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        shutil.move(mv['from'], dest_dir / Path(mv['from']).name)
+        report['moved'].append(mv['from'])
+
+    print(json.dumps(report, indent=2))
+
+if __name__ == '__main__':
+    main()
