@@ -1,0 +1,160 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="720" viewBox="0 0 1180 720" font-family="Helvetica, Arial, sans-serif">
+  <rect width="1180" height="720" fill="#fafaf8"/>
+
+  <text x="40" y="44" font-size="20" font-weight="bold" fill="#2a2a2a">The vault system — workflows</text>
+  <text x="40" y="66" font-size="12" fill="#777">capture → intake → pool → synthesis → consumption · amber = you confirm; nothing is written without approval</text>
+
+  <defs>
+    <marker id="w" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L7,3 L0,6 z" fill="#888"/>
+    </marker>
+    <marker id="wg" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L7,3 L0,6 z" fill="#5a8a60"/>
+    </marker>
+  </defs>
+
+  <!-- ═══ 1 CAPTURE ═══ -->
+  <rect x="40" y="100" width="190" height="440" rx="8" fill="#f4f4f6" stroke="#999" stroke-width="1.5"/>
+  <text x="56" y="126" font-size="13" font-weight="bold" fill="#444">1 · CAPTURE</text>
+
+  <rect x="56" y="142" width="158" height="120" rx="5" fill="#fff" stroke="#bbb"/>
+  <text x="66" y="162" font-size="11.5" font-weight="bold" fill="#444">daily note</text>
+  <text x="66" y="178" font-size="10.5" fill="#666">journal/YYYY-MM-DD.md</text>
+  <text x="66" y="194" font-size="10.5" fill="#666">"open today" — phone or</text>
+  <text x="66" y="208" font-size="10.5" fill="#666">desktop; dump everything,</text>
+  <text x="66" y="222" font-size="10.5" fill="#666">no sorting at write time</text>
+  <text x="66" y="240" font-size="10.5" fill="#666">zero-friction by design</text>
+
+  <rect x="56" y="280" width="158" height="120" rx="5" fill="#fff" stroke="#bbb"/>
+  <text x="66" y="300" font-size="11.5" font-weight="bold" fill="#444">registered sources</text>
+  <text x="66" y="316" font-size="10.5" fill="#666">ingest_paths.yml entries:</text>
+  <text x="66" y="332" font-size="10.5" fill="#666">vcs repos (delta-tracked)</text>
+  <text x="66" y="346" font-size="10.5" fill="#666">or staging dirs (drained)</text>
+  <text x="66" y="362" font-size="10.5" fill="#666">each through its own</text>
+  <text x="66" y="376" font-size="10.5" fill="#666">label lens (a filter)</text>
+
+  <text x="66" y="430" font-size="10" fill="#997" font-style="italic">capture is the only step</text>
+  <text x="66" y="444" font-size="10" fill="#997" font-style="italic">with no gate — it accepts</text>
+  <text x="66" y="458" font-size="10" fill="#997" font-style="italic">garbage gracefully</text>
+
+  <!-- ═══ 2 INTAKE ═══ -->
+  <rect x="270" y="100" width="240" height="440" rx="8" fill="#eef3fa" stroke="#7f9fc4" stroke-width="1.5"/>
+  <text x="286" y="126" font-size="13" font-weight="bold" fill="#3a5a80">2 · INTAKE  /ingest [--today]</text>
+
+  <rect x="286" y="142" width="208" height="56" rx="5" fill="#fdfeff" stroke="#a8c0d8"/>
+  <text x="296" y="160" font-size="11" font-weight="bold" fill="#3a5a80">window (scripted)</text>
+  <text x="296" y="175" font-size="10.5" fill="#556">closed day-files + source deltas;</text>
+  <text x="296" y="189" font-size="10.5" fill="#556">--today adds the open day</text>
+
+  <rect x="286" y="208" width="208" height="84" rx="5" fill="#fdfeff" stroke="#a8c0d8"/>
+  <text x="296" y="226" font-size="11" font-weight="bold" fill="#3a5a80">split + three-way disposition</text>
+  <text x="296" y="242" font-size="10.5" fill="#556">label fits → extract + label</text>
+  <text x="296" y="256" font-size="10.5" fill="#556">worthy, no fit → needs-label (parked)</text>
+  <text x="296" y="270" font-size="10.5" fill="#556">trivial narrative → stays diary-only</text>
+  <text x="296" y="285" font-size="10.5" fill="#556">vocabulary FROZEN — never mints</text>
+
+  <rect x="286" y="302" width="208" height="50" rx="5" fill="#fdf3dd" stroke="#d9a441" stroke-width="1.5"/>
+  <text x="296" y="320" font-size="11" font-weight="bold" fill="#8a5a1a">CONFIRM GATE</text>
+  <text x="296" y="335" font-size="10.5" fill="#8a5a1a">one batch review — approve-all-</text>
+  <text x="296" y="347" font-size="10.5" fill="#8a5a1a">with-exceptions, relabel, re-split</text>
+
+  <rect x="286" y="362" width="208" height="84" rx="5" fill="#fdfeff" stroke="#a8c0d8"/>
+  <text x="296" y="380" font-size="11" font-weight="bold" fill="#3a5a80">file (scripted, verbatim)</text>
+  <text x="296" y="396" font-size="10.5" fill="#556">idempotent writes · md5-verified ·</text>
+  <text x="296" y="410" font-size="10.5" fill="#556">then, in order: ingested markers →</text>
+  <text x="296" y="424" font-size="10.5" fill="#556">last_read advances → staging</text>
+  <text x="296" y="438" font-size="10.5" fill="#556">archived (never deleted)</text>
+
+  <text x="296" y="480" font-size="10" fill="#779" font-style="italic">day-file stays: permanent diary;</text>
+  <text x="296" y="494" font-size="10" fill="#779" font-style="italic">the note is the derived copy</text>
+
+  <!-- ═══ 3 POOL ═══ -->
+  <rect x="550" y="100" width="170" height="440" rx="8" fill="#f5f0e8" stroke="#b8a888" stroke-width="1.5"/>
+  <text x="566" y="126" font-size="13" font-weight="bold" fill="#6b5a3e">3 · POOL</text>
+
+  <rect x="566" y="142" width="138" height="150" rx="5" fill="#fffdf8" stroke="#c9baa0"/>
+  <text x="576" y="162" font-size="11.5" font-weight="bold" fill="#444">notes/</text>
+  <text x="576" y="178" font-size="10.5" fill="#666">labeled atomic notes</text>
+  <text x="576" y="194" font-size="10.5" fill="#666">one thought per file</text>
+  <text x="576" y="210" font-size="10.5" fill="#666">labels: [] = the query</text>
+  <text x="576" y="224" font-size="10.5" fill="#666">axis for everything</text>
+  <text x="576" y="242" font-size="10.5" fill="#666">placement immutable;</text>
+  <text x="576" y="256" font-size="10.5" fill="#666">status/handled written</text>
+  <text x="576" y="270" font-size="10.5" fill="#666">by consumers only</text>
+
+  <rect x="566" y="306" width="138" height="76" rx="5" fill="#fff8ef" stroke="#c98f41"/>
+  <text x="576" y="326" font-size="11" font-weight="bold" fill="#8a5a1a">needs-label subset</text>
+  <text x="576" y="342" font-size="10.5" fill="#8a5a1a">parked, never dropped —</text>
+  <text x="576" y="356" font-size="10.5" fill="#8a5a1a">the synthesizer's queue</text>
+  <text x="576" y="370" font-size="10.5" fill="#8a5a1a">(vocabulary pressure)</text>
+
+  <text x="576" y="420" font-size="10" fill="#997" font-style="italic">queried by rg over</text>
+  <text x="576" y="434" font-size="10" fill="#997" font-style="italic">frontmatter — cheap paths</text>
+  <text x="576" y="448" font-size="10" fill="#997" font-style="italic">first, bodies only for</text>
+  <text x="576" y="462" font-size="10" fill="#997" font-style="italic">matches, never a full read</text>
+
+  <!-- ═══ 4 SYNTHESIS ═══ -->
+  <rect x="760" y="100" width="230" height="440" rx="8" fill="#edf5ee" stroke="#85ab8a" stroke-width="1.5"/>
+  <text x="776" y="126" font-size="13" font-weight="bold" fill="#3a6a44">4 · SYNTHESIS  /synthesizer</text>
+
+  <rect x="776" y="142" width="198" height="96" rx="5" fill="#fdfffd" stroke="#a0c4a6"/>
+  <text x="786" y="160" font-size="11" font-weight="bold" fill="#3a6a44">scan [scope?] [--full]</text>
+  <text x="786" y="176" font-size="10.5" fill="#556">label-neighborhoods + global</text>
+  <text x="786" y="190" font-size="10.5" fill="#556">title sweep → three verdicts:</text>
+  <text x="786" y="206" font-size="10.5" fill="#556">merge · link · emergent theme</text>
+  <text x="786" y="222" font-size="10.5" fill="#556">incremental via seen-set</text>
+
+  <rect x="776" y="248" width="198" height="82" rx="5" fill="#fdfffd" stroke="#a0c4a6"/>
+  <text x="786" y="266" font-size="11" font-weight="bold" fill="#3a6a44">resolve</text>
+  <text x="786" y="282" font-size="10.5" fill="#556">recheck parked notes vs the</text>
+  <text x="786" y="296" font-size="10.5" fill="#556">grown bank → cluster residue →</text>
+  <text x="786" y="310" font-size="10.5" fill="#556">propose one label per cluster</text>
+  <text x="786" y="324" font-size="10.5" fill="#556">(batch beats per-note invention)</text>
+
+  <rect x="776" y="340" width="198" height="62" rx="5" fill="#fdf3dd" stroke="#d9a441" stroke-width="1.5"/>
+  <text x="786" y="358" font-size="11" font-weight="bold" fill="#8a5a1a">CONFIRM GATES</text>
+  <text x="786" y="373" font-size="10.5" fill="#8a5a1a">merges show a full drafted rewrite</text>
+  <text x="786" y="386" font-size="10.5" fill="#8a5a1a">(accept / append-verbatim / reject);</text>
+  <text x="786" y="398" font-size="10.5" fill="#8a5a1a">mints register + apply + sweep</text>
+
+  <rect x="776" y="412" width="198" height="62" rx="5" fill="#fdfffd" stroke="#5a8a60" stroke-width="1.5"/>
+  <text x="786" y="430" font-size="11" font-weight="bold" fill="#3a6a44">labels.yml grows</text>
+  <text x="786" y="446" font-size="10.5" fill="#556">minted labels join the bank —</text>
+  <text x="786" y="460" font-size="10.5" fill="#556">future ingest classifies with them</text>
+
+  <text x="786" y="500" font-size="10" fill="#797" font-style="italic">merged-away originals →</text>
+  <text x="786" y="514" font-size="10" fill="#797" font-style="italic">_archive/, verbatim</text>
+
+  <!-- ═══ 5 CONSUMPTION ═══ -->
+  <rect x="1030" y="100" width="110" height="440" rx="8" fill="#f4f4f6" stroke="#999" stroke-width="1.5"/>
+  <text x="1042" y="126" font-size="13" font-weight="bold" fill="#444">5 · CONSUME</text>
+  <text x="1042" y="150" font-size="10.5" fill="#555">consumers pull</text>
+  <text x="1042" y="164" font-size="10.5" fill="#555">by label, on</text>
+  <text x="1042" y="178" font-size="10.5" fill="#555">their own cadence</text>
+  <text x="1042" y="200" font-size="10.5" fill="#555">session-seed →</text>
+  <text x="1042" y="214" font-size="10.5" fill="#555">session-planner</text>
+  <text x="1042" y="236" font-size="10.5" fill="#555">todo + open →</text>
+  <text x="1042" y="250" font-size="10.5" fill="#555">schedulers</text>
+  <text x="1042" y="272" font-size="10.5" fill="#555">…any future</text>
+  <text x="1042" y="286" font-size="10.5" fill="#555">puller</text>
+  <text x="1042" y="308" font-size="10.5" fill="#555">they write</text>
+  <text x="1042" y="322" font-size="10.5" fill="#555">status/handled;</text>
+  <text x="1042" y="336" font-size="10.5" fill="#555">the vault stays</text>
+  <text x="1042" y="350" font-size="10.5" fill="#555">inert</text>
+
+  <!-- flow arrows -->
+  <line x1="230" y1="320" x2="270" y2="320" stroke="#888" stroke-width="2" marker-end="url(#w)"/>
+  <line x1="510" y1="320" x2="550" y2="320" stroke="#888" stroke-width="2" marker-end="url(#w)"/>
+  <line x1="720" y1="320" x2="760" y2="320" stroke="#888" stroke-width="2" marker-end="url(#w)"/>
+  <line x1="990" y1="320" x2="1030" y2="320" stroke="#888" stroke-width="2" marker-end="url(#w)"/>
+
+  <!-- vocabulary feedback loop -->
+  <path d="M 875 540 L 875 600 L 390 600 L 390 545" fill="none" stroke="#5a8a60" stroke-width="1.5" stroke-dasharray="5,4" marker-end="url(#wg)"/>
+  <text x="632" y="592" font-size="10.5" fill="#3a6a44" text-anchor="middle" font-style="italic">the vocabulary-growth loop: minted labels flow back into intake classification</text>
+
+  <!-- footer -->
+  <rect x="40" y="630" width="1100" height="60" rx="8" fill="#f0ede8" stroke="#a89f90" stroke-width="1.5"/>
+  <text x="58" y="652" font-size="12" font-weight="bold" fill="#544">Invariants that hold across every workflow</text>
+  <text x="58" y="670" font-size="11" fill="#555">propose-confirm everywhere (amber) · bodies verbatim, originals always survive (archive + version control) · vocabulary grows only through the synthesizer's minter ·</text>
+  <text x="58" y="684" font-size="11" fill="#555">pure pull — no orchestrator, the vault triggers nothing · filter-then-read — labels and titles shortlist, bodies read only for candidates</text>
+</svg>

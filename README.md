@@ -33,6 +33,20 @@ claude plugin install claude-materia@claude-materia
 
 _No portable agents migrated yet. Coming soon: researcher, architect, debugger, house-wrecker, house-cleaner, teacher, expert._
 
+## The vault system
+
+Three materia — **vault**, **ingest**, and **synthesizer** — link together into a complete personal knowledge system around a plain-markdown vault, like a linked materia combo. `vault create` stamps a born-correct vault; `ingest` drains your daily notes and registered sources into labeled atomic notes; `synthesizer` keeps the pool coherent (merges, links) and grows the label vocabulary. Any other skill can then consume the vault by querying labels — session-planner already does.
+
+The system's contracts live in the vault itself (`INSTRUCTION.md`, read live), so every skill stays portable: nothing is hardcoded, everything binds through [per-install pointers](#per-install-binding).
+
+**Architecture** — what exists and who owns which field:
+
+![Vault system architecture](docs/vault-architecture.svg)
+
+**Workflows** — what happens, from capture to consumption:
+
+![Vault system workflows](docs/vault-workflows.svg)
+
 ## Per-install binding
 
 Materia skills are designed to work anywhere, but they get smarter when you bind them to your setup. Each skill reads a single per-install file on invocation — `~/.claude/<skill-name>.local.md` (for example `~/.claude/adversarial-review.local.md`). This is a gitignored, user-owned file and the documented Claude Code per-install convention. It is **not** part of this repo, and the repo references no specific local-environment layout — the only coupling lives in your `.local.md`.

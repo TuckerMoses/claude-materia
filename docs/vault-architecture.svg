@@ -1,0 +1,107 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="780" viewBox="0 0 1180 780" font-family="Helvetica, Arial, sans-serif">
+  <rect width="1180" height="780" fill="#fafaf8"/>
+
+  <text x="40" y="44" font-size="20" font-weight="bold" fill="#2a2a2a">The vault system — architecture</text>
+  <text x="40" y="66" font-size="12" fill="#777">a plain-markdown vault as the integration bus · labels are the inter-skill API · every skill portable, bound per-install</text>
+
+  <defs>
+    <marker id="a" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L7,3 L0,6 z" fill="#888"/>
+    </marker>
+  </defs>
+
+  <!-- ═══ CENTER: the vault ═══ -->
+  <rect x="350" y="90" width="480" height="560" rx="10" fill="#f5f0e8" stroke="#b8a888" stroke-width="2"/>
+  <text x="370" y="120" font-size="15" font-weight="bold" fill="#6b5a3e">THE VAULT  (plain markdown + jj)</text>
+
+  <rect x="370" y="136" width="440" height="70" rx="5" fill="#fffdf8" stroke="#c9baa0"/>
+  <text x="382" y="156" font-size="12" font-weight="bold" fill="#444">journal/YYYY-MM-DD.md</text>
+  <text x="382" y="172" font-size="11" fill="#666">daily notes — the single capture surface AND the permanent ingest source</text>
+  <text x="382" y="186" font-size="11" fill="#666">immutable diary · one marker per processed file: ingested: true</text>
+
+  <rect x="370" y="216" width="440" height="70" rx="5" fill="#fffdf8" stroke="#c9baa0"/>
+  <text x="382" y="236" font-size="12" font-weight="bold" fill="#444">notes/</text>
+  <text x="382" y="252" font-size="11" fill="#666">flat pool of atomic notes — no topic folders; subject lives in labels: []</text>
+  <text x="382" y="266" font-size="11" fill="#666">placement immutable · bodies verbatim · title is a derived label only</text>
+
+  <rect x="370" y="296" width="440" height="118" rx="5" fill="#fffdf8" stroke="#c9baa0"/>
+  <text x="382" y="316" font-size="12" font-weight="bold" fill="#444">_machine/</text>
+  <text x="394" y="334" font-size="11" fill="#666">labels.yml — the label bank: (label, when_to_apply, status) · the shared vocabulary</text>
+  <text x="394" y="350" font-size="11" fill="#666">ingest_paths.yml — registered external sources (track: vcs | destructive, lens)</text>
+  <text x="394" y="366" font-size="11" fill="#666">synthesizer-state.yml — the synthesizer's seen-set watermark</text>
+  <text x="394" y="382" font-size="11" fill="#666">logs/ingest/ — run logs · proposals scratch · drained-staging archive</text>
+  <text x="394" y="400" font-size="10.5" fill="#997" font-style="italic">derive, don't store: no label→paths index anywhere; views are computed</text>
+
+  <rect x="370" y="424" width="440" height="52" rx="5" fill="#fffdf8" stroke="#c9baa0"/>
+  <text x="382" y="444" font-size="12" font-weight="bold" fill="#444">_archive/</text>
+  <text x="382" y="460" font-size="11" fill="#666">merge-absorbed notes + drained staging files, verbatim — nothing is ever deleted</text>
+
+  <rect x="370" y="486" width="440" height="74" rx="5" fill="#eef3fa" stroke="#7f9fc4" stroke-width="1.5"/>
+  <text x="382" y="506" font-size="12" font-weight="bold" fill="#3a5a80">INSTRUCTION.md — the external handshake (read live, never copied)</text>
+  <text x="382" y="522" font-size="11" fill="#556">note shape · field ownership (ingest: title/labels/dates — consumers: status/handled)</text>
+  <text x="382" y="536" font-size="11" fill="#556">query surface (rg is the floor; never a full-vault read) · label-registration protocol</text>
+  <text x="382" y="550" font-size="11" fill="#556">consumer archetypes: one-shot (handled) · lifecycle (status) · pairwise (seen-set)</text>
+
+  <rect x="370" y="570" width="440" height="52" rx="5" fill="#fffdf8" stroke="#c9baa0"/>
+  <text x="382" y="590" font-size="12" font-weight="bold" fill="#444">CLAUDE.md — the internal contract</text>
+  <text x="382" y="606" font-size="11" fill="#666">rules for agents working inside the vault; references the handshake, never restates it</text>
+
+  <!-- ═══ LEFT: creation + intake ═══ -->
+  <rect x="40" y="120" width="270" height="150" rx="8" fill="#f4f4f6" stroke="#999" stroke-width="1.5"/>
+  <text x="58" y="146" font-size="13" font-weight="bold" fill="#444">vault  (creation &amp; registration)</text>
+  <text x="58" y="166" font-size="11" fill="#555">create — stamp a born-correct vault from</text>
+  <text x="58" y="180" font-size="11" fill="#555">bundled templates (corpus-seeded or cold);</text>
+  <text x="58" y="194" font-size="11" fill="#555">templates ARE the spec</text>
+  <text x="58" y="212" font-size="11" fill="#555">add-source — register an ingest source</text>
+  <text x="58" y="226" font-size="11" fill="#555">(the deliberate read-exposure registry)</text>
+  <text x="58" y="244" font-size="11" fill="#555">discuss — architecture meta</text>
+
+  <rect x="40" y="300" width="270" height="170" rx="8" fill="#eef3fa" stroke="#7f9fc4" stroke-width="1.5"/>
+  <text x="58" y="326" font-size="13" font-weight="bold" fill="#3a5a80">ingest  (intake pipeline)</text>
+  <text x="58" y="346" font-size="11" fill="#556">drains closed day-files + registered sources</text>
+  <text x="58" y="360" font-size="11" fill="#556">split → label → file, job frozen there</text>
+  <text x="58" y="378" font-size="11" fill="#556">reads the bank live · NEVER mints vocabulary</text>
+  <text x="58" y="392" font-size="11" fill="#556">(no fit → needs-label, parked not dropped)</text>
+  <text x="58" y="410" font-size="11" fill="#556">deterministic shell: shipped scripts own</text>
+  <text x="58" y="424" font-size="11" fill="#556">windows, deltas, verbatim filing, commits</text>
+  <text x="58" y="442" font-size="11" fill="#556">writes title/labels/dates/source —</text>
+  <text x="58" y="456" font-size="11" fill="#556">never status, never handled</text>
+
+  <!-- ═══ RIGHT: synthesis + consumers ═══ -->
+  <rect x="870" y="120" width="270" height="190" rx="8" fill="#edf5ee" stroke="#85ab8a" stroke-width="1.5"/>
+  <text x="888" y="146" font-size="13" font-weight="bold" fill="#3a6a44">synthesizer  (pool coherence)</text>
+  <text x="888" y="166" font-size="11" fill="#556">scan — merge near-duplicates, link related</text>
+  <text x="888" y="180" font-size="11" fill="#556">notes, surface cross-domain themes</text>
+  <text x="888" y="198" font-size="11" fill="#556">resolve — drain the needs-label backlog;</text>
+  <text x="888" y="212" font-size="11" fill="#556">mint coherent new labels in batch</text>
+  <text x="888" y="230" font-size="11" fill="#556">owns vocabulary growth (two sensors,</text>
+  <text x="888" y="244" font-size="11" fill="#556">one minter) · pairwise consumer:</text>
+  <text x="888" y="258" font-size="11" fill="#556">seen-set state, never writes handled</text>
+  <text x="888" y="276" font-size="11" fill="#556">merges archive the absorbed original —</text>
+  <text x="888" y="290" font-size="11" fill="#556">originals always survive</text>
+
+  <rect x="870" y="340" width="270" height="130" rx="8" fill="#f4f4f6" stroke="#999" stroke-width="1.5"/>
+  <text x="888" y="366" font-size="13" font-weight="bold" fill="#444">consumers  (pure pull)</text>
+  <text x="888" y="386" font-size="11" fill="#555">any skill that queries by label and acts:</text>
+  <text x="888" y="400" font-size="11" fill="#555">session-planner (session-seed), schedulers</text>
+  <text x="888" y="414" font-size="11" fill="#555">(todo AND status:open), future pullers…</text>
+  <text x="888" y="432" font-size="11" fill="#555">self-scheduled — the vault triggers nothing</text>
+  <text x="888" y="446" font-size="11" fill="#555">and knows nothing about who reads it</text>
+  <text x="888" y="460" font-size="11" fill="#555">consumers write status + handled</text>
+
+  <!-- arrows -->
+  <line x1="310" y1="195" x2="350" y2="195" stroke="#888" stroke-width="1.5" marker-end="url(#a)"/>
+  <text x="330" y="187" font-size="9" fill="#888" text-anchor="middle">stamps</text>
+  <line x1="310" y1="385" x2="350" y2="385" stroke="#888" stroke-width="1.5" marker-end="url(#a)"/>
+  <text x="330" y="377" font-size="9" fill="#888" text-anchor="middle">files</text>
+  <line x1="870" y1="215" x2="830" y2="215" stroke="#888" stroke-width="1.5" marker-end="url(#a)"/>
+  <text x="850" y="207" font-size="9" fill="#888" text-anchor="middle">curates</text>
+  <line x1="870" y1="405" x2="830" y2="405" stroke="#888" stroke-width="1.5" marker-end="url(#a)"/>
+  <text x="850" y="397" font-size="9" fill="#888" text-anchor="middle">queries</text>
+
+  <!-- ═══ BOTTOM: the binding seam ═══ -->
+  <rect x="40" y="680" width="1100" height="72" rx="8" fill="#fdf3dd" stroke="#d9a441" stroke-width="1.5"/>
+  <text x="58" y="704" font-size="13" font-weight="bold" fill="#8a5a1a">The per-install binding seam — how every skill finds the vault without hardcoding it</text>
+  <text x="58" y="722" font-size="11.5" fill="#8a5a1a">skill body (portable, zero environment paths)  →  ~/.claude/&lt;skill&gt;.local.md (optional overrides)  →  ~/.claude/vault.local.md (canonical pointer, written by vault create)</text>
+  <text x="58" y="738" font-size="11.5" fill="#8a5a1a">→  read INSTRUCTION.md + labels.yml LIVE from the vault on every invocation  ·  neither pointer present ⇒ fail loudly, never guess</text>
+</svg>
