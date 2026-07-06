@@ -128,7 +128,7 @@ all-or-nothing pass — never a best-effort one.
 
 This produces final-architecture notes directly — **born-correct**, never needs a later migration.
 
-*(Cold start → skip; the vocabulary grows later via the future ongoing-ingest skill.)*
+*(Cold start → skip; the vocabulary grows later via the ingest skill.)*
 
 ### Iron rule (hard invariant)
 
@@ -172,8 +172,8 @@ deliberate accepted-read-exposure registration (additive-surface model — every
 
 ### Two writers, one schema (no conflict)
 
-`add-source` writes **new entries** (invariant registration). The future ongoing-ingest skill writes
-**`last_read` watermarks** (runtime state) on **vcs** entries only — destructive entries have no
+`add-source` writes **new entries** (invariant registration). The ingest skill (`claude-materia:ingest`)
+writes **`last_read` watermarks** (runtime state) on **vcs** entries only — destructive entries have no
 watermark. Same pattern as `labels.yml` (managers register, ingest reads). The schema is defined once,
 here and in `INSTRUCTION.md`; do not fork it.
 
@@ -181,7 +181,7 @@ here and in `INSTRUCTION.md`; do not fork it.
 
 A lens can only reference labels that already exist in `labels.yml`, so on a freshly cold-started vault
 (action/seed labels only) `add-source` lenses are limited to that vocabulary. Richer lenses become
-available as the bank grows via ongoing-ingest. Surface this to the user rather than silently dropping
+available as the bank grows via the ingest skill. Surface this to the user rather than silently dropping
 an unknown lens label — an unknown label is a hard validation failure, not a warning.
 
 ## discuss
@@ -210,8 +210,8 @@ question, hand it to `kind-bootstrapper discuss` rather than answering it inline
   is what carries cross-environment consistency.
 - **Env-agnostic** — no hardcoded env-directory paths anywhere in this skill. Any env reachability is
   via `~/.claude/vault.local.md`, never a hardcoded env path.
-- **Output-contract sharing** — Phase D and the future ongoing-ingest skill both emit notes conforming
+- **Output-contract sharing** — Phase D and the ingest skill both emit notes conforming
   to `INSTRUCTION.md`'s note shape. They share that *contract*, not filing code (Phase D is a one-time
-  bulk scripted pass; ongoing-ingest is recurring incremental classification).
+  bulk scripted pass; ingest is recurring incremental classification).
 - **Decoupled env-taxonomy** — singleton-vs-kind registration is handled via `kind-bootstrapper
   discuss`; it gates only the small registration action in the user's env, not this skill.

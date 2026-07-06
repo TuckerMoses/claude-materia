@@ -74,7 +74,8 @@ from the sections below rather than executing them.
 5. **File (scripted).** `scripts/file-notes <vault> <confirmed-manifest.json>`: cross-proposal
    dedup → idempotent writes → md5 verify (abort-on-mismatch) → **then, in order:** `ingested`
    markers → `last_read` advances → destructive staging moves. Emits a written/skipped report;
-   surface it.
+   surface it. Then record `run.json` (drain timestamp `ts`, `marked` day-files) in the run log —
+   `status`'s marked-then-modified net reads it.
 
 ## Journal drain
 
@@ -100,7 +101,7 @@ from the sections below rather than executing them.
 
 ## Sources drain
 
-- **`track: vcs`:** committed state on the registered branch; process `diff(last_read..HEAD)`.
+- **`track: vcs`:** committed state at the source's current checkout; process `diff(last_read..HEAD)`.
   Read a changed file whole for awareness; extract **only from changed hunks**. Provenance:
   `source: <remote> <path> @<commit>`. `last_read → HEAD` per-source, only after that source's
   notes are filed.
