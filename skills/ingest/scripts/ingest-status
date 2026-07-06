@@ -41,9 +41,12 @@ def main():
             if not rj.is_file():
                 continue
             info = json.loads(rj.read_text(encoding='utf-8'))
+            ts = info.get('ts', 0)
+            if not isinstance(ts, (int, float)):
+                continue  # malformed run.json — skip rather than traceback
             for rel in info.get('marked', []):
                 p = vault / rel
-                if p.is_file() and p.stat().st_mtime > info.get('ts', 0) + 60:
+                if p.is_file() and p.stat().st_mtime > ts + 60:
                     flagged.append(rel)
     if flagged:
         print('modified AFTER ingest (late sync?): ' + ', '.join(sorted(set(flagged)))

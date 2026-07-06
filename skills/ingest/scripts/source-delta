@@ -10,7 +10,10 @@ from pathlib import Path
 import yaml
 
 def sh(args, cwd):
-    return subprocess.run(args, cwd=cwd, capture_output=True, text=True, check=True).stdout
+    try:
+        return subprocess.run(args, cwd=cwd, capture_output=True, text=True, check=True).stdout
+    except subprocess.CalledProcessError as e:
+        sys.exit(f'git failed in {cwd}: {e.stderr.strip()}')
 
 def main():
     if len(sys.argv) != 2:

@@ -74,8 +74,8 @@ from the sections below rather than executing them.
 5. **File (scripted).** `scripts/file-notes <vault> <confirmed-manifest.json>`: cross-proposal
    dedup → idempotent writes → md5 verify (abort-on-mismatch) → **then, in order:** `ingested`
    markers → `last_read` advances → destructive staging moves. Emits a written/skipped report;
-   surface it. Then record `run.json` (`ts` = time of recording, taken after markers land;
-   `marked` day-files) in the run log — `status`'s marked-then-modified net reads it.
+   surface it. Then record `run.json` (`ts` = epoch-seconds time of recording, taken after markers
+   land; `marked` day-files) in the run log — `status`'s marked-then-modified net reads it.
 
 ## Journal drain
 

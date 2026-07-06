@@ -95,7 +95,11 @@ def main():
     for mv in manifest.get('archive_moves', []):
         dest_dir = vault / '_machine' / 'logs' / 'ingest' / mv['date']
         dest_dir.mkdir(parents=True, exist_ok=True)
-        shutil.move(mv['from'], dest_dir / Path(mv['from']).name)
+        stem, suffix = Path(mv['from']).stem, Path(mv['from']).suffix
+        dest, i = dest_dir / Path(mv['from']).name, 2
+        while dest.exists():
+            dest, i = dest_dir / f'{stem}-{i}{suffix}', i + 1
+        shutil.move(mv['from'], dest)
         report['moved'].append(mv['from'])
 
     print(json.dumps(report, indent=2))
