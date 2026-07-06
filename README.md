@@ -35,17 +35,7 @@ _No portable agents migrated yet. Coming soon: researcher, architect, debugger, 
 
 ## The vault system
 
-Three materia — **vault**, **ingest**, and **synthesizer** — link together into a complete personal knowledge system around a plain-markdown vault, like a linked materia combo. `vault create` stamps a born-correct vault; `ingest` drains your daily notes and registered sources into labeled atomic notes; `synthesizer` keeps the pool coherent (merges, links) and grows the label vocabulary. Any other skill can then consume the vault by querying labels — session-planner already does.
-
-The system's contracts live in the vault itself (`INSTRUCTION.md`, read live), so every skill stays portable: nothing is hardcoded, everything binds through [per-install pointers](#per-install-binding).
-
-**Architecture** — what exists and who owns which field:
-
-![Vault system architecture](docs/vault-architecture.svg)
-
-**Workflows** — what happens, from capture to consumption:
-
-![Vault system workflows](docs/vault-workflows.svg)
+**vault**, **ingest**, and **synthesizer** link together into a complete personal knowledge system — a linked materia combo. Full documentation, including architecture and workflow diagrams, lives at [`skills/vault/README.md`](skills/vault/README.md).
 
 ## Per-install binding
 
