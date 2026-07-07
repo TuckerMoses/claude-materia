@@ -1,8 +1,8 @@
 ---
 name: ingest
-description: "Drain captured thoughts into a knowledge vault as labeled atomic notes — the vault's intake pipeline. Subcommands: ingest [source?] [--today] (drains closed journal day-files and registered external sources: split into atomic thoughts, three-way label-driven extraction against the vault's frozen vocabulary, one propose-confirm gate, scripted verbatim filing; --today additionally extracts from the open day so same-day actionables aren't blocked), status (read-only health: pending day-files, per-source deltas, needs-label backlog, anomalies). Use whenever the user wants to ingest or drain their journal, process captured thoughts or notes into the vault, run the vault intake, pull from a registered ingest source, or check what's pending. Trigger phrases: 'ingest my journal', 'drain the journal', 'process my captures', 'run ingest', 'ingest today', 'ingest status', 'what's pending ingest'."
+description: "Drain captured thoughts into a knowledge vault as labeled atomic notes — the vault's intake pipeline. Subcommands: ingest [source?] [--today] [--silent] (drains closed journal day-files and registered external sources: split into atomic thoughts, three-way label-driven extraction against the vault's frozen vocabulary, one propose-confirm gate, scripted verbatim filing; --today additionally extracts from the open day so same-day actionables aren't blocked; --silent skips the gate — applies existing labels and files autonomously, never minting, ending with a mandatory digest), status (read-only health: pending day-files, per-source deltas, needs-label backlog, anomalies). Use whenever the user wants to ingest or drain their journal, process captured thoughts or notes into the vault, run the vault intake, pull from a registered ingest source, or check what's pending. Trigger phrases: 'ingest my journal', 'drain the journal', 'process my captures', 'run ingest', 'ingest today', 'silent ingest', 'ingest status', 'what's pending ingest'."
 user-invocable: true
-argument-hint: "[source?] [--today] | status"
+argument-hint: "[source?] [--today] [--silent] | status"
 ---
 
 # ingest
@@ -24,8 +24,11 @@ any vault's content. The vocabulary is data, not skill body.
 split boundaries, three-way disposition, labeling, title generation, and the gate conversation.
 Every script takes the vault path as an argument — no script knows where any vault lives.
 
-**Hard posture: propose-confirm.** Nothing is written before you confirm at the gate. The model
-is a smart suggester, not an autonomous librarian.
+**Hard posture: propose-confirm by default.** Nothing is written before you confirm at the gate.
+The model is a smart suggester, not an autonomous librarian. `--silent` is the one sanctioned
+exception (see "Silent mode"): it shifts review from pre-write to post-write via a mandatory
+digest — and even silent, the vocabulary stays frozen and every write remains scripted, verbatim,
+and jj-reversible.
 
 ## Per-install binding
 
@@ -47,6 +50,9 @@ This skill is portable. It names **no** environment paths in its body. Binding r
 - `/ingest <source>` — scope to `journal` or one registered source (path or name).
 - `/ingest --today` — the drain, plus extract from the open day **without marking** (see
   "Journal drain").
+- `/ingest --silent` — the drain without the gate: applies existing labels and files
+  autonomously, never minting; ends with a mandatory digest. Composes with a scope and
+  `--today`. See "Silent mode".
 - `/ingest status` — read-only health. See "status".
 
 **`help` subcommand:** when invoked as `/ingest help`, summarize this skill and its subcommands
@@ -67,7 +73,8 @@ from the sections below rather than executing them.
 3. **Persist proposals** to `_machine/logs/ingest/<run>/proposals.json` *before* the gate — a
    crash mid-review must not lose the analysis. The run log records the vault's jj change-id at
    drain start (whole-run undo stays a one-liner).
-4. **ONE batch confirm gate.** Grouped by day-file/source: each proposed note's title, labels,
+4. **ONE batch confirm gate** *(skipped under `--silent` — see "Silent mode")*. Grouped by
+   day-file/source: each proposed note's title, labels,
    disposition, and verbatim body as its own evidence. Batch-friendly:
    approve-all-with-exceptions; per-item relabel / re-split / demote-to-diary / promote;
    conversational corrections. A week's backlog is a five-minute review, not fifty questions.
@@ -113,6 +120,32 @@ from the sections below rather than executing them.
   it stays in the source, unextracted, never parked. `needs-label` is journal-only: the journal
   is the unfiltered brain-stream; a registered source was pointed here through a deliberate lens.
 
+## Silent mode (`--silent`)
+
+The drain without the gate: proposals are auto-confirmed as emitted and filed directly. For
+unattended or low-friction runs (a cron drain; a routine morning `/ingest --today --silent`) once
+the vocabulary has stabilized — the interactive gate's observed correction rate is the signal for
+whether silent is safe yet.
+
+What changes, and what doesn't:
+
+- **Skipped:** the confirm gate (drain step 4). Nothing else.
+- **Unchanged:** three-way extraction against the **frozen** vocabulary — no-fit thoughts still
+  park under `needs-label`; silent **never mints or suggests labels** — plus scripted verbatim
+  filing, ordered commit points, and idempotency.
+- **Action labels (`todo`, `session-seed`) are still applied.** Safe because their consumers all
+  carry their own human gates (session-planner asks before spinning anything up; schedulers
+  preview before writing) — over-application is caught at the point of action, never silently
+  executed.
+- **Mandatory digest:** every silent run ends with a digest — each note filed (title + labels +
+  source), everything parked under `needs-label`, everything left diary-only, plus the
+  `file-notes` report — surfaced to the user AND persisted to
+  `_machine/logs/ingest/<run>/digest.md`. Silent shifts review from pre-write to post-write; it
+  is never invisible. Whole-run undo stays a one-liner via the run log's jj change-id.
+- **Deliberately not extended to the synthesizer:** merges (drafted rewrites) and associative
+  links require pre-write human eyes — that skill's gates are the license for its operations,
+  not friction.
+
 ## status
 
 `scripts/ingest-status <vault>` — read-only, principle 7 (surface on demand, never nag):
@@ -127,8 +160,10 @@ from the sections below rather than executing them.
 
 ## Invariants (cross-cutting, hard)
 
-- **Propose-confirm only** — nothing written before the gate; v1 is interactive-only (headless
-  is a BACKLOG item with a named trigger).
+- **Propose-confirm by default** — nothing written before the gate. `--silent` is the one
+  sanctioned exception: gate skipped, mandatory digest surfaced + persisted to
+  `_machine/logs/ingest/<run>/digest.md` (review-after), vocabulary still frozen, writes still
+  scripted and verbatim.
 - **Never writes `status`, never writes `handled`** — field ownership per INSTRUCTION.md.
 - **Vocabulary frozen** — active labels or `needs-label`; minting is the synthesizer's.
 - **Verbatim bodies, scripted filing** — extraction copies; `file-notes` verifies (md5,

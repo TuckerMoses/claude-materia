@@ -36,13 +36,14 @@ pipeline. Job frozen at **split → label → file**. It writes no `status`, wri
 knows nothing about consumers, and never mints vocabulary. New capability = a new consumer skill;
 ingest is never edited to add one.
 
-**Hard posture:** propose-confirm (v1 interactive-only, §5). The model is a smart suggester, not
-an autonomous librarian (principle 3).
+**Hard posture:** propose-confirm by default. The model is a smart suggester, not an autonomous
+librarian (principle 3). `--silent` is the one sanctioned exception — see Amendment (2026-07-06).
 
 ## 2. Subcommand surface (locked)
 
-`/ingest [source?] [--today]` · `/ingest status`. (`help` via the kernel-level universal
-convention; no `discuss`.)
+`/ingest [source?] [--today] [--silent]` · `/ingest status`. (`help` via the kernel-level
+universal convention; no `discuss`.) `--silent` added by Amendment (2026-07-06); composes with
+scope and `--today`.
 
 - **Bare `/ingest`** = the full drain: journal first (freshest thoughts), then every registered
   source. The registry knows what exists; the user shouldn't have to.
@@ -111,22 +112,25 @@ convention; no `discuss`.)
 
 ## 5. Confirmation model — interactive batch gate; headless deferred
 
+> **Amendment (2026-07-06):** The "headless deferred" stance below was superseded. `--silent` ships
+> in vault v1.1.0. See Amendment section at end of this doc for full semantics.
+
 - **One consolidated gate per run**, grouped by day-file/source: each proposed note's title,
   labels, disposition (extract / `needs-label` / diary-only), with the **verbatim body as its own
   evidence**. Batch-friendly responses: approve-all-with-exceptions; per-item relabel, re-split,
   demote-to-diary, promote; conversational corrections (capability #8). A week's backlog must be
   a five-minute review, not fifty questions.
-- **Nothing is written before confirmation.** After confirm, the filer writes and only then
-  commits watermarks (§6.2).
+- **Nothing is written before confirmation** (interactive mode). After confirm, the filer writes
+  and only then commits watermarks (§6.2). Under `--silent`, the gate is skipped — see Amendment.
 - **Rejections need no memory:** a rejected split stays in the day-file as diary narrative; the
   file's marker means it is never revisited.
-- **Headless mode (unattended cron/loop drain, no gate) is deferred, deliberately:** (a) YAGNI —
-  no capture surface is live; volume and classification accuracy are unknown; (b) principle 3 is
-  explicit that the user confirms or corrects; (c) deferral costs nothing — the `needs-label`
-  freeze was designed so ingest never needs a mid-run decision, so headless later is purely
-  additive (a `--yes` flag / cron invocation skipping the gate), zero redesign. **Trigger
-  condition, named:** revisit when the observed correction rate at the gate is ≈ zero after the
-  vocabulary stabilizes.
+- **Headless mode (unattended cron/loop drain, no gate) was deferred at v1, deliberately:** (a)
+  YAGNI — no capture surface was live; volume and classification accuracy were unknown; (b)
+  principle 3 is explicit that the user confirms or corrects; (c) deferral costs nothing — the
+  `needs-label` freeze was designed so ingest never needs a mid-run decision, so headless later
+  is purely additive (a `--yes` flag / cron invocation skipping the gate), zero redesign.
+  **Trigger condition (met 2026-07-06):** the observed correction rate at the gate was ≈ zero on
+  the first real gate run — see Amendment.
 
 ## 6. Idempotency & failure
 
@@ -197,7 +201,7 @@ run. **Not touched:** `~/.claude/plans/vault-design.md` (parallel session), `lab
 
 ## 10. Out of scope (v1)
 
-- **Headless/unattended mode** — deferred with named trigger (§5).
+- **Headless/unattended mode** — shipped as `--silent` (vault v1.1.0, Amendment 2026-07-06); no longer deferred.
 - **Squatter relocation** — a one-time human refactor in a vault session, surfaced by `status`,
   never performed by ingest.
 - **Capture surfaces** (`/capture`, `/sanitize`, phone Shortcut) — Phase 5, separate work; ingest
@@ -207,3 +211,26 @@ run. **Not touched:** `~/.claude/plans/vault-design.md` (parallel session), `lab
   (design doc, 2026-06-21); an on-the-spot label offer remains an optional later additive.
 - **Stable per-source-item ids** for edited-in-place thoughts — the accepted limitation stands;
   the synthesizer dedups.
+
+---
+
+## Amendment (2026-07-06) — `--silent` mode
+
+Supersedes §5's "interactive-only v1" and resolves the headless BACKLOG item. Decided with Tucker
+after the first real gate run (a month of Apple Notes backlog) came back clean — the named trigger
+(correction rate ≈ 0) was met on first contact.
+
+- **`--silent` flag on the drain** (composes with scope and `--today`): skips the confirm gate
+  only. Everything else is unchanged — three-way extraction against the frozen vocabulary
+  (no-fit → `needs-label`; silent never mints or suggests labels), scripted verbatim filing,
+  ordered commit points, idempotency.
+- **Action labels still applied silently** — their consumers all carry their own human gates
+  (session-planner asks; schedulers preview), so over-application is caught at the point of
+  action.
+- **Mandatory digest** — surfaced to the user and persisted to
+  `_machine/logs/ingest/<run>/digest.md`: notes filed (title/labels/source), parked, diary-only,
+  plus the file-notes report. Principle 3's "reviewable" shifts from pre-write to post-write;
+  silent is never invisible. Undo remains one jj command via the run log's change-id.
+- **Explicitly not extended to the synthesizer** — merges are drafted rewrites and links are
+  noise-prone graph writes; pre-write human approval is the license for those operations. The
+  synthesizer remains propose-confirm always.

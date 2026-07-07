@@ -8,8 +8,9 @@ Mark complete with `[x]`.
   One-time confirmed refactor in a vault session (the `sc-vault-scan` sidechat is a natural home);
   `/ingest status` flags the anomaly until done. *(Cross-container: vault-side op, parked here
   until the vault's own todo path is live.)*
-- [ ] **ingest: headless/unattended mode** (`--yes` / cron drain, skipping the gate).
-  **Trigger:** gate correction rate ≈ 0 after the vocabulary stabilizes. (ingest spec 2026-07-05 §5)
+- [x] **ingest: headless/unattended mode** — built as `--silent` (2026-07-06, vault v1.1.0):
+  gate skipped, mandatory digest, vocabulary frozen, synthesizer excluded. Trigger met on the
+  first real gate run (clean). Cron invocation is now just `/ingest --silent` on a cadence.
 - [ ] **synthesizer: label-bank hygiene** — merge/retire near-duplicate labels already in the
   bank; the mint-time near-dup guard only prevents new occurrences. (synthesizer spec 2026-07-03 §9)
 - [ ] **ingest: interactive mint-at-ingest** — optionally offer a new label on the spot when the
