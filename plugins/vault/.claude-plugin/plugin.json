@@ -1,10 +1,16 @@
 {
   "name": "vault",
-  "version": "1.0.0",
-  "description": "A portable personal knowledge system: create a label-based markdown vault, ingest captured thoughts into it, and synthesize the pool (merges, links, vocabulary growth). Three linked skills — vault, ingest, synthesizer.",
+  "version": "1.0.1",
+  "description": "A portable personal knowledge system: create a label-based markdown vault, ingest captured thoughts into it, and synthesize the pool (merges, links, vocabulary growth). Three linked skills \u2014 vault, ingest, synthesizer.",
   "author": {
     "name": "Tucker Moses"
   },
   "license": "MIT",
-  "keywords": ["knowledge-base", "notes", "zettelkasten", "pkm", "vault"]
+  "keywords": [
+    "knowledge-base",
+    "notes",
+    "zettelkasten",
+    "pkm",
+    "vault"
+  ]
 }

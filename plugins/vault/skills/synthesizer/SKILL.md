@@ -79,8 +79,10 @@ and only by subagents.
    labels). Default = the whole vault. Default mode is **incremental**: the working set is the
    notes not yet in the seen-set (see "Re-run model"), each compared against its
    label-neighborhoods. `--full` clears the working-set restriction and re-passes the whole vault.
-2. **Label-blocking — `rg` over frontmatter only.** Group note paths by shared label → candidate
-   neighborhoods. Zero body reads. Notes sharing a label are where merges and links concentrate.
+2. **Label-blocking — frontmatter query only.** Group note paths by shared label via the query
+   surface, per the handshake's preference order (`obsidian` CLI when the app is running; `rg`
+   otherwise) → candidate neighborhoods. Zero body reads. Notes sharing a label are where merges
+   and links concentrate.
 3. **Global title sweep — one subagent.** All titles + label sets fit one context (titles are
    derived-searchable by design). It nominates cross-domain candidate pairs that share **no**
    label — the pairs label-blocking structurally misses, and exactly the cross-domain surfacing
@@ -145,7 +147,8 @@ Survivor + absorbed — never a synthesized third file:
 4. **Absorbed note → `_archive/` verbatim.** Never deleted. (jj history additionally preserves the
    survivor's pre-merge body.)
 5. **Backlink sweep:** `rg` for the absorbed note's `[[wikilink]]` across `notes/`; rewrite each
-   hit to the survivor's wikilink.
+   hit to the survivor's wikilink. (Deliberately `rg`, not the CLI, regardless of app state — the
+   sweep is correctness-critical and must be exhaustive; a missed hit is a broken link.)
 
 **Iron-rule relationship (explicit):** the content-preservation iron rule governs *filing* —
 bodies verbatim at creation; minting/resolve never alter bodies. A human-approved merge rewrite
@@ -176,7 +179,8 @@ vocabulary could only grow from its failures (unlabelable notes), never from eme
 
 **Sensor 2 — `resolve`, the parked-orphan drain:**
 
-1. **Gather** all `needs-label` notes (`rg`; the set itself is the scope — no scope argument).
+1. **Gather** all `needs-label` notes via the query surface (CLI when the app is running; `rg`
+   otherwise); the set itself is the scope — no scope argument.
 2. **Recheck against the current bank first.** The vocabulary grew since parking; some notes now
    fit *existing* labels — apply those (propose-confirm), no minting. The cheapest defense against
    minting near-duplicates.
