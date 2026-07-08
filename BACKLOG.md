@@ -3,6 +3,13 @@
 Top of file = next. Items are concrete and clearly actionable near-term; may be vague far-term.
 Mark complete with `[x]`.
 
+- [ ] **weekly-planner: vault-query wiring** (approved 2026-07-07, queued behind the kind-vault
+  bridge build in `sc-kind-vault-bridge`). The deferred #4 edge: query `todo AND status:open` as a
+  lifecycle consumer into weekly planning. Kernel skill — respect its `improvements.md`
+  discipline; the seam + label declaration already exist.
+- [ ] **research-prompt consumer** (approved 2026-07-07, queued). A puller surfacing the
+  `research-prompt` / `question` queue and dispatching chosen items to `/research` /
+  deep-research; one-shot archetype. Design from scratch — no prior spec.
 - [ ] **Vault: relocate the 35 journal squatters.** Migrated topical notes sitting in
   `~/Vault/journal/` belong in `notes/` — where they sit they're invisible to the synthesizer.
   One-time confirmed refactor in a vault session (the `sc-vault-scan` sidechat is a natural home);
