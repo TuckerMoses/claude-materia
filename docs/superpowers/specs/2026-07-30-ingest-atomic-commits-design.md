@@ -102,8 +102,14 @@ working copy.
 **The path list is not inferred — `file-notes` already emits it.** Its report carries `written`,
 `marked`, `advanced`, and `moved`: the vault paths it just touched, produced by the code that
 touched them. Add the run-log directory's own files — `run.json`, `proposals.json`,
-`confirmed-manifest.json`, `entry.md`, `report.json` — enumerated by name rather than as a
-directory-glob fileset, and `CHANGELOG.md`, and the set is complete. No globbing, no diffing, no
+`confirmed-manifest.json` (interactive runs only — the propose-confirm gate produces it; silent
+runs never do), `entry.md`, `report.json` — enumerated by name rather than as a directory-glob
+fileset, and `CHANGELOG.md`, and the set is complete. Because `confirmed-manifest.json` does not
+exist on a silent run, `commit-run` builds the enumerated list conditionally on the run's mode
+(four names for silent, five for interactive) rather than passing a static five-name list and
+relying on `jj commit` tolerating a named path absent from the working copy — that tolerance is
+not verified, unlike the selected/unselected semantics above, and a spec should not carry an
+unverified assumption in the one mechanism it calls non-obvious. No globbing, no diffing, no
 heuristics, and `-a` never appears. Each drain invocation, including a retry after an aborted
 attempt, is assigned a fresh run-id, so a retry never reuses a failed attempt's directory; an
 enumerated fileset therefore cannot sweep in residue left behind by that prior attempt.
@@ -158,25 +164,32 @@ swallows the human's work. Three concrete cases, in ascending order of how badly
   `file-notes`.
 - **Near-miss rationale is a new output of the split+label step.** For every thought parked under
   `needs-label`, the labelling subagent must emit the nearest active labels it considered and why
-  each missed, writing it as a new `near_miss` array on that item's entry in `proposals.json`.
-  Drain step 6 reads the field unchanged when composing `entry.md` — no minimum or maximum count,
-  every label seriously weighed goes in, and an item with none renders "No active label was within
-  consideration" rather than an empty body. This is the one genuinely new semantic requirement in
-  this design; without it the Parked section degrades to a list of titles and the
+  each missed, writing it as a new `near_miss` array on that item's entry in `proposals.json`. Each
+  element is a `{label, reason}` object — no minimum or maximum count, every label seriously
+  weighed goes in. Drain step 6 renders each element as `` `label` (reason) `` when composing
+  `entry.md`'s Parked section, and an item whose `near_miss` array is empty renders "No active
+  label was within consideration" rather than an empty body. This is the one genuinely new semantic
+  requirement in this design; without it the Parked section degrades to a list of titles and the
   vocabulary-pressure signal is lost.
 - **Abort ⇒ no commit.** `file-notes` exits 1 on empty body or md5 mismatch; the flow stops and
   never reaches the commit step. A broken run stays visible in the working copy rather than being
   buried in history.
 - **`commit-run` failure ⇒ rollback, not orphan.** `commit-run` does two things in order: prepend
   `entry.md` to `CHANGELOG.md`, then `jj commit [FILESETS]`. If the `jj commit` invocation fails
-  after the prepend has already landed, `commit-run` reverts the `CHANGELOG.md` prepend before
-  exiting non-zero. The run's own artifacts (`entry.md`, `report.json`, the run directory) stay
-  uncommitted and visible in the working copy — the same "stays visible rather than buried"
-  treatment as the `file-notes` abort case above — but `CHANGELOG.md` is never left holding an
-  entry for a run that was never finalized, preserving §2.6's "each entry is one commit" guarantee.
-- **No-op ⇒ no commit, no run directory, no changelog entry.** One guard, living in `commit-run`
+  and returns control to `commit-run` — a non-zero exit, not a crash — `commit-run` reverts the
+  `CHANGELOG.md` prepend before exiting non-zero. The run's own artifacts (`entry.md`,
+  `report.json`, the run directory) stay uncommitted and visible in the working copy — the same
+  "stays visible rather than buried" treatment as the `file-notes` abort case above — and
+  `CHANGELOG.md` is never left holding an entry for a run that was never finalized, preserving
+  §2.6's "each entry is one commit" guarantee. This guarantee covers failures that return control
+  to the script; a process kill between the two writes — SIGKILL, OOM, host restart, power loss —
+  is a separate, accepted residual risk, not detected or corrected here. See §5.
+- **No-op (nothing touched) ⇒ no commit, no changelog entry.** One guard, living in `commit-run`
   itself — it checks whether the touched-path set is empty before doing anything — so an empty run
-  does not produce an empty commit.
+  does not produce an empty commit. The run directory's own files (`entry.md`, `report.json`) are
+  written to disk by earlier drain steps before `commit-run` is ever invoked, so the guard cannot
+  retroactively prevent the directory's existence — it stops the commit and the changelog entry,
+  not the directory. See §5 for the accumulation this leaves behind.
 - **Message:** `ingest(<mode>): <run-id> — N notes, M days, P parked`. `N`, `M`, `P` are defined in
   §2.6 against the changelog's own category names.
 - **No change-id capture.** An earlier draft captured `@`'s change-id before committing to embed it
@@ -231,6 +244,9 @@ To undo a run: `jj log -r 'description(glob:"*<run-id>*")'`, then `jj abandon <c
 
 ### Diary-only
 4 thoughts stayed in their day-files as narrative.
+
+### Skipped
+1 skipped — already filed.
 ```
 
 **Category rendering rules:**
@@ -241,7 +257,8 @@ To undo a run: `jj log -r 'description(glob:"*<run-id>*")'`, then `jj abandon <c
 - **Skipped** gets a single summary sentence (e.g. "1 skipped — already filed.") when nonzero,
   never itemized; omitted when zero.
 - `N`, `M`, `P` in the §2.5 commit message map onto these categories: `N` = filed count, `M` =
-  distinct day-files touched by the run (whether filed, parked, or diary-only), `P` = parked count.
+  distinct day-files touched by the run (whether filed, parked, diary-only, or skipped), `P` =
+  parked count.
 
 The header line is the scannable layer — fifty runs' headers read in seconds, with only unusual
 counts worth opening.
@@ -298,8 +315,8 @@ commit. `run.json` retains the structured counts.
 | File | Change |
 |---|---|
 | `plugins/vault/skills/ingest/scripts/commit-run` | **new** — scoped `jj commit` from the `file-notes` report; prepends the model-rendered `entry.md` to `CHANGELOG.md`; on `jj commit` failure, reverts the prepend and exits non-zero (§2.5) |
-| `plugins/vault/skills/ingest/scripts/tests/test-commit-run.sh` | **new** — scoping (unrelated dirt survives, run-log fileset enumerated by name not globbed), no-op guard (owned by `commit-run`), abort path, `jj commit`-failure rollback (prepend reverted, no orphan entry), changelog prepend |
-| `plugins/vault/skills/ingest/SKILL.md` | drain step 6, ordered after the interactive gate; split+label emits near-miss rationale for parked thoughts (new `near_miss` array in `proposals.json`); §Silent mode (digest → changelog — **pending §2.8's veto; reverts to digest.md if vetoed**); §Invariants (add: "every successful run produces exactly one commit — no run partially commits," per §2.5's `commit-run` failure contract); `--today` loop guidance (`--silent --today` is a validation error); run-log schema (drop `labels_registered_this_run`; add per-category counts to `run.json`) |
+| `plugins/vault/skills/ingest/scripts/tests/test-commit-run.sh` | **new** — scoping (unrelated dirt survives, run-log fileset enumerated by name not globbed), fileset construction per mode (interactive list includes `confirmed-manifest.json`, silent list omits it), no-op guard (owned by `commit-run`), abort path, `jj commit`-failure rollback (prepend reverted, no orphan entry), changelog prepend |
+| `plugins/vault/skills/ingest/SKILL.md` | drain step 6, ordered after the interactive gate; split+label emits near-miss rationale for parked thoughts (new `near_miss` array of `{label, reason}` objects in `proposals.json`); `entry.md` composition follows §2.6's category rendering rules (itemize/summarize/omit per category, `N`/`M`/`P` formula); §Silent mode (digest → changelog — **pending §2.8's veto; reverts to digest.md if vetoed**); §Invariants (add: "every successful run that touches at least one path produces exactly one commit — no run partially commits; a no-op run (nothing touched) produces none," per §2.5's `commit-run` failure contract and no-op guard); `--today` loop guidance (`--silent --today` is a validation error); run-log schema (drop `labels_registered_this_run`; add per-category counts to `run.json`) |
 | `plugins/vault/skills/vault/assets/CLAUDE.md` | document `CHANGELOG.md` in the layout section |
 | `plugins/vault/skills/vault/assets/CHANGELOG.md` | **new** — seed stamped by `vault create` |
 | `plugins/vault/skills/vault/SKILL.md` | seed the changelog on `vault create` |
@@ -324,6 +341,20 @@ commit. `run.json` retains the structured counts.
   INSTRUCTION.md's "never a full-vault read" (a query rule, not a filing rule, but adjacent).
 - **`.stignore` excludes `.jj/`.** If Syncthing is ever enabled, a second machine gets files with no
   jj state and sees everything as changed. Out of scope; flagged.
+- **A process kill between `commit-run`'s two writes leaves an orphaned `CHANGELOG.md` entry.** If
+  the process dies after the `CHANGELOG.md` prepend and before `jj commit` returns — SIGKILL, OOM,
+  host restart, power loss — the revert-on-failure path in §2.5 never runs, and the orphaned entry
+  rides into the next run's enumerated fileset (§2.4) instead of its own. No startup detection is
+  added: a full-process death between two sequential writes is low-probability even under a nightly
+  unattended cadence, and the fix is hand-correction — Tucker notices the misattributed entry at the
+  next interactive run and edits `CHANGELOG.md` directly. Revisit if it actually happens.
+- **No-op runs leave their own directory's files (`entry.md`, `report.json`) uncommitted on disk.**
+  The no-op guard (§2.5) stops the commit and the changelog entry, but those files are written by
+  earlier drain steps before the guard runs and are not retroactively removed. Because a no-op is
+  the loop's most common outcome — most cadence firings find no closed, un-`ingested` day-file —
+  these accumulate in `_machine/logs/ingest/` as steady-state clutter rather than a rare accident.
+  Accepted: it is machine-space log residue, not vault content, and nothing downstream reads or is
+  corrupted by it. Revisit (e.g. a periodic sweep) if the accumulation becomes a real problem.
 
 ## 6. Deferred
 
