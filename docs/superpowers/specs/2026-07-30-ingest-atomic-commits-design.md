@@ -1,7 +1,8 @@
 # Design — atomic ingest commits + vault CHANGELOG (claude-materia)
 
-> **Status:** Design approved 2026-07-30 (Tucker). Next: implementation plan (writing-plans), then
-> execution.
+> **Status:** Design approved 2026-07-30 (Tucker), **except §2.8** (dropping `digest.md`), which
+> was decided during spec-writing and is pending Tucker's veto — see §2.8. Next: implementation
+> plan (writing-plans) for the approved portions, then execution.
 > **Context:** `--silent` was specified 2026-07-06 (vault v1.1.0) and marked complete in BACKLOG,
 > but has **never been executed** — all five runs in `~/Vault/_machine/logs/ingest/` carry a
 > `confirmed-manifest.json`, i.e. the interactive gate ran. The BACKLOG's stated next step ("cron
@@ -37,8 +38,10 @@ already is. Rationale: jj owns the working copy, the run log already reserves
 colocated repo introduces a second history writer and degrades jj's operation log.
 
 **Corrective path (locked):** rollback → **re-run interactively**. This matters because
-rollback-then-re-run-silent is a no-op loop: the same day-file through the same frozen vocabulary
-produces the same proposals. The correction has to be supplied at the gate.
+rollback-then-re-run-silent is a no-op loop: a silent re-run supplies no new information — same
+day-file, same frozen vocabulary, same labelling subagent — so it cannot correct a labelling error
+regardless of whether its output happens to be bit-identical to the run it replaces. The correction
+has to be supplied at the gate.
 
 ### 2.2 The vocabulary stays frozen in silent mode
 
@@ -217,8 +220,14 @@ accumulated — five runs with no boundary between them.
 
 The 2026-07-06 amendment requires every silent run to end with a digest surfaced to the user *and*
 persisted to `_machine/logs/ingest/<run>/digest.md`. The changelog entry is that digest, in a file
-Tucker actually reads, with the same content. Keeping both means two overlapping records that can
-drift.
+Tucker actually reads, with the same content. The objection is not that two files sharing content
+can drift — `entry.md` (§2.5) is written once and never updated, exactly like `digest.md` would be,
+so neither is more drift-prone than the other. The objection is duplicated *user-facing records of
+record*: `digest.md`, like the changelog entry, is meant to be a persisted thing Tucker reads back
+later. `entry.md` is not that — it is a transient rendering handoff, consumed once by `commit-run`
+and never read directly; the CHANGELOG entry it produces is the only surviving user-facing record.
+Keeping `digest.md` alongside the changelog entry means keeping two things Tucker is meant to read
+as the record of the run, in a machine-space file (per §1) he does not read habitually.
 
 `digest.md` is dropped. The mandatory-digest requirement is **preserved and satisfied** by the
 changelog entry: still surfaced to the user at run end, still persisted, still inside the run's
@@ -241,7 +250,7 @@ commit. `run.json` retains the structured counts.
 |---|---|
 | `plugins/vault/skills/ingest/scripts/commit-run` | **new** — scoped `jj commit` from the `file-notes` report; prepends the model-rendered `entry.md` to `CHANGELOG.md` |
 | `plugins/vault/skills/ingest/scripts/tests/test-commit-run.sh` | **new** — scoping (unrelated dirt survives), no-op guard, abort path, changelog prepend |
-| `plugins/vault/skills/ingest/SKILL.md` | drain step 6; split+label emits near-miss rationale for parked thoughts; §Silent mode (digest → changelog); §Invariants; `--today` loop guidance; run-log schema (drop `labels_registered_this_run`) |
+| `plugins/vault/skills/ingest/SKILL.md` | drain step 6; split+label emits near-miss rationale for parked thoughts; §Silent mode (digest → changelog — **pending §2.8's veto; reverts to digest.md if vetoed**); §Invariants; `--today` loop guidance; run-log schema (drop `labels_registered_this_run`) |
 | `plugins/vault/skills/vault/assets/CLAUDE.md` | document `CHANGELOG.md` in the layout section |
 | `plugins/vault/skills/vault/assets/CHANGELOG.md` | **new** — seed stamped by `vault create` |
 | `plugins/vault/skills/vault/SKILL.md` | seed the changelog on `vault create` |
