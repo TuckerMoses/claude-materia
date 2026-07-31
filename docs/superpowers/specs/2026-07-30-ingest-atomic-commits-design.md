@@ -50,10 +50,12 @@ Applied correctly it yields **frozen**, because interactive ingest does not mint
 files agree: ingest SKILL.md §identity and §invariants, synthesizer SKILL.md ("Ingest never mints
 vocabulary… **all** post-bootstrap topical vocabulary growth happens here"), and `Vault/CLAUDE.md`.
 
-**`labels_registered_this_run` in `run.json` is drift.** The field appears nowhere in the skill;
-`run.json`'s spec records `ts` and `marked` only. It was improvised during the 2026-07-25 run to
-record a label *Tucker* minted in conversation at the gate. Human minting mid-gate is sanctioned;
-the ad-hoc field is not. It is removed from the run-log schema.
+**`labels_registered_this_run` in `run.json` is drift.** The field appears nowhere in the skill.
+`run.json`'s actual field set is `ts`, `marked`, `jj_change_id_at_drain_start` (already reserved
+per §2.1), and — new under this design — the run's structured filed/parked/diary-only/skipped
+counts (§2.8). It was improvised during the 2026-07-25 run to record a label *Tucker* minted
+in conversation at the gate. Human minting mid-gate is sanctioned; the ad-hoc field is not. It is
+removed from the run-log schema.
 
 **Consequence for the changelog:** a silent run produces zero new vocabulary, always. What the
 changelog records is the inverse — **what got parked under `needs-label`, and why nothing fit**.
@@ -76,7 +78,14 @@ by definition and structurally *cannot* be marked `ingested: true`, so it is re-
 until midnight closes it. Under an hourly loop, a thought written at 09:00, sharpened at 10:30 and
 expanded at 14:00 files three notes. `--today`'s justification (same-day actionables shouldn't wait
 for tomorrow) is largely dissolved by the loop itself, which bounds capture-to-filed latency at one
-day while only ever reading immutable files.
+day while only ever reading immutable files. This reasoning holds for loop intervals of roughly a
+day or less, whatever cadence §6's deferred scheduling work eventually settles on; if that cadence
+turns out coarser, `--today`'s interactive-only restriction is worth revisiting.
+
+**`--silent --today` together is a validation error.** The skill refuses to run and exits non-zero
+before touching the vault, rather than silently accepting the combination: running it would read
+the mutable open day-file into a gate-free unattended flow — the exact duplicate-filing scenario
+the paragraph above exists to prevent.
 
 If today-inclusive silent runs are ever wanted, the honest fix is a stabler dedup key, not a flag
 change. Deferred until actually wanted.
@@ -92,8 +101,12 @@ working copy.
 
 **The path list is not inferred — `file-notes` already emits it.** Its report carries `written`,
 `marked`, `advanced`, and `moved`: the vault paths it just touched, produced by the code that
-touched them. Add the run-log directory and `CHANGELOG.md` and the set is complete. No globbing, no
-diffing, no heuristics, and `-a` never appears.
+touched them. Add the run-log directory's own files — `run.json`, `proposals.json`,
+`confirmed-manifest.json`, `entry.md`, `report.json` — enumerated by name rather than as a
+directory-glob fileset, and `CHANGELOG.md`, and the set is complete. No globbing, no diffing, no
+heuristics, and `-a` never appears. Each drain invocation, including a retry after an aborted
+attempt, is assigned a fresh run-id, so a retry never reuses a failed attempt's directory; an
+enumerated fileset therefore cannot sweep in residue left behind by that prior attempt.
 
 **Why scoping is required rather than nice-to-have.** A vault is a working tree a human is always
 halfway through editing. Automation sharing that tree either scopes its writes or eventually
@@ -129,7 +142,8 @@ swallows the human's work. Three concrete cases, in ascending order of how badly
   more code than the allowlist (stale detection, PID liveness, timeout, cleanup on abort).
   **Deferred** — see §6.
 - *Require a clean tree, fail loudly.* Makes an unattended loop fragile: one stray edit anywhere in
-  the vault halts ingestion indefinitely and silently.
+  the vault halts ingestion indefinitely — and "loudly" fails into a log nobody is watching in real
+  time on an unattended run, so in practice it is silent to Tucker unless something else pages him.
 
 ### 2.5 Commit mechanics
 
@@ -144,20 +158,37 @@ swallows the human's work. Three concrete cases, in ascending order of how badly
   `file-notes`.
 - **Near-miss rationale is a new output of the split+label step.** For every thought parked under
   `needs-label`, the labelling subagent must emit the nearest active labels it considered and why
-  each missed. This is the one genuinely new semantic requirement in this design; without it the
-  Parked section degrades to a list of titles and the vocabulary-pressure signal is lost.
+  each missed, writing it as a new `near_miss` array on that item's entry in `proposals.json`.
+  Drain step 6 reads the field unchanged when composing `entry.md` — no minimum or maximum count,
+  every label seriously weighed goes in, and an item with none renders "No active label was within
+  consideration" rather than an empty body. This is the one genuinely new semantic requirement in
+  this design; without it the Parked section degrades to a list of titles and the
+  vocabulary-pressure signal is lost.
 - **Abort ⇒ no commit.** `file-notes` exits 1 on empty body or md5 mismatch; the flow stops and
   never reaches the commit step. A broken run stays visible in the working copy rather than being
   buried in history.
-- **No-op ⇒ no commit, no run directory, no changelog entry.** One guard, so an empty run does not
-  produce an empty commit.
-- **Message:** `ingest(<mode>): <run-id> — N notes, M days, P parked`.
+- **`commit-run` failure ⇒ rollback, not orphan.** `commit-run` does two things in order: prepend
+  `entry.md` to `CHANGELOG.md`, then `jj commit [FILESETS]`. If the `jj commit` invocation fails
+  after the prepend has already landed, `commit-run` reverts the `CHANGELOG.md` prepend before
+  exiting non-zero. The run's own artifacts (`entry.md`, `report.json`, the run directory) stay
+  uncommitted and visible in the working copy — the same "stays visible rather than buried"
+  treatment as the `file-notes` abort case above — but `CHANGELOG.md` is never left holding an
+  entry for a run that was never finalized, preserving §2.6's "each entry is one commit" guarantee.
+- **No-op ⇒ no commit, no run directory, no changelog entry.** One guard, living in `commit-run`
+  itself — it checks whether the touched-path set is empty before doing anything — so an empty run
+  does not produce an empty commit.
+- **Message:** `ingest(<mode>): <run-id> — N notes, M days, P parked`. `N`, `M`, `P` are defined in
+  §2.6 against the changelog's own category names.
 - **No change-id capture.** An earlier draft captured `@`'s change-id before committing to embed it
   in the changelog. Dropped: the run-id already appears in both the commit message and the changelog
   entry, so it *is* the join key. Finding the commit is
   `jj log -r 'description(glob:"*<run-id>*")'`.
 - **Ordering:** the commit is a new drain step 6, strictly after `file-notes` verification, markers,
-  watermarks, and staging moves.
+  watermarks, and staging moves — and, for interactive runs, strictly after the propose-confirm
+  gate resolves. `entry.md` is rendered from the gate's final, human-approved proposal set, never
+  from the labelling subagent's pre-gate output, so its content and the commit message's counts
+  always match what `file-notes` actually wrote. Silent runs have no gate, so rendering follows
+  immediately after staging moves as the ordering above already states.
 
 ### 2.6 CHANGELOG.md — vault root, append-only, newest first
 
@@ -170,8 +201,10 @@ automatically, keeping the file truthful about history with no extra bookkeeping
 
 A *derived* changelog (regenerated from run logs) was considered as insurance against sync
 conflicts on an append-hot file. `.stignore` shows Syncthing is not yet set up ("for later Phase
-3"), so the risk is deferred. `run.json` will carry the same data structured, so regeneration stays
-possible later. **The regeneration script is not built now.**
+3"), so the risk is deferred. Between them, `run.json`'s counts and `proposals.json`'s per-item
+titles, labels, and near-miss rationale (§2.5) carry the structured content a regeneration script
+would need — though not `entry.md`'s exact prose framing, which is model-authored and would not
+reproduce identically. **The regeneration script is not built now.**
 
 **Format:**
 
@@ -200,6 +233,16 @@ To undo a run: `jj log -r 'description(glob:"*<run-id>*")'`, then `jj abandon <c
 4 thoughts stayed in their day-files as narrative.
 ```
 
+**Category rendering rules:**
+- **Filed** and **Parked** are itemized (title, labels or near-miss rationale, source day-file)
+  whenever their count is nonzero; the subsection is omitted entirely when the count is zero.
+- **Diary-only** gets a single summary sentence, never itemized by day-file, when nonzero; omitted
+  when zero.
+- **Skipped** gets a single summary sentence (e.g. "1 skipped — already filed.") when nonzero,
+  never itemized; omitted when zero.
+- `N`, `M`, `P` in the §2.5 commit message map onto these categories: `N` = filed count, `M` =
+  distinct day-files touched by the run (whether filed, parked, or diary-only), `P` = parked count.
+
 The header line is the scannable layer — fifty runs' headers read in seconds, with only unusual
 counts worth opening.
 
@@ -214,6 +257,12 @@ Commit + changelog entry apply to **every** ingest run, interactive included. Th
 identical, and interactive runs leaving their work uncommitted is exactly how the 257-file backlog
 accumulated — five runs with no boundary between them.
 
+This is also a cost worth naming: interactive runs become permanent too. There is no more scratch
+invocation without leaving a durable commit and changelog entry behind — undoing one needs `jj
+abandon` plus a matching changelog edit, and §5 notes the rebase risk if the run being abandoned
+isn't head. Accepted as the tradeoff for closing the exact gap that produced the 257-file backlog;
+no dry-run or scratch mode is added.
+
 ### 2.8 `digest.md` is collapsed into the changelog
 
 **Flagged: decided during spec-writing, not in the design conversation — Tucker may veto.**
@@ -222,12 +271,12 @@ The 2026-07-06 amendment requires every silent run to end with a digest surfaced
 persisted to `_machine/logs/ingest/<run>/digest.md`. The changelog entry is that digest, in a file
 Tucker actually reads, with the same content. The objection is not that two files sharing content
 can drift — `entry.md` (§2.5) is written once and never updated, exactly like `digest.md` would be,
-so neither is more drift-prone than the other. The objection is duplicated *user-facing records of
-record*: `digest.md`, like the changelog entry, is meant to be a persisted thing Tucker reads back
-later. `entry.md` is not that — it is a transient rendering handoff, consumed once by `commit-run`
-and never read directly; the CHANGELOG entry it produces is the only surviving user-facing record.
-Keeping `digest.md` alongside the changelog entry means keeping two things Tucker is meant to read
-as the record of the run, in a machine-space file (per §1) he does not read habitually.
+so neither is more drift-prone than the other. The objection is that `digest.md` is redundant once
+the changelog exists: per §1, it is a machine-space file Tucker does not read habitually, so it was
+never the user-facing record of the run — and an unread machine-space artifact serves no purpose
+duplicating one that now exists. `entry.md` is a different thing: a rendering handoff that is
+committed alongside the entry it produces, but never surfaced or read back on its own; the
+CHANGELOG entry is the only user-facing record that survives.
 
 `digest.md` is dropped. The mandatory-digest requirement is **preserved and satisfied** by the
 changelog entry: still surfaced to the user at run end, still persisted, still inside the run's
@@ -248,9 +297,9 @@ commit. `run.json` retains the structured counts.
 
 | File | Change |
 |---|---|
-| `plugins/vault/skills/ingest/scripts/commit-run` | **new** — scoped `jj commit` from the `file-notes` report; prepends the model-rendered `entry.md` to `CHANGELOG.md` |
-| `plugins/vault/skills/ingest/scripts/tests/test-commit-run.sh` | **new** — scoping (unrelated dirt survives), no-op guard, abort path, changelog prepend |
-| `plugins/vault/skills/ingest/SKILL.md` | drain step 6; split+label emits near-miss rationale for parked thoughts; §Silent mode (digest → changelog — **pending §2.8's veto; reverts to digest.md if vetoed**); §Invariants; `--today` loop guidance; run-log schema (drop `labels_registered_this_run`) |
+| `plugins/vault/skills/ingest/scripts/commit-run` | **new** — scoped `jj commit` from the `file-notes` report; prepends the model-rendered `entry.md` to `CHANGELOG.md`; on `jj commit` failure, reverts the prepend and exits non-zero (§2.5) |
+| `plugins/vault/skills/ingest/scripts/tests/test-commit-run.sh` | **new** — scoping (unrelated dirt survives, run-log fileset enumerated by name not globbed), no-op guard (owned by `commit-run`), abort path, `jj commit`-failure rollback (prepend reverted, no orphan entry), changelog prepend |
+| `plugins/vault/skills/ingest/SKILL.md` | drain step 6, ordered after the interactive gate; split+label emits near-miss rationale for parked thoughts (new `near_miss` array in `proposals.json`); §Silent mode (digest → changelog — **pending §2.8's veto; reverts to digest.md if vetoed**); §Invariants (add: "every successful run produces exactly one commit — no run partially commits," per §2.5's `commit-run` failure contract); `--today` loop guidance (`--silent --today` is a validation error); run-log schema (drop `labels_registered_this_run`; add per-category counts to `run.json`) |
 | `plugins/vault/skills/vault/assets/CLAUDE.md` | document `CHANGELOG.md` in the layout section |
 | `plugins/vault/skills/vault/assets/CHANGELOG.md` | **new** — seed stamped by `vault create` |
 | `plugins/vault/skills/vault/SKILL.md` | seed the changelog on `vault create` |
@@ -262,9 +311,11 @@ commit. `run.json` retains the structured counts.
 - **Path-scoped commits mean anything ingest does not touch stays uncommitted indefinitely.** By
   design — it is Tucker's work to commit — but the 257-file backlog will not self-resolve, and
   neither will the 35 journal squatters already tracked in BACKLOG.
-- **Prerequisite:** commit the 257-file backlog manually before enabling the loop. Nothing breaks
-  otherwise; it migrates to the new working copy and stays uncommitted. But running a
-  per-run-commit system atop a six-week uncommitted blob defeats the point.
+- **Accepted risk, not enforced:** the 257-file backlog should be committed manually before
+  enabling the loop — running a per-run-commit system atop a six-week uncommitted blob dilutes the
+  feature's benefit, though nothing breaks if it isn't done; it just migrates to the new working
+  copy and stays uncommitted. No startup check enforces this; catching it is handed to §6's
+  deferred loop-scheduling work, alongside the loop's other unbuilt guarantees.
 - **Abandoning a non-head run** rebases later runs, whose changelog hunks all target the top of the
   file — the likeliest conflict site. Low risk given §2.1's corrective path almost always abandons
   the most recent run.
@@ -276,10 +327,14 @@ commit. `run.json` retains the structured counts.
 
 ## 6. Deferred
 
-- **Lockfile for cross-skill mutual exclusion.** Real but low-severity (worst case a duplicate note,
-  which the synthesizer already nets). Free mitigation first: schedule the loop off-hours. If
-  collisions actually occur, it belongs in `Vault/CLAUDE.md` as a vault-wide rule for all writers,
-  not bolted into ingest.
+- **Lockfile for mutual exclusion — cross-skill and same-skill self-overlap.** Real but
+  low-severity (worst case a duplicate note, which the synthesizer already nets). Covers both a
+  concurrent human/synthesizer write and a scheduled invocation firing while a prior `/ingest
+  --silent` is still running (a hung or overlong run). Free mitigation first: schedule the loop
+  off-hours, and the scheduler must guarantee non-overlapping invocations (a `flock` around the
+  whole `/ingest --silent` call is sufficient) — self-overlap is a scheduling responsibility, not a
+  mechanism this spec builds. If collisions actually occur, a lockfile belongs in `Vault/CLAUDE.md`
+  as a vault-wide rule for all writers, not bolted into ingest.
 - **CHANGELOG regeneration script.** Until Syncthing exists.
 - **Stabler dedup key** enabling today-inclusive silent runs.
 - **The loop itself.** This spec makes ingest loop-*safe*; scheduling is a separate, trivial step
