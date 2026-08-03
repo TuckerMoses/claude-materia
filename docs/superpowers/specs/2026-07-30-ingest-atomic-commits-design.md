@@ -196,8 +196,9 @@ swallows the human's work. Three concrete cases, in ascending order of how badly
 - **`commit-run` failure ⇒ rollback, not orphan.** `commit-run` does two things in order: prepend
   `entry.md` to `CHANGELOG.md`, then `jj commit [FILESETS]`. If the `jj commit` invocation fails
   and returns control to `commit-run` — a non-zero exit, not a crash — `commit-run` reverts the
-  `CHANGELOG.md` prepend before exiting non-zero. The run's own artifacts (`entry.md`,
-  `report.json`, the run directory) and the whole touched-path set — filed notes, `ingested`
+  `CHANGELOG.md` prepend before exiting non-zero. The run's own artifacts (the run-log sublist per
+  §2.4: `run.json`, `proposals.json`, `entry.md`, `report.json`, plus `confirmed-manifest.json` on
+  interactive runs) and the whole touched-path set — filed notes, `ingested`
   markers, watermark advances, and staging moves — stay uncommitted and visible in the working
   copy — the same "stays visible rather than buried" treatment as the
   `file-notes` abort case above — and `CHANGELOG.md` is never left holding an entry for a run that
@@ -346,7 +347,7 @@ against the full text of the changed subsection, not only the row that already c
 | File | Change |
 |---|---|
 | `plugins/vault/skills/ingest/scripts/commit-run` | **new** — scoped `jj commit` from the fileset it assembles per §2.4 (the `file-notes` report's touched-path set, the mode-conditional run-log sublist, and `CHANGELOG.md`); prepends the model-rendered `entry.md` to `CHANGELOG.md`; composes the commit message per §2.5's `ingest(<mode>): <run-id> — N notes, M days, P parked` format using §2.6's N/M/P counts; on `jj commit` failure, reverts the prepend and exits non-zero (§2.5) |
-| `plugins/vault/skills/ingest/scripts/tests/test-commit-run.sh` | **new** — scoping (unrelated dirt survives, run-log sublist enumerated by name not globbed), run-log sublist construction per mode (interactive list includes `confirmed-manifest.json`, silent list omits it), commit message format (`N`/`M`/`P` counts per §2.5/§2.6), no-op guard (owned by `commit-run`), abort path, `jj commit`-failure rollback (prepend reverted, no orphan entry), changelog prepend |
+| `plugins/vault/skills/ingest/scripts/tests/test-commit-run.sh` | **new** — scoping (unrelated dirt survives, run-log sublist enumerated by name not globbed), run-log sublist construction per mode (interactive list includes `confirmed-manifest.json`, silent list omits it), commit message format (`N`/`M`/`P` counts per §2.5/§2.6), no-op guard (owned by `commit-run`), abort path, `jj commit`-failure rollback (prepend reverted, no orphan entry, touched-path set — markers/watermarks/moves — left in place and uncommitted), changelog prepend |
 | `plugins/vault/skills/ingest/SKILL.md` | drain step 6 (after `file-notes` verification/markers/watermarks/staging moves; additionally after the propose-confirm gate resolves when one runs, rendering `entry.md` from the gate's final approved set rather than the pre-gate proposal set); split+label emits near-miss rationale for parked thoughts (new `near_miss` array of `{label, reason}` objects in `proposals.json`); drain step 6 additionally composes a one-sentence model-composed synthesis closing every itemized Parked entry, including the zero-`near_miss` case (§2.5); `entry.md` composition follows §2.6's category rendering rules (itemize/summarize/omit per category, `N`/`M`/`P` formula); §Silent mode (digest → changelog — **pending §2.8's veto; reverts to digest.md if vetoed**); §Invariants (add: "every successful run that touches at least one path (§2.4's touched-path set) produces exactly one commit; a run that touches at least one path produces zero commits if either `file-notes` aborts before the commit step is reached or a subsequently-invoked `commit-run` fails — in the latter case the `CHANGELOG.md` prepend is rolled back, per §2.5; a no-op run (nothing touched) produces none," per §2.5's abort, `commit-run`-failure, and no-op-guard contracts); `--today` loop guidance (`--silent --today` is a validation error); run-log schema (drop `labels_registered_this_run`; add per-category counts to `run.json`) |
 | `plugins/vault/skills/vault/assets/CLAUDE.md` | document `CHANGELOG.md` in the layout section |
 | `plugins/vault/skills/vault/assets/CHANGELOG.md` | **new** — seed stamped by `vault create` |
@@ -397,11 +398,12 @@ against the full text of the changed subsection, not only the row that already c
   (§2.5's `commit-run`-failure bullet), so the `ingested: true` marker persists. §2.3's eligibility
   test reads that marker off the literal file on disk — §3 states there is no other state file —
   so every subsequent invocation, silent or interactive, skips the day-file permanently; re-scan
-  does not reach it. The remedy for this path is manual and specific, not a re-run: Tucker must
-  manually complete the interrupted commit on the residual working-copy state — the filed notes,
-  the persisted markers/watermarks/moves, and the run's own artifacts are all still present,
-  uncommitted, in the working copy — and manually re-add the `CHANGELOG.md` entry that
-  `commit-run` reverted. No detection or new mechanism is added — this is the same
+  does not reach it. The remedy for this path is manual and specific, not a re-run of ingest: Tucker
+  re-invokes `commit-run` itself — `commit-run <vault> <report.json> <entry.md> <run-id> <mode>`
+  (§2.5) — over the residual working-copy state, supplying the run-log sublist's still-present,
+  uncommitted `report.json` and `entry.md` (§2.4). The script's own prepend-then-commit sequence
+  (§2.5) re-adds the reverted `CHANGELOG.md` entry and then commits, so the order is the script's
+  to enforce, not the reader's to get right. No detection or new mechanism is added — this is the same
   accepted-residual-risk treatment already given to a process kill between `commit-run`'s two
   writes, immediately below, and to no-op accumulation, two bullets down: low-probability,
   self-limiting, hand-corrected, but for `commit-run` failure specifically the hand-correction is
