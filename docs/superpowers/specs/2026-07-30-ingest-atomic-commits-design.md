@@ -398,12 +398,16 @@ against the full text of the changed subsection, not only the row that already c
   (§2.5's `commit-run`-failure bullet), so the `ingested: true` marker persists. §2.3's eligibility
   test reads that marker off the literal file on disk — §3 states there is no other state file —
   so every subsequent invocation, silent or interactive, skips the day-file permanently; re-scan
-  does not reach it. The remedy for this path is manual and specific, not a re-run of ingest: Tucker
-  re-invokes `commit-run` itself — `commit-run <vault> <report.json> <entry.md> <run-id> <mode>`
-  (§2.5) — over the residual working-copy state, supplying the run-log sublist's still-present,
-  uncommitted `report.json` and `entry.md` (§2.4). The script's own prepend-then-commit sequence
-  (§2.5) re-adds the reverted `CHANGELOG.md` entry and then commits, so the order is the script's
-  to enforce, not the reader's to get right. No detection or new mechanism is added — this is the same
+  does not reach it. The remedy for this path is manual and specific, not a re-run of ingest:
+  Tucker re-invokes `commit-run` itself — `commit-run <vault> <report.json> <entry.md> <run-id>
+  <mode>` (§2.5) — over the residual working-copy state, supplying the run-log sublist's
+  still-present, uncommitted `report.json` and `entry.md` (§2.4), the same run-id the failed run
+  used — the run-log directory's name under `_machine/logs/ingest/`, not a fresh one, since it is
+  the join key to the `entry.md` already rendered into it (§2.5) — and the mode that run used
+  (interactive if `confirmed-manifest.json` is in that directory, silent if not). The script's own
+  prepend-then-commit sequence (§2.5) re-adds the reverted `CHANGELOG.md` entry and then commits,
+  so the order is the script's to enforce, not the reader's to get right. No detection or new
+  mechanism is added — this is the same
   accepted-residual-risk treatment already given to a process kill between `commit-run`'s two
   writes, immediately below, and to no-op accumulation, two bullets down: low-probability,
   self-limiting, hand-corrected, but for `commit-run` failure specifically the hand-correction is
