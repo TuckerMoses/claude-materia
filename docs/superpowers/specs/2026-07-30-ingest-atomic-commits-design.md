@@ -54,7 +54,8 @@ vocabulary… **all** post-bootstrap topical vocabulary growth happens here"), a
 **`labels_registered_this_run` in `run.json` is drift.** The field appears nowhere in the skill.
 `run.json`'s actual field set is `ts`, `marked`, `jj_change_id_at_drain_start` (already reserved
 per §2.1), and — new under this design — the run's structured filed/parked/diary-only/skipped
-counts (§2.8). It was improvised during the 2026-07-25 run to record a label *Tucker* minted
+counts and its distinct day-files-touched count (§2.8; §2.6's `M`). It was improvised during the
+2026-07-25 run to record a label *Tucker* minted
 in conversation at the gate. Human minting mid-gate is sanctioned; the ad-hoc field is not. It is
 removed from the run-log schema.
 
@@ -103,15 +104,15 @@ working copy.
 **The path list is not inferred — `file-notes` already emits it.** Its report carries `written`
 (notes filed to `notes/`), `marked` (day-files receiving `ingested: true` — see the denylist
 rejection's worked case below), `advanced` (watermarks advanced), and `moved` (staging moves): the vault paths it
-just touched, produced by the code that touched them. Call this the **touched-path set** — the
-only one of this paragraph's three named collections that can be empty, and what §2.5's no-op
-guard evaluates. Add the run-log directory's
+just touched, produced by the code that touched them. Call this the **touched-path set** — what
+§2.5's no-op guard evaluates. Add the run-log directory's
 own files, enumerated by name rather than as a directory-glob fileset — `run.json`,
 `proposals.json`, `entry.md`, `report.json`, plus `confirmed-manifest.json` on interactive runs
 only (the propose-confirm gate produces it; silent runs never do) — call this the **run-log
 sublist**: always non-empty, and what the four/five conditional below applies to. The touched-path
-set, the run-log sublist, and `CHANGELOG.md` together make the **commit fileset** — always
-non-empty, the complete thing `jj commit` finalizes. Because `confirmed-manifest.json` does not
+set, any `skipped` paths (below), and the run-log sublist together make the **commit fileset** —
+always non-empty (the run-log sublist never is), the complete thing `jj commit` finalizes; the
+touched-path set and `skipped` are the two members that can be empty. Because `confirmed-manifest.json` does not
 exist on a silent run, `commit-run` builds the run-log sublist conditionally on the run's mode
 (four names for silent, five for interactive) rather than passing a static five-name list and
 relying on `jj commit` tolerating a named path absent from the working copy — that tolerance is
@@ -174,9 +175,11 @@ swallows the human's work. Three concrete cases, in ascending order of how badly
   `file-notes` report (paths only) or can be derived mechanically. So the model writes the rendered
   entry to `_machine/logs/ingest/<run>/entry.md`; `commit-run` uses that file **verbatim as the
   commit description's body** — first line the Message format below, then a blank line, then
-  `entry.md` unchanged. Entry and run are one atomic write: there is no second file write to fail,
-  orphan, or revert. After a successful commit, `commit-run` regenerates the derived
-  `CHANGELOG.md` (§2.6) from `jj log`; regeneration writes the whole file including its header, so
+  `entry.md` unchanged. Entry and run are one atomic write: there is no second write *inside the
+  commit* to orphan or revert. After a successful commit, `commit-run` regenerates the derived
+  `CHANGELOG.md` (§2.6) from `jj log` — an idempotent render, so a failed or interrupted
+  regeneration costs staleness until the next render, never a wrong record. Regeneration writes
+  the whole file including its header, so
   an absent file — true of any vault created before this design, including `~/Vault` itself — is
   created on the first successful run with no special case. Model renders, script files — the same
   division as proposals vs. `file-notes`.
@@ -215,7 +218,8 @@ swallows the human's work. Three concrete cases, in ascending order of how badly
   markers reverted, those day-files are eligible again under §2.3's test, so the next scheduled or
   manual run simply re-drains them; §3's provenance + verbatim-body idempotency skips the notes
   the failed run already filed, and the failure self-heals the same way the abort path does (§5) —
-  no manual remedy exists or is needed. The run's own artifacts (the run-log sublist per §2.4) and
+  no manual remedy is needed to recover the day-files (§5 states the one custodial residual, on
+  source watermarks). The run's own artifacts (the run-log sublist per §2.4) and
   its filed notes, watermark advances, and staging moves stay uncommitted and visible in the
   working copy — the same "stays visible rather than buried" treatment as the `file-notes` abort
   case above. The entry itself needs no rollback: it was only ever the description of a commit
@@ -232,14 +236,16 @@ swallows the human's work. Three concrete cases, in ascending order of how badly
   paths are folded into the commit fileset per §2.4 — those would otherwise make
   the check vacuous — so an empty run does not produce an empty commit, and no regeneration of
   the derived `CHANGELOG.md` occurs (nothing changed). The run directory's own
-  files (`entry.md`, `report.json`) are
+  files (`entry.md`, `report.json`, `run.json`, `proposals.json`) are
   written to disk by earlier drain steps before `commit-run` is ever invoked, so the guard cannot
   retroactively prevent the directory's existence — it stops the commit and the changelog entry,
   not the directory. See §5 for the accumulation this leaves behind.
 - **Message:** `ingest(<mode>): <run-id> — N notes, M days, P parked`. `N`, `M`, `P` are defined in
-  §2.6 against the changelog's own category names. `commit-run` reads `N` and `P` from `run.json`'s
-  structured counts (§2.2) at `<vault>/_machine/logs/ingest/<run-id>/run.json` and derives `M` as
-  `|marked|` from `report.json`; it never parses them out of `entry.md`, whose framing is
+  §2.6 against the changelog's own category names. `commit-run` reads `N`, `M`, and `P` from
+  `run.json`'s structured counts (§2.2) at `<vault>/_machine/logs/ingest/<run-id>/run.json` — `M`
+  cannot be derived as `|marked|` from `report.json`, because a `--today` run touches the open
+  day-file, which contributes filed and parked items but structurally cannot be marked (§2.3); it
+  never parses them out of `entry.md`, whose framing is
   model-authored (this section's rendering split) and whose phrasing therefore cannot be a parse
   target. `run.json` is accordingly written by an earlier drain step, before step 6 invokes
   `commit-run`.
@@ -272,7 +278,9 @@ write that already had to happen.
 **`CHANGELOG.md` is a derived render** of `jj log`: the `ingest(` commits' description bodies,
 newest first, under the header below, with the `---` separators emitted by the renderer — the
 model never writes one, so the seam has exactly one owner. The file is **VCS-ignored**
-(`.gitignore`, which jj honors; mirrored in `.stignore` — each machine renders its own): it never
+(`.gitignore`, which jj honors; mirrored in `.stignore` — each machine renders its own from its
+local jj history, with §5's `.stignore` bullet carrying the caveat that a synced machine lacking
+`.jj/` has no history to render from): it never
 enters a commit fileset, never rebases, never conflicts. `commit-run` regenerates it after every
 successful commit, and `commit-run --regen <vault>` refreshes it on demand — the case that wants
 that is right after a manual `jj abandon`, when the file is stale until the next successful run.
@@ -293,7 +301,7 @@ every successful run keeping the render fresh.
 
 Ingest run history, newest first. Each entry is one commit.
 To undo a run: `jj log -r 'description(glob:"*<run-id>*")'`, then `jj abandon <change-id>`,
-then `commit-run --regen` to refresh this file (or wait for the next run).
+then `commit-run --regen <vault>` to refresh this file (or wait for the next run).
 
 ---
 
@@ -361,9 +369,10 @@ so neither is more drift-prone than the other. The objection is that `digest.md`
 the changelog exists: per §1, it is a machine-space file Tucker does not read habitually, so it was
 never the user-facing record of the run — and an unread machine-space artifact serves no purpose
 duplicating one that now exists. `entry.md` is a different thing: a rendering handoff
-committed among the run's artifacts whose content becomes the run's commit description (§2.5),
-never surfaced or read back on its own; the changelog entry — the description, rendered into the
-derived `CHANGELOG.md` — is the only user-facing record that survives.
+committed among the run's artifacts whose content becomes the run's commit description (§2.5).
+The run-end surfacing reads the composed entry itself — the model shows it as it finishes, on
+every path including ones that never reach a commit; the description, rendered into the derived
+`CHANGELOG.md`, is the record that *persists*.
 
 `digest.md` is dropped. The mandatory-digest requirement is **preserved and satisfied** by the
 changelog entry: still surfaced to the user at run end, still persisted — as the run's commit
@@ -384,15 +393,15 @@ retains the structured counts.
 
 ## 4. Implementation surface
 
-This table is derived from §2; any change to a §2 decision requires re-checking all three rows
+This table is derived from §2; any change to a §2 decision requires re-checking all rows
 against the full text of the changed subsection, not only the row that already cites it by number.
 
 | File | Change |
 |---|---|
-| `plugins/vault/skills/ingest/scripts/commit-run` | **new** — scoped `jj commit` from the fileset it assembles per §2.4 (the `file-notes` report's touched-path set, its `skipped` paths, and the mode-conditional run-log sublist; never `CHANGELOG.md`); commit description = §2.5's `ingest(<mode>): <run-id> — N notes, M days, P parked` subject line (reading `N`/`P` from `run.json`'s structured counts, deriving `M` from `report.json`'s `marked`) + blank line + `entry.md` verbatim (§2.5); regenerates the derived `CHANGELOG.md` from `jj log` after every successful commit, creating it when absent; `--regen` mode for on-demand refresh (§2.6); on `jj commit` failure, reverts the `ingested: true` markers from `report.json`'s `marked` list and exits non-zero (§2.5) |
+| `plugins/vault/skills/ingest/scripts/commit-run` | **new** — scoped `jj commit` from the fileset it assembles per §2.4 (the `file-notes` report's touched-path set, its `skipped` paths, and the mode-conditional run-log sublist; never `CHANGELOG.md`); commit description = §2.5's `ingest(<mode>): <run-id> — N notes, M days, P parked` subject line (reading `N`/`M`/`P` from `run.json`'s structured counts, §2.5) + blank line + `entry.md` verbatim (§2.5); regenerates the derived `CHANGELOG.md` from `jj log` after every successful commit, creating it when absent; `--regen` mode for on-demand refresh (§2.6); on `jj commit` failure, reverts the `ingested: true` markers from `report.json`'s `marked` list and exits non-zero (§2.5) |
 | `plugins/vault/skills/ingest/scripts/tests/test-commit-run.sh` | **new** — scoping (unrelated dirt survives, run-log sublist enumerated by name not globbed, `CHANGELOG.md` in no fileset), description carriage (subject format with `N`/`M`/`P` sourced per §2.5; body = `entry.md` verbatim), run-log sublist construction per mode (interactive list includes `confirmed-manifest.json`, silent list omits it), regeneration (fresh vault with no `CHANGELOG.md`; abandoned run vanishes on `--regen`; renderer owns the `---` separators), no-op guard (owned by `commit-run`; skipped paths alone do not commit; no regen on a no-op), abort path, `jj commit`-failure rollback (`marked` day-files unmarked, filed notes/watermarks/moves left in place and uncommitted, changelog untouched), recovery sweep (post-rollback re-run commits the prior attempt's notes via skipped paths) |
 | `plugins/vault/skills/ingest/scripts/file-notes` | report `skipped` as vault paths (today it reports titles) — skipped paths join the commit fileset for §2.5's failure-recovery sweep |
-| `plugins/vault/skills/ingest/SKILL.md` | drain step 6 (after `file-notes` verification/markers/watermarks/staging moves; additionally after the propose-confirm gate resolves when one runs, rendering `entry.md` from the gate's final approved set rather than the pre-gate proposal set); split+label emits near-miss rationale for parked thoughts (new `near_miss` array of `{label, reason}` objects in `proposals.json`); drain step 6 handles gate-reparked items (no pre-gate `near_miss`) distinctly from the empty-array case, rendering from the proposed label plus the gate's rejection reason (§2.5); drain step 6 additionally composes a one-sentence model-composed synthesis closing every itemized Parked entry, including the zero-`near_miss` case (§2.5); `entry.md` composition follows §2.6's category rendering rules (itemize/summarize/omit per category, `N`/`M`/`P` formula); §Silent mode (digest → changelog — **pending §2.8's veto; reverts to digest.md if vetoed**); §Invariants (add: "every successful run that touches at least one path (§2.4's touched-path set) produces exactly one commit; a run that touches at least one path produces zero commits if either `file-notes` aborts before the commit step is reached or a subsequently-invoked `commit-run` fails — in the latter case the `ingested: true` markers are rolled back, per §2.5; a no-op run (nothing touched) produces none," per §2.5's abort, `commit-run`-failure, and no-op-guard contracts); `--today` loop guidance (`--silent --today` is a validation error); run-log schema (drop `labels_registered_this_run`; add per-category counts to `run.json`) |
+| `plugins/vault/skills/ingest/SKILL.md` | drain step 6 (after `file-notes` verification/markers/watermarks/staging moves; additionally after the propose-confirm gate resolves when one runs, rendering `entry.md` from the gate's final approved set rather than the pre-gate proposal set); split+label emits near-miss rationale for parked thoughts (new `near_miss` array of `{label, reason}` objects in `proposals.json`); drain step 6 handles gate-reparked items (no pre-gate `near_miss`) distinctly from the empty-array case, rendering from the proposed label plus the gate's rejection reason (§2.5); drain step 6 additionally composes a one-sentence model-composed synthesis closing every itemized Parked entry, including the zero-`near_miss` case (§2.5); `entry.md` composition follows §2.6's category rendering rules (itemize/summarize/omit per category, `N`/`M`/`P` formula); §Silent mode (digest → changelog, §2.8); §Invariants (add: "every successful run that touches at least one path (§2.4's touched-path set) produces exactly one commit; a run that touches at least one path produces zero commits if either `file-notes` aborts before the commit step is reached or a subsequently-invoked `commit-run` fails — in the latter case the `ingested: true` markers are rolled back, per §2.5; a no-op run (nothing touched) produces none," per §2.5's abort, `commit-run`-failure, and no-op-guard contracts); `--today` loop guidance (`--silent --today` is a validation error); run-log schema (drop `labels_registered_this_run`; add per-category counts to `run.json`) |
 | `plugins/vault/skills/vault/assets/CLAUDE.md` | document the derived `CHANGELOG.md` in the layout section |
 | `plugins/vault/skills/vault/assets/gitignore` | add `CHANGELOG.md` (derived render, VCS-ignored — §2.6); mirror in `assets/stignore`; apply the same lines to the live `~/Vault/.gitignore` and `.stignore` at rollout |
 | `plugins/vault/skills/vault/SKILL.md` | document the derived changelog in the stamped layout — no seed file; the first successful run's regeneration creates it (§2.5) |
@@ -437,8 +446,8 @@ against the full text of the changed subsection, not only the row that already c
   test selects the day-files again, the next run re-drains them, idempotent filing skips the
   already-filed notes, and the recovery run's commit sweeps those notes in via the skipped paths
   (§2.4). The entry needs no cleanup on either path: it exists only as the description of a
-  successful commit (§2.6). No manual remedy exists for either path; there is nothing to
-  hand-correct.
+  successful commit (§2.6). No manual remedy is needed on either path to recover the day-files;
+  the one custodial residual — source watermarks — is stated below.
 
   Two residuals are accepted on the `commit-run`-failure path. **Source watermarks are not
   reverted:** `report.json`'s `advanced` records which sources moved but not their prior
@@ -452,7 +461,8 @@ against the full text of the changed subsection, not only the row that already c
   accumulates. Revisit with a circuit breaker (refuse to drain when the prior run directory holds
   `entry.md` and `report.json` but `jj log -r 'description(glob:"*<prev-run-id>*")'` matches
   nothing) if repeated-failure noise actually occurs.
-- **No-op runs leave their own directory's files (`entry.md`, `report.json`) uncommitted on disk.**
+- **No-op runs leave their own directory's files (`entry.md`, `report.json`, `run.json`,
+  `proposals.json`) uncommitted on disk.**
   The no-op guard (§2.5) stops the commit and the changelog entry, but those files are written by
   earlier drain steps before the guard runs and are not retroactively removed. Because a no-op is
   the loop's most common outcome — most cadence firings find no closed, un-`ingested` day-file —
