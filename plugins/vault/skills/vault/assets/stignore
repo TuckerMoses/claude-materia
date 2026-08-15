@@ -2,3 +2,6 @@
 // Archive is cold storage — excluded from sync. .jj internal state is not synced.
 _archive/
 .jj/
+
+// CHANGELOG.md is derived per-machine from local jj history — not synced.
+CHANGELOG.md

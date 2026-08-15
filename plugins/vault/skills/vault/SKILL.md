@@ -98,6 +98,9 @@ the spec; this phase only stamps them (plus the locked vocabulary). Steps:
 1. Create the vault directory; `jj init` (jj honors `.gitignore`).
 2. Stamp ignore files: `assets/gitignore → .gitignore`, `assets/jjignore → .jjignore`,
    `assets/stignore → .stignore` (rename — add the leading dot).
+   (The stamped `.gitignore`/`.stignore` exclude `CHANGELOG.md` — the derived run-history
+   render at the vault root. No seed file is stamped; the file first appears when the vault's
+   first ingest run commits and renders it.)
 3. Stamp `assets/obsidian/ → .obsidian/` (includes `daily-notes.json` — configures the daily-notes
    plugin: `"folder": "journal"`, `"format": "YYYY-MM-DD"`, `"autorun": false` — the "open daily note
    on startup" toggle; suppresses empty root-note creation on app launch).

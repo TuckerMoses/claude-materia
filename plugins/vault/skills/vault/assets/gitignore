@@ -6,3 +6,6 @@ _archive/
 .obsidian/cache/
 .obsidian/community-plugins.json
 .obsidian/plugins/
+
+# CHANGELOG.md is a derived render of jj log (ingest commit descriptions) — never committed.
+CHANGELOG.md
