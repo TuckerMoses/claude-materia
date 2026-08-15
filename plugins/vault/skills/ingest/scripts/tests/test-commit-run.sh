@@ -94,4 +94,24 @@ assert_eq "recovery run exits 0" "0" "$RC6"
 FILES6=$(cd "$V6" && jj diff -r @- --stat)
 assert_contains "recovery sweep commits the previously-filed note" "notes/t.md" "$FILES6"
 
+# --- regen: two runs, abandon the first, --regen drops it; file created from nothing ---
+V7=$(jj_vault); mk_run "$V7" 2026-01-09-1 silent
+python3 "$SCRIPT" "$V7" "$V7/_machine/logs/ingest/2026-01-09-1/report.json" \
+  "$V7/_machine/logs/ingest/2026-01-09-1/entry.md" 2026-01-09-1 silent >/dev/null 2>&1
+printf -- '---\ntitle: "U"\n---\nsecond body\n' > "$V7/notes/u.md"
+RD7="$V7/_machine/logs/ingest/2026-01-09-2"; mkdir -p "$RD7"
+printf '{"run": "2026-01-09-2", "ts": 2, "filed": 1, "day_files": 0, "parked": 0, "diary_only": 0, "skipped": 0, "marked": []}\n' > "$RD7/run.json"
+printf '[]\n' > "$RD7/proposals.json"
+printf '## 2026-01-09-2 · silent\n**1 filed**\n' > "$RD7/entry.md"
+printf '{"written": ["notes/u.md"], "marked": [], "advanced": [], "moved": [], "skipped": []}\n' > "$RD7/report.json"
+python3 "$SCRIPT" "$V7" "$RD7/report.json" "$RD7/entry.md" 2026-01-09-2 silent >/dev/null 2>&1
+assert_contains "both entries rendered, newest first" "2026-01-09-2" "$(head -12 "$V7/CHANGELOG.md")"
+CID=$(cd "$V7" && jj log --no-graph -r 'description(glob:"*2026-01-09-1*")' -T 'change_id.short()')
+(cd "$V7" && jj abandon "$CID" >/dev/null 2>&1)
+rm "$V7/CHANGELOG.md"                       # prove --regen creates from nothing
+python3 "$SCRIPT" --regen "$V7" >/dev/null 2>&1
+assert_contains "regen recreates file with header" "# Vault Changelog" "$(cat "$V7/CHANGELOG.md")"
+assert_contains "surviving run still rendered" "2026-01-09-2" "$(cat "$V7/CHANGELOG.md")"
+case "$(cat "$V7/CHANGELOG.md")" in *"2026-01-09-1"*) echo "FAIL - abandoned run still rendered"; FAILS=$((FAILS+1));; *) echo "ok - abandoned run vanished from render";; esac
+
 finish
