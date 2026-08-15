@@ -4,7 +4,7 @@
 Usage: file-notes VAULT_PATH MANIFEST_JSON
 Order (hard): write+verify ALL notes -> ingested markers -> last_read advances -> staging moves.
 Aborts (exit 1) before any commit point on: empty body, md5 mismatch after write.
-Idempotency: a note is already-filed iff an existing note has identical `source:` AND identical body.
+Idempotency: a note is already-filed iff an existing note has identical 'source:' AND identical body; skipped/moved are reported as vault-relative paths (commit-fileset contract).
 """
 import hashlib, json, re, shutil, sys
 from pathlib import Path
@@ -56,8 +56,9 @@ def main():
         body = n['body']
         if not body.strip():
             sys.exit(f'ABORT (iron rule): empty body for "{n["title"]}" — nothing committed')
-        if existing_match(notes_dir, n['source'], body):
-            report['skipped'].append(n['title'])
+        m = existing_match(notes_dir, n['source'], body)
+        if m:
+            report['skipped'].append(str(m.relative_to(vault)))
             continue
         before = md5(body.rstrip('\n'))
         dest, i = notes_dir / f'{slugify(n["title"])}.md', 2
@@ -101,7 +102,7 @@ def main():
         while dest.exists():
             dest, i = dest_dir / f'{stem}-{i}{suffix}', i + 1
         shutil.move(str(src), dest)
-        report['moved'].append(str(src))
+        report['moved'].append(str(dest.relative_to(vault)))
 
     print(json.dumps(report, indent=2))
 
