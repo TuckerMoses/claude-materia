@@ -1,0 +1,130 @@
+#!/usr/bin/env python3
+"""Atomic per-run commit + derived CHANGELOG render (spec 2026-07-30 SS2.4-SS2.6).
+
+Usage:
+  commit-run VAULT REPORT_JSON ENTRY_MD RUN_ID MODE    # drain step 6
+  commit-run --regen VAULT                             # re-render CHANGELOG.md only
+
+Contract:
+- Fileset = touched-path set (written+marked+moved, plus _machine/ingest_paths.yml when
+  `advanced` is non-empty) + skipped paths + run-log sublist (run.json, proposals.json,
+  entry.md, report.json, + confirmed-manifest.json iff interactive). CHANGELOG.md never.
+- No-op guard: empty touched-path set -> exit 0, no commit, no regen.
+- Description = "ingest(<mode>): <run-id> - N notes, M days, P parked" + blank + entry.md
+  verbatim; N/M/P read from run.json (filed, day_files, parked) - never parsed from entry.md.
+- Mode must agree with confirmed-manifest.json presence in the run dir (exit 1 otherwise).
+- jj 0.43 tolerates absent fileset paths and can create an EMPTY commit (verified): every
+  fileset path is pre-flighted, and a post-commit empty check abandons + rolls back.
+- Failure after commit points -> remove `ingested: true` from report's `marked` files, exit 1.
+- Success -> regenerate CHANGELOG.md from jj log (newest first; renderer owns separators).
+"""
+import json, re, subprocess, sys
+from pathlib import Path
+
+HEADER = """# Vault Changelog
+
+Ingest run history, newest first. Each entry is one commit.
+To undo a run: `jj log -r 'description(glob:"*<run-id>*")'`, then `jj abandon <change-id>`,
+then `commit-run --regen <vault>` to refresh this file (or wait for the next run).
+"""
+
+SUBLIST = ['run.json', 'proposals.json', 'entry.md', 'report.json']
+
+
+def jj(vault, *args):
+    return subprocess.run(['jj', *args], cwd=vault, capture_output=True, text=True)
+
+
+def regen(vault: Path):
+    r = jj(vault, 'log', '--no-graph', '-r', 'description(glob:"ingest(*")',
+           '-T', 'description ++ "\\0"')
+    if r.returncode != 0:
+        sys.exit(f'regen failed: jj log error\n{r.stderr}')
+    entries = []
+    for desc in r.stdout.split('\0'):
+        if not desc.strip():
+            continue
+        body = desc.split('\n', 1)[1].lstrip('\n') if '\n' in desc else desc
+        entries.append(body.rstrip('\n'))
+    text = HEADER + ''.join(f'\n---\n\n{e}\n' for e in entries)
+    (vault / 'CHANGELOG.md').write_text(text, encoding='utf-8')
+
+
+def unmark(vault: Path, rels):
+    """Remove `ingested: true` from each day-file's frontmatter (rollback, spec SS2.5)."""
+    for rel in rels:
+        p = vault / rel
+        if not p.exists():
+            continue
+        text = p.read_text(encoding='utf-8')
+        if not text.startswith('---\n'):
+            continue
+        end = text.find('\n---\n', 4)
+        if end == -1:
+            continue
+        fm, rest = text[4:end], text[end + 5:]
+        fm2 = re.sub(r'^ingested:\s*true\s*$\n?', '', fm + '\n', flags=re.M).rstrip('\n')
+        p.write_text(rest if not fm2.strip() else f'---\n{fm2}\n---\n{rest}',
+                     encoding='utf-8')
+
+
+def main():
+    if len(sys.argv) == 3 and sys.argv[1] == '--regen':
+        vault = Path(sys.argv[2]).expanduser().resolve()
+        if not (vault / '.jj').is_dir():
+            sys.exit(f'not a jj vault: {vault}')
+        regen(vault)
+        print(f'regenerated {vault / "CHANGELOG.md"}')
+        return
+    if len(sys.argv) != 6:
+        sys.exit('usage: commit-run VAULT REPORT_JSON ENTRY_MD RUN_ID MODE'
+                 '  |  commit-run --regen VAULT')
+    vault = Path(sys.argv[1]).expanduser().resolve()
+    report_path, entry_path = Path(sys.argv[2]), Path(sys.argv[3])
+    run_id, mode = sys.argv[4], sys.argv[5]
+    if mode not in ('interactive', 'silent'):
+        sys.exit(f'mode must be interactive|silent, got: {mode}')
+    run_dir = vault / '_machine' / 'logs' / 'ingest' / run_id
+    has_manifest = (run_dir / 'confirmed-manifest.json').exists()
+    if (mode == 'interactive') != has_manifest:
+        sys.exit(f'mode mismatch: --{mode} but confirmed-manifest.json '
+                 f'{"present" if has_manifest else "absent"} in {run_dir}')
+    report = json.loads(report_path.read_text(encoding='utf-8'))
+    touched = [*report.get('written', []), *report.get('marked', []),
+               *report.get('moved', [])]
+    if report.get('advanced'):
+        touched.append('_machine/ingest_paths.yml')
+    if not touched:
+        print('no-op: nothing touched; no commit, no changelog entry')
+        return  # exit 0 - a no-op is the loop's most common healthy outcome
+    counts = json.loads((run_dir / 'run.json').read_text(encoding='utf-8'))
+    n, m, p = counts['filed'], counts['day_files'], counts['parked']
+    rel_run = run_dir.relative_to(vault)
+    sublist = SUBLIST + (['confirmed-manifest.json'] if mode == 'interactive' else [])
+    fileset = touched + list(report.get('skipped', [])) \
+        + [str(rel_run / name) for name in sublist]
+    missing = [f for f in fileset if not (vault / f).exists()]
+    if missing:  # jj silently tolerates absent paths -> empty commit; refuse instead
+        sys.exit(f'ABORT pre-commit: fileset paths missing on disk: {missing}')
+    subject = f'ingest({mode}): {run_id} — {n} notes, {m} days, {p} parked'
+    message = subject + '\n\n' + entry_path.read_text(encoding='utf-8')
+    r = jj(vault, 'commit', '-m', message, *fileset)
+    ok = r.returncode == 0
+    if ok:
+        e = jj(vault, 'log', '--no-graph', '-r', '@-',
+               '-T', 'if(empty, "EMPTY", "NONEMPTY")')
+        if e.stdout.strip() == 'EMPTY':
+            jj(vault, 'abandon', '@-')
+            ok = False
+            r.stderr += '\ncommit selected no changes (empty commit abandoned)'
+    if not ok:
+        marked = report.get('marked', [])
+        unmark(vault, marked)
+        sys.exit(f'commit-run failed; rolled back ingested markers on '
+                 f'{len(marked)} day-file(s)\n{r.stderr}')
+    regen(vault)
+    print(json.dumps({'committed': True, 'run': run_id, 'files': len(fileset)}))
+
+
+if __name__ == '__main__':
+    main()
