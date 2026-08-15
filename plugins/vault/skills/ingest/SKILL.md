@@ -51,8 +51,11 @@ This skill is portable. It names **no** environment paths in its body. Binding r
 - `/ingest --today` — the drain, plus extract from the open day **without marking** (see
   "Journal drain").
 - `/ingest --silent` — the drain without the gate: applies existing labels and files
-  autonomously, never minting; ends with a mandatory digest. Composes with a scope and
-  `--today`. See "Silent mode".
+  autonomously, never minting; ends with a mandatory digest. Composes with a scope. See
+  "Silent mode".
+- **`--silent --today` together is a validation error** — refuse and exit non-zero before
+  touching the vault: it would read the mutable open day-file into a gate-free unattended flow,
+  the exact duplicate-filing scenario `--today`'s interactive-only restriction exists to prevent.
 - `/ingest status` — read-only health. See "status".
 
 **`help` subcommand:** when invoked as `/ingest help`, summarize this skill and its subcommands
@@ -70,6 +73,10 @@ from the sections below rather than executing them.
    three-way rule (below), label from **active** bank entries only, derive a short searchable
    title, and emit structured proposals with **verbatim bodies**. Subagents return proposals,
    never file dumps.
+   For every thought disposed to `needs-label`, the subagent additionally emits a `near_miss`
+   array on that proposal — `{label, reason}` objects for each active label seriously weighed and
+   why it missed; empty array when nothing was close. This is the changelog's vocabulary-pressure
+   signal (see step 6); without it the Parked section degrades to a list of titles.
 3. **Persist proposals** to `_machine/logs/ingest/<run>/proposals.json` *before* the gate — a
    crash mid-review must not lose the analysis. The run log records the vault's jj change-id at
    drain start (whole-run undo stays a one-liner).
@@ -81,8 +88,30 @@ from the sections below rather than executing them.
 5. **File (scripted).** `scripts/file-notes <vault> <confirmed-manifest.json>`: cross-proposal
    dedup → idempotent writes → md5 verify (abort-on-mismatch) → **then, in order:** `ingested`
    markers → `last_read` advances → destructive staging moves. Emits a written/skipped report;
-   surface it. Then record `run.json` (`ts` = epoch-seconds time of recording, taken after markers
-   land; `marked` day-files) in the run log — `status`'s marked-then-modified net reads it.
+   surface it. Then record `run.json` in the run log — `ts` (epoch-seconds, taken after markers land),
+   `marked` (day-files), `jj_change_id_at_drain_start`, and the run's structured counts:
+   `filed`, `parked`, `diary_only`, `skipped`, and `day_files` (distinct day-files touched,
+   including an open day under `--today`, which never enters `marked`). Step 6's `commit-run`
+   reads `filed`/`day_files`/`parked` for the commit subject line; `status`'s
+   marked-then-modified net reads `ts` and `marked`. Never record ad-hoc fields
+   (`labels_registered_this_run` was drift; a label minted by the human at the gate needs no
+   run-log record — the bank's git history is its record).
+6. **Commit + changelog entry (scripted; every run, silent or interactive).** Render
+   `_machine/logs/ingest/<run>/entry.md` from the gate's **final, human-approved** set (silent:
+   the proposal set as emitted) per the changelog entry format: `## <run-id> · <mode>` heading,
+   bold count line, then Filed / Parked / Diary-only / Skipped subsections (itemize Filed and
+   Parked; one-line summaries for the rest; omit empty categories). Parked items render their
+   `near_miss` list plus one closing sentence of synthesis on why nothing fit. **Gate-reparked
+   items** (a label was proposed; the human parked it instead) have no `near_miss` — render
+   from the proposed label plus the gate's stated rejection reason, never the empty-array
+   fallback. Emit **no `---` separator lines** — the changelog renderer owns those. Then run
+   `scripts/commit-run <vault> <report.json> <entry.md> <run-id> <mode>`: it commits the run's
+   own paths plus the run-log directory as one atomic change whose description carries the
+   entry, and regenerates the derived vault-root `CHANGELOG.md`. Exit 0 with `no-op` means
+   nothing was touched (normal); non-zero means the commit failed and the script already
+   rolled the `ingested:` markers back — the next drain retries, so report it and stop; never
+   hand-repair. Surface the rendered entry to the user at run end on every path, including
+   ones that never reach a commit.
 
 ## Journal drain
 
@@ -137,11 +166,11 @@ What changes, and what doesn't:
   carry their own human gates (session-planner asks before spinning anything up; schedulers
   preview before writing) — over-application is caught at the point of action, never silently
   executed.
-- **Mandatory digest:** every silent run ends with a digest — each note filed (title + labels +
-  source), everything parked under `needs-label`, everything left diary-only, plus the
-  `file-notes` report — surfaced to the user AND persisted to
-  `_machine/logs/ingest/<run>/digest.md`. Silent shifts review from pre-write to post-write; it
-  is never invisible. Whole-run undo stays a one-liner via the run log's jj change-id.
+- **Mandatory digest = the changelog entry.** Every silent run ends with the run's rendered
+  entry (step 6) surfaced to the user AND persisted as the run commit's description, rendered
+  into the vault-root `CHANGELOG.md`. Silent shifts review from pre-write to post-write; it is
+  never invisible. No separate `digest.md` is written (collapsed 2026-08-10). Whole-run undo:
+  `jj log -r 'description(glob:"*<run-id>*")'`, `jj abandon`, then `commit-run --regen`.
 - **Deliberately not extended to the synthesizer:** merges (drafted rewrites) and associative
   links require pre-write human eyes — that skill's gates are the license for its operations,
   not friction.
@@ -161,9 +190,8 @@ What changes, and what doesn't:
 ## Invariants (cross-cutting, hard)
 
 - **Propose-confirm by default** — nothing written before the gate. `--silent` is the one
-  sanctioned exception: gate skipped, mandatory digest surfaced + persisted to
-  `_machine/logs/ingest/<run>/digest.md` (review-after), vocabulary still frozen, writes still
-  scripted and verbatim.
+  sanctioned exception: gate skipped, mandatory digest surfaced + persisted as the run commit's
+  description (review-after), vocabulary still frozen, writes still scripted and verbatim.
 - **Never writes `status`, never writes `handled`** — field ownership per INSTRUCTION.md.
 - **Vocabulary frozen** — active labels or `needs-label`; minting is the synthesizer's.
 - **Label semantics come from the bank, never from note content** — `when_to_apply` in
@@ -183,3 +211,8 @@ What changes, and what doesn't:
   partial state survives a re-run.
 - **Env-agnostic** — binding via `~/.claude/ingest.local.md` → `~/.claude/vault.local.md` →
   loud failure; scripts take the vault path as an argument.
+- **One run, one commit** — every run whose touched-path set is non-empty ends as exactly one
+  path-scoped `jj` commit (via `scripts/commit-run`); a no-op run produces none; a failed
+  commit produces none and rolls back the run's `ingested:` markers. `CHANGELOG.md` is a
+  derived render, never committed, never hand-edited.
+- **`--silent --today` is refused** — validation error before any vault read.
