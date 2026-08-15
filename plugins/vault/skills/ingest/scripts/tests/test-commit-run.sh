@@ -71,4 +71,27 @@ if python3 "$SCRIPT" "$V5" "$V5/_machine/logs/ingest/2026-01-07-1/report.json" \
   echo "FAIL - missing fileset path accepted"; FAILS=$((FAILS+1)); else echo "ok - pre-flight aborts on missing path"; fi
 assert_eq "pre-flight abort creates no commit" "" "$(cd "$V5" && jj log --no-graph -r 'description(glob:"ingest(*")' -T 'description')"
 
+# --- failure injection: hide .jj so jj commit fails -> markers rolled back, no CHANGELOG ---
+V6=$(jj_vault); mk_run "$V6" 2026-01-08-1 silent
+mv "$V6/.jj" "$V6/.jj-hidden"
+if python3 "$SCRIPT" "$V6" "$V6/_machine/logs/ingest/2026-01-08-1/report.json" \
+  "$V6/_machine/logs/ingest/2026-01-08-1/entry.md" 2026-01-08-1 silent >/dev/null 2>&1; then
+  echo "FAIL - commit failure exited 0"; FAILS=$((FAILS+1)); else echo "ok - failure exits non-zero"; fi
+assert_eq "marker rolled back on failure" "0" "$(grep -c '^ingested: true$' "$V6/journal/2026-01-02.md" || true)"
+assert_contains "day text intact after unmark" "day text" "$(cat "$V6/journal/2026-01-02.md")"
+if [ -f "$V6/CHANGELOG.md" ]; then echo "FAIL - CHANGELOG written on failure"; FAILS=$((FAILS+1)); else echo "ok - no CHANGELOG on failure"; fi
+
+# --- recovery sweep: restore repo; re-run marks again and commits prior note via skipped ---
+mv "$V6/.jj-hidden" "$V6/.jj"
+RD6="$V6/_machine/logs/ingest/2026-01-08-2"; mkdir -p "$RD6"
+printf -- '---\ningested: true\n---\nday text\n' > "$V6/journal/2026-01-02.md"   # recovery run re-marks
+cp "$V6/_machine/logs/ingest/2026-01-08-1/run.json" "$RD6/run.json"
+printf '[]\n' > "$RD6/proposals.json"
+printf '## 2026-01-08-2 · silent\n**0 filed** · 1 skipped\n' > "$RD6/entry.md"
+printf '{"written": [], "marked": ["journal/2026-01-02.md"], "advanced": [], "moved": [], "skipped": ["notes/t.md"]}\n' > "$RD6/report.json"
+OUT6=$(python3 "$SCRIPT" "$V6" "$RD6/report.json" "$RD6/entry.md" 2026-01-08-2 silent 2>&1); RC6=$?
+assert_eq "recovery run exits 0" "0" "$RC6"
+FILES6=$(cd "$V6" && jj diff -r @- --stat)
+assert_contains "recovery sweep commits the previously-filed note" "notes/t.md" "$FILES6"
+
 finish
