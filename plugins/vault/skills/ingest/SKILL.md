@@ -88,7 +88,9 @@ from the sections below rather than executing them.
 5. **File (scripted).** `scripts/file-notes <vault> <confirmed-manifest.json>`: cross-proposal
    dedup → idempotent writes → md5 verify (abort-on-mismatch) → **then, in order:** `ingested`
    markers → `last_read` advances → destructive staging moves. Emits a written/skipped report;
-   surface it. Then record `run.json` in the run log — `ts` (epoch-seconds, taken after markers land),
+   surface it. The report is persisted to `_machine/logs/ingest/<run>/report.json` — step 6's
+   `commit-run` reads it from there, and it joins the run-log sublist committed alongside it.
+   Then record `run.json` in the run log — `ts` (epoch-seconds, taken after markers land),
    `marked` (day-files), `jj_change_id_at_drain_start`, and the run's structured counts:
    `filed`, `parked`, `diary_only`, `skipped`, and `day_files` (distinct day-files touched,
    including an open day under `--today`, which never enters `marked`). Step 6's `commit-run`
@@ -101,17 +103,23 @@ from the sections below rather than executing them.
    the proposal set as emitted) per the changelog entry format: `## <run-id> · <mode>` heading,
    bold count line, then Filed / Parked / Diary-only / Skipped subsections (itemize Filed and
    Parked; one-line summaries for the rest; omit empty categories). Parked items render their
-   `near_miss` list plus one closing sentence of synthesis on why nothing fit. **Gate-reparked
+   `near_miss` list plus one closing sentence of synthesis on why nothing fit. Items the
+   subagent itself parked with an empty `near_miss` array (nothing was close) render "No active
+   label was within consideration" plus that required closing synthesis sentence. **Gate-reparked
    items** (a label was proposed; the human parked it instead) have no `near_miss` — render
    from the proposed label plus the gate's stated rejection reason, never the empty-array
-   fallback. Emit **no `---` separator lines** — the changelog renderer owns those. Then run
+   fallback. Emit **no `---` separator lines** — the changelog renderer owns those. Every drain
+   invocation — including a retry after a failed attempt — gets a fresh run-id; a retry never
+   reuses a failed attempt's run-log directory. Then run
    `scripts/commit-run <vault> <report.json> <entry.md> <run-id> <mode>`: it commits the run's
    own paths plus the run-log directory as one atomic change whose description carries the
    entry, and regenerates the derived vault-root `CHANGELOG.md`. Exit 0 with `no-op` means
    nothing was touched (normal); non-zero means the commit failed and the script already
    rolled the `ingested:` markers back — the next drain retries, so report it and stop; never
-   hand-repair. Surface the rendered entry to the user at run end on every path, including
-   ones that never reach a commit.
+   hand-repair. A non-zero exit whose message begins `regen failed` is the one exception: the
+   commit landed and only the `CHANGELOG.md` render is stale — `commit-run --regen <vault>`
+   refreshes it; markers are correctly untouched. Surface the rendered entry to the user at run
+   end on every path, including ones that never reach a commit.
 
 ## Journal drain
 

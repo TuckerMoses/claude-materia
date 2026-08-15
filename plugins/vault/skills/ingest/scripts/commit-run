@@ -10,7 +10,7 @@ Contract:
   `advanced` is non-empty) + skipped paths + run-log sublist (run.json, proposals.json,
   entry.md, report.json, + confirmed-manifest.json iff interactive). CHANGELOG.md never.
 - No-op guard: empty touched-path set -> exit 0, no commit, no regen.
-- Description = "ingest(<mode>): <run-id> - N notes, M days, P parked" + blank + entry.md
+- Description = "ingest(<mode>): <run-id> — N notes, M days, P parked" + blank + entry.md
   verbatim; N/M/P read from run.json (filed, day_files, parked) - never parsed from entry.md.
 - Mode must agree with confirmed-manifest.json presence in the run dir (exit 1 otherwise).
 - jj 0.43 tolerates absent fileset paths and can create an EMPTY commit (verified): every
@@ -97,7 +97,13 @@ def main():
     if not touched:
         print('no-op: nothing touched; no commit, no changelog entry')
         return  # exit 0 - a no-op is the loop's most common healthy outcome
-    counts = json.loads((run_dir / 'run.json').read_text(encoding='utf-8'))
+    try:
+        counts = json.loads((run_dir / 'run.json').read_text(encoding='utf-8'))
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        marked = report.get('marked', [])
+        unmark(vault, marked)
+        sys.exit(f'ABORT pre-commit: run.json unreadable ({e}); rolled back ingested markers on '
+                 f'{len(marked)} day-file(s)')
     n, m, p = counts['filed'], counts['day_files'], counts['parked']
     rel_run = run_dir.relative_to(vault)
     sublist = SUBLIST + (['confirmed-manifest.json'] if mode == 'interactive' else [])
@@ -105,7 +111,10 @@ def main():
         + [str(rel_run / name) for name in sublist]
     missing = [f for f in fileset if not (vault / f).exists()]
     if missing:  # jj silently tolerates absent paths -> empty commit; refuse instead
-        sys.exit(f'ABORT pre-commit: fileset paths missing on disk: {missing}')
+        marked = report.get('marked', [])
+        unmark(vault, marked)
+        sys.exit(f'ABORT pre-commit: fileset paths missing on disk: {missing}; rolled back '
+                 f'ingested markers on {len(marked)} day-file(s)')
     subject = f'ingest({mode}): {run_id} — {n} notes, {m} days, {p} parked'
     message = subject + '\n\n' + entry_path.read_text(encoding='utf-8')
     r = jj(vault, 'commit', '-m', message, *fileset)

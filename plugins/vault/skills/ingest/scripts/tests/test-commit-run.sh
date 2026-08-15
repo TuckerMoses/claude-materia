@@ -70,6 +70,7 @@ if python3 "$SCRIPT" "$V5" "$V5/_machine/logs/ingest/2026-01-07-1/report.json" \
   "$V5/_machine/logs/ingest/2026-01-07-1/entry.md" 2026-01-07-1 silent >/dev/null 2>&1; then
   echo "FAIL - missing fileset path accepted"; FAILS=$((FAILS+1)); else echo "ok - pre-flight aborts on missing path"; fi
 assert_eq "pre-flight abort creates no commit" "" "$(cd "$V5" && jj log --no-graph -r 'description(glob:"ingest(*")' -T 'description')"
+assert_eq "pre-flight abort rolls back marker" "0" "$(grep -c '^ingested: true$' "$V5/journal/2026-01-02.md" || true)"
 
 # --- failure injection: hide .jj so jj commit fails -> markers rolled back, no CHANGELOG ---
 V6=$(jj_vault); mk_run "$V6" 2026-01-08-1 silent
