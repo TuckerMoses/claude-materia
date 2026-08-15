@@ -152,7 +152,7 @@ from the sections below rather than executing them.
 ## Silent mode (`--silent`)
 
 The drain without the gate: proposals are auto-confirmed as emitted and filed directly. For
-unattended or low-friction runs (a cron drain; a routine morning `/ingest --today --silent`) once
+unattended or low-friction runs (a cron drain; a routine morning `/ingest --silent`) once
 the vocabulary has stabilized — the interactive gate's observed correction rate is the signal for
 whether silent is safe yet.
 
