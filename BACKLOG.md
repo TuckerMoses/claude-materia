@@ -3,6 +3,34 @@
 Top of file = next. Items are concrete and clearly actionable near-term; may be vague far-term.
 Mark complete with `[x]`.
 
+- [x] **DECISION (Tucker): §2.8 digest.md override** — **confirmed 2026-08-10.** `digest.md` is
+  dropped; the digest requirement is satisfied by the changelog entry (now the commit
+  description). Spec updated at `7554c23`.
+- [x] **DECISION (Tucker): changelog entry in the commit description — f-o-1-7 option (b)** —
+  **adopted 2026-08-10.** Entry travels in the run's commit description; `CHANGELOG.md` is a
+  derived, VCS-ignored render (`commit-run` regenerates post-commit; `--regen` on demand). Spec
+  rewritten at `7554c23`: prepend/revert logic, process-kill orphan window, rebase conflict site,
+  sync exposure, and the §6 regeneration deferral all deleted.
+- [ ] **ingest atomic-commits spec: fold the o-1 residue into the implementation plan** (session
+  `20260730-2100-ingest-atomic-commits`, findings in
+  `review/iterations/o-1/triage-output.json`). Applied post-loop: f-o-1-1, -2, -3, -4, -6, -15.
+  Deliberately unapplied, to be handled as implementer guidance in the writing-plans pass rather
+  than as spec edits: **f-o-1-5** (high — `file-notes` report completeness becomes load-bearing;
+  add the contract row + under-scoping test), **f-o-1-8/-9/-10** (the no-op bullet trio:
+  `entry.md` authoring-step attribution, no-op-path model-call cost, no-op exit status —
+  resolve jointly, one ordering), **f-o-1-11** — mooted by the f-o-1-7(b) adoption (renderer owns all separators; no insertion
+  point exists), **f-o-1-12** (fileset path anchoring + cwd), **f-o-1-13** (derive `mode` from
+  `confirmed-manifest.json` presence instead of trusting the argument), **f-o-1-14** (run-log
+  sublist declared twice). Note f-c-8-2 (deferred low) was mooted by f-o-1-2's applied fix.
+- [ ] **adversarial-review: recalibrate tiers for single-file design specs** (evidence: session
+  `20260730-2100-ingest-atomic-commits`). Cheap tier peaked by c-3, then ground six iterations
+  (two bumps, +166 lines of fixer prose, 4 of o-1's 15 findings traced to cheap-fixer-composed
+  text) before a "clean" c-9 that o-1 falsified with 1 critical + 6 high in one sweep. Changes to
+  evaluate: (a) cap the cheap tier at ~3 iterations for spec-class scopes, or offer an opus-first
+  mode with a raised `opus_max`; (b) make "simulate the artifact end-to-end over concrete
+  scenarios" an explicit method instruction in the default reviewers — both o-1 reviewers credit
+  it, not model acuity, for the yield; (c) instruct fixers toward surgical/tightening edits by
+  default — the c-7 "narrowest edit" instruction measurably arrested prose drift (+31 → +2 lines).
 - [ ] **weekly-planner: vault-query wiring** (approved 2026-07-07, queued behind the kind-vault
   bridge build in `sc-kind-vault-bridge`). The deferred #4 edge: query `todo AND status:open` as a
   lifecycle consumer into weekly planning. Kernel skill — respect its `improvements.md`
@@ -17,7 +45,23 @@ Mark complete with `[x]`.
   until the vault's own todo path is live.)*
 - [x] **ingest: headless/unattended mode** — built as `--silent` (2026-07-06, vault v1.1.0):
   gate skipped, mandatory digest, vocabulary frozen, synthesizer excluded. Trigger met on the
-  first real gate run (clean). Cron invocation is now just `/ingest --silent` on a cadence.
+  first real gate run (clean). Cron invocation is `/ingest --silent` on a cadence — **but requires vault plugin v1.2.0's
+  atomic-commit layer (2026-08 spec) and a one-time manual commit of the vault's uncommitted
+  backlog first.**
+- [ ] **vault: hoist the label-semantics invariant to a shared layer — ATOMIC ROLLOVER.**
+  *"Label semantics come from the bank, never from note content"* now lives **verbatim in two
+  places** (`skills/ingest/SKILL.md` and `skills/synthesizer/SKILL.md`, added 2026-07-25 after a
+  live ingest misclassification promoted a note's prose into a membership rule). Accepted
+  knowingly: the kernel's smallest-containing-layer rule has no home to point at — the plugin dir
+  has no auto-loaded contract surface, `Vault/CLAUDE.md` would cover both skills but only inside
+  one vault (breaking both skills' env-agnostic invariant), and `INSTRUCTION.md` explicitly
+  refuses to restate vocabulary semantics. **Trigger:** a third skill needs the rule, or a
+  plugin-layer contract surface exists for another reason. **Constraint (Tucker, 2026-07-25): the
+  rollover is atomic** — create the layer, strip both copies, and re-verify both skills in ONE
+  session, or don't start. A half-done hoist leaves the rule declared in two places *and* a third,
+  which is strictly worse than the current honest duplication. Shared core = the first three
+  sentences; each copy then diverges (ingest: batch-order dependence; synthesizer: the
+  minting-stakes clause about drafted `when_to_apply`).
 - [ ] **synthesizer: label-bank hygiene** — merge/retire near-duplicate labels already in the
   bank; the mint-time near-dup guard only prevents new occurrences. (synthesizer spec 2026-07-03 §9)
 - [ ] **ingest: interactive mint-at-ingest** — optionally offer a new label on the spot when the
