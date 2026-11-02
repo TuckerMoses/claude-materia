@@ -32,6 +32,7 @@ if python3 "$SCRIPT" "$V" "$MF2" >/dev/null 2>&1; then echo "FAIL - empty body a
 D1=$(mktemp -d); D2=$(mktemp -d)
 printf 'content-one\n' > "$D1/notes.md"
 printf 'content-two\n' > "$D2/notes.md"
+printf 'sources:\n  - {path: "%s", track: destructive, lens: [idea]}\n  - {path: "%s", track: destructive, lens: [idea]}\n' "$D1" "$D2" > "$V/_machine/ingest_paths.yml"
 MF3=$(mktemp)
 cat > "$MF3" <<EOF
 {"notes": [], "mark_ingested": [], "advance": [],
@@ -42,4 +43,22 @@ assert_eq "archive collision preserved" "2" "$(ls "$V/_machine/logs/ingest/2026-
 assert_contains "first archived file content intact" "content-one" "$(cat "$V/_machine/logs/ingest/2026-07-05/notes.md")"
 assert_contains "second archived file uniquified + content intact" "content-two" "$(cat "$V/_machine/logs/ingest/2026-07-05/notes-2.md")"
 assert_contains "moved reported as vault-relative dest" '"_machine/logs/ingest/2026-07-05/notes.md"' "$OUT3"
+# Manifest path confinement: each bad manifest aborts before anything is written.
+refused() {  # refused LABEL MANIFEST_JSON
+  local mf; mf=$(mktemp); printf '%s' "$2" > "$mf"
+  local before; before=$(ls "$V/notes" | wc -l)
+  if python3 "$SCRIPT" "$V" "$mf" >/dev/null 2>&1; then echo "FAIL - $1: accepted"; FAILS=$((FAILS+1)); else echo "ok - $1"; fi
+  assert_eq "$1: no note written first" "$before" "$(ls "$V/notes" | wc -l)"
+}
+NOTE='"notes": [{"title": "Should Not File", "labels": ["idea"], "created": "2026-07-05", "captured": "2026-01-02", "source": "journal/x", "related": [], "body": "x"}]'
+OUTSIDE=$(mktemp -d); printf 'keep\n' > "$OUTSIDE/target.txt"; printf 'evil\n' > "$D1/payload"
+refused "absolute mark_ingested refused" "{$NOTE, \"mark_ingested\": [\"$OUTSIDE/target.txt\"]}"
+assert_eq "absolute mark_ingested left target alone" "keep" "$(cat "$OUTSIDE/target.txt")"
+refused "traversal mark_ingested refused" "{$NOTE, \"mark_ingested\": [\"journal/../CLAUDE.md\"]}"
+refused "archive date traversal refused" "{$NOTE, \"archive_moves\": [{\"from\": \"$D1/payload\", \"date\": \"../../../../../$(basename "$OUTSIDE")\"}]}"
+assert_eq "traversal moved nothing" "evil" "$(cat "$D1/payload")"
+refused "unregistered archive source refused" "{$NOTE, \"archive_moves\": [{\"from\": \"$OUTSIDE/target.txt\", \"date\": \"2026-07-05\"}]}"
+assert_eq "unregistered source not moved" "keep" "$(cat "$OUTSIDE/target.txt")"
+ln -s "$OUTSIDE/target.txt" "$D1/link"
+refused "symlink out of a source refused" "{$NOTE, \"archive_moves\": [{\"from\": \"$D1/link\", \"date\": \"2026-07-05\"}]}"
 finish

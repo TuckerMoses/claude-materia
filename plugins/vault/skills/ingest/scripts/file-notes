@@ -41,6 +41,36 @@ def emit_frontmatter(n: dict) -> str:
     lines.append('---')
     return '\n'.join(lines) + '\n\n'
 
+def within(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+def check_manifest_paths(vault: Path, manifest: dict):
+    """Refuse a manifest that reaches outside its bounds, before anything is written.
+
+    The manifest is model-written from captured text, so it is untrusted input: unchecked, an
+    archive move could place a file anywhere and a marker could edit any file.
+    """
+    journal = (vault / 'journal').resolve()
+    for rel in manifest.get('mark_ingested', []):
+        if not within((vault / rel).resolve(), journal):
+            sys.exit(f'ABORT: mark_ingested path outside journal/: {rel} — nothing committed')
+    moves = manifest.get('archive_moves', [])
+    if moves:
+        import yaml
+        data = yaml.safe_load((vault / '_machine' / 'ingest_paths.yml').read_text(encoding='utf-8')) or {}
+        roots = [Path(s['path']).expanduser().resolve() for s in data.get('sources') or []
+                 if s.get('track') == 'destructive']
+        for mv in moves:
+            if not re.fullmatch(r'\d{4}-\d{2}-\d{2}(-\d+)?', mv['date']):
+                sys.exit(f'ABORT: archive_moves date is not a date or run-id: {mv["date"]} — nothing committed')
+            src = Path(mv['from']).expanduser().resolve()
+            if not any(within(src, r) for r in roots):
+                sys.exit(f'ABORT: archive_moves source is not in a registered destructive source: {mv["from"]} — nothing committed')
+
 def main():
     if len(sys.argv) != 3:
         sys.exit('usage: file-notes VAULT_PATH MANIFEST_JSON')
@@ -50,6 +80,7 @@ def main():
         sys.exit(f'vault not found (no notes/ under {vault})')
     manifest = json.loads(Path(sys.argv[2]).read_text(encoding='utf-8'))
     report = {'written': [], 'skipped': [], 'marked': [], 'advanced': [], 'moved': []}
+    check_manifest_paths(vault, manifest)
 
     # Phase 1 — write + verify every note (no commit points yet).
     for n in manifest.get('notes', []):
