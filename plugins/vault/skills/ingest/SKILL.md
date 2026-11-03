@@ -192,6 +192,8 @@ whether silent is safe yet.
 What changes, and what doesn't:
 
 - **Skipped:** the confirm gate (drain step 4). Nothing else.
+- **One command per Bash call.** Unattended runs allow exact commands only, so `&&`, `;`, pipes,
+  redirects and `$(...)` are denied; run each script as its own call.
 - **An empty window still runs to the end.** With nothing to drain, still mint the run, persist an
   empty `proposals.json` (`notes`, `mark_ingested`, `advance` and `archive_moves` all `[]`), write
   `run.json` and `entry.md` as usual, and run steps 5 and 6: `commit-run` takes the no-op path and marks the
