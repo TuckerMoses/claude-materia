@@ -1,0 +1,76 @@
+#!/usr/bin/env python3
+"""One-off (Capture to Week, One-time 5): make every note's frontmatter parse. Remove after use.
+
+Usage: frontmatter-repair VAULT [--apply]
+Dry run by default. Finds notes whose frontmatter fails yaml.safe_load and re-emits them with yaml.safe_dump: frontmatter
+only, values preserved, body md5 verified before and after. A note it cannot repair is reported and left alone.
+"""
+import argparse
+import re
+import sys
+from pathlib import Path
+
+import yaml
+
+import _note_frontmatter as fm
+
+
+def recover(head):
+    """Parse frontmatter line by line. A `key: "value"` whose quotes break YAML keeps the text between the outer quotes."""
+    data, block = {}, []
+
+    def flush():
+        if not block:
+            return
+        chunk = '\n'.join(block)
+        try:
+            data.update(yaml.safe_load(chunk))
+        except yaml.YAMLError:
+            match = re.fullmatch(r'([A-Za-z_][\w-]*):\s*"(.*)"\s*', chunk)
+            if not match:
+                raise ValueError(f'cannot recover: {chunk[:80]}')
+            data[match.group(1)] = match.group(2)
+        block.clear()
+
+    for line in head.split('\n'):
+        if line[:1] not in (' ', '-', '\t') and line.strip():
+            flush()
+        block.append(line)
+    flush()
+    return data
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument('vault')
+    p.add_argument('--apply', action='store_true')
+    args = p.parse_args()
+    notes = Path(args.vault).expanduser() / 'notes'
+    if not notes.is_dir():
+        sys.exit(f'vault not found (no notes/ under {args.vault})')
+    repaired, failed = 0, 0
+    for path in sorted(notes.glob('*.md')):
+        text, stamp = fm.read(path)
+        head, _ = fm.split(text)
+        if head is None:
+            continue
+        try:
+            yaml.safe_load(head)
+            continue
+        except yaml.YAMLError:
+            pass
+        try:
+            data = recover(head)
+            if args.apply:
+                fm.rewrite(path, text, stamp, data)
+            print(f'{"repaired" if args.apply else "would repair"}: {path.name}: title = {data.get("title")!r}')
+            repaired += 1
+        except (ValueError, fm.NoteError, yaml.YAMLError) as e:
+            print(f'FAILED: {path.name}: {" ".join(str(e).split())[:160]}')
+            failed += 1
+    print(f'{repaired} {"repaired" if args.apply else "to repair"}, {failed} failed' + ('' if args.apply else '. Dry run: rerun with --apply.'))
+    sys.exit(1 if failed else 0)
+
+
+if __name__ == '__main__':
+    main()

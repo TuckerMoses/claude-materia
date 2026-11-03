@@ -1,0 +1,213 @@
+#!/usr/bin/env python3
+"""One-off (Capture to Week, One-time 5): route the vault's existing actionable notes to backlogs. Remove after a clean run.
+
+Usage: legacy-route VAULT [--gate FILE] [--apply]
+Dry run by default: changes nothing, and lists every selected note as closed, open, and where it would go.
+
+Selects every note on whose stored labels `route` returns a backlog target, resolved or unresolved.
+  1. Closure normalization: a selected note with `status: done` and no outcome gets `note-outcome done`, dated by the
+     newest vault commit that changed its status line (fallback: the run date).
+  2. Gate: FILE is YAML, slug to either `{labels: [...]}` (replaces the note's labels) or `drop` (closes it with
+     `note-outcome dropped`, so it stays closed on every re-run). Applies to open notes only.
+  3. Routing: closed notes (outcome or handled) are skipped entirely. Each open note goes through backlog-append, with
+     its slug as id and notes/<slug> as source, then its successful targets are written as routed_to.
+
+Exits non-zero listing each note that failed. Idempotent: rerun until it reports no failures.
+"""
+import argparse
+import datetime
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+import yaml
+
+import _note_frontmatter as fm
+
+HERE = Path(__file__).resolve().parent
+SLUG = re.compile(r'^[a-z0-9]+(-[a-z0-9]+)*$')
+
+
+def lib_call(name, *args, stdin=None):
+    return subprocess.run([os.path.join(os.environ['AGENT_LIB'], 'functions', name), *args], input=stdin,
+                          capture_output=True, text=True)
+
+
+def read_notes(notes_dir):
+    notes, bad = {}, []
+    for path in sorted(notes_dir.glob('*.md')):
+        try:
+            text = fm.read_text(path)
+            data = fm.parse(text)
+        except (fm.NoteError, OSError, UnicodeDecodeError) as e:
+            bad.append(f'{path.name}: {e}')
+            continue
+        labels = data.get('labels') or []
+        if isinstance(labels, list) and all(isinstance(x, str) for x in labels):
+            notes[path.stem] = (path, text, data, labels)
+        else:
+            bad.append(f'{path.name}: labels is not a list of strings')
+    return notes, bad
+
+
+def route(pairs):
+    r = lib_call('route', stdin=json.dumps([{'ref': slug, 'labels': labels} for slug, labels in pairs]))
+    if r.returncode != 0:
+        sys.exit(f'route failed: {r.stderr.strip()}')
+    return {x['ref']: x for x in json.loads(r.stdout)}
+
+
+def backlog_bound(result):
+    return any(t['artifact'] == 'backlog' for t in result['targets']) \
+        or any(u['target'].get('artifact') == 'backlog' for u in result['unresolved'])
+
+
+def status_date(vault, path, today):
+    r = subprocess.run(['git', 'log', '-1', '--format=%ad', '--date=short', '-G', r'^status:', '--', str(path.relative_to(vault))],
+                       cwd=vault, capture_output=True, text=True)
+    value = r.stdout.strip()
+    return value if re.fullmatch(r'\d{4}-\d{2}-\d{2}', value) else today
+
+
+def note_outcome(vault, slug, outcome, date):
+    r = subprocess.run([str(HERE / 'note-outcome'), str(vault), slug, outcome, '--resolved', date], capture_output=True, text=True)
+    return None if r.returncode == 0 else r.stderr.strip()
+
+
+def closed(data):
+    return bool(data.get('outcome') or data.get('handled'))
+
+
+def as_day(value, today):
+    if isinstance(value, datetime.date):
+        return value.isoformat()
+    return value if isinstance(value, str) and re.fullmatch(r'\d{4}-\d{2}-\d{2}', value) else today
+
+
+def write_labels_and_routed(path, labels, routed):
+    text, stamp = fm.read(path)
+    data = fm.parse(text)
+    before = dict(data)
+    if labels is not None:
+        data['labels'] = labels
+    merged = data.get('routed_to') or []
+    if not isinstance(merged, list) or not all(isinstance(t, dict) and {'container', 'artifact', 'name'} <= set(t) for t in merged):
+        raise fm.NoteError('existing routed_to is malformed')
+    merged = list(merged)
+    seen = {(t['container'], t['artifact'], t['name']) for t in merged}
+    merged += [t for t in routed if (t['container'], t['artifact'], t['name']) not in seen]
+    if merged:
+        data['routed_to'] = merged
+    if data != before:
+        fm.rewrite(path, text, stamp, data)
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument('vault')
+    p.add_argument('--gate')
+    p.add_argument('--apply', action='store_true')
+    args = p.parse_args()
+    if not os.environ.get('AGENT_LIB'):
+        sys.exit('AGENT_LIB unset')
+    vault = Path(args.vault).expanduser()
+    if not (vault / 'notes').is_dir():
+        sys.exit(f'vault not found (no notes/ under {vault})')
+    gate = {}
+    if args.gate:
+        with open(args.gate, encoding='utf-8') as f:
+            gate = yaml.safe_load(f) or {}
+    today = datetime.date.today().isoformat()
+    notes, bad = read_notes(vault / 'notes')
+    for line in bad:
+        print(f'anomaly: {line}')
+
+    selected = route([(slug, n[3]) for slug, n in notes.items()])
+    selected = {slug for slug, result in selected.items() if backlog_bound(result)}
+    unknown = [slug for slug in gate if slug not in notes]
+    if unknown:
+        sys.exit(f'gate names notes that do not exist: {unknown}')
+    failures, counts = [], {'closed': 0, 'normalized': 0, 'dropped': 0, 'routed': 0}
+
+    for slug in sorted(selected):
+        path, text, data, labels = notes[slug]
+        if data.get('status') == 'done' and not closed(data):
+            date = status_date(vault, path, today)
+            counts['normalized'] += 1
+            if not args.apply:
+                print(f'closed by status: {slug} (would record done, {date})')
+                data = dict(data, outcome='done')
+            else:
+                problem = note_outcome(vault, slug, 'done', date)
+                if problem:
+                    failures.append(f'{slug}: {problem}')
+                    continue
+                data = fm.parse(fm.read_text(path))
+        choice = gate.get(slug)
+        if closed(data):
+            counts['closed'] += 1
+            if choice:
+                print(f'gate ignored for closed note: {slug}')
+            continue
+        if choice == 'drop':
+            counts['dropped'] += 1
+            print(f'{"dropped" if args.apply else "would drop"}: {slug}')
+            if args.apply:
+                problem = note_outcome(vault, slug, 'dropped', today)
+                if problem:
+                    failures.append(f'{slug}: {problem}')
+            continue
+        new_labels = None
+        if isinstance(choice, dict) and isinstance(choice.get('labels'), list):
+            new_labels = choice['labels']
+        elif choice is not None:
+            failures.append(f'{slug}: gate entry must be drop or {{labels: [...]}}')
+            continue
+        use = new_labels if new_labels is not None else labels
+        result = route([(slug, use)])[slug]
+        names = ', '.join(f'{t["container"]}:{t["name"]}' for t in result['targets'] if t['artifact'] == 'backlog') or 'nowhere'
+        print(f'{"routed" if args.apply else "would route"}: {slug} [{", ".join(use)}] -> {names}'
+              + ''.join(f'  WARNING {w}' for w in result['warnings']))
+        if not SLUG.fullmatch(slug):
+            failures.append(f'{slug}: slug is not a valid item id')
+            continue
+        for u in result['unresolved']:
+            failures.append(f'{slug}: {u["reason"]}')
+        if result['unresolved']:
+            continue
+        counts['routed'] += 1
+        if not args.apply:
+            continue
+        record = {'body': fm.body_of(text).rstrip('\n'), 'labels': use, 'title': data.get('title') or slug,
+                  'date': as_day(data.get('captured') or data.get('created'), today), 'source': f'notes/{slug}', 'id': slug}
+        routed, ok = [], True
+        for target in result['targets']:
+            plain = {k: target[k] for k in ('container', 'artifact', 'name')}
+            if target['artifact'] != 'backlog':
+                routed.append(plain)
+                continue
+            r = lib_call('backlog-append', '--path', target['path'], '--thought', json.dumps(record))
+            if r.returncode == 0:
+                routed.append(plain)
+            else:
+                ok = False
+                failures.append(f'{slug}: {r.stderr.strip()}')
+        if not ok:
+            continue
+        try:
+            write_labels_and_routed(path, new_labels, routed)
+        except (fm.NoteError, OSError) as e:
+            failures.append(f'{slug}: {e}')
+
+    print(f'selected {len(selected)}: {counts["closed"]} closed ({counts["normalized"]} by status), {counts["dropped"]} dropped, '
+          f'{counts["routed"]} routed, {len(failures)} failed' + ('' if args.apply else '. Dry run: rerun with --apply.'))
+    for line in failures:
+        print(f'FAILED: {line}')
+    sys.exit(1 if failures else 0)
+
+
+if __name__ == '__main__':
+    main()
