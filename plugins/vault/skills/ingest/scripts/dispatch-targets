@@ -5,18 +5,22 @@
       For the gate. Per thought: the labels to propose (a filed note's stored labels win, invariant 5), the targets
       those labels resolve to, anything unresolved, and any routing warnings. Writes nothing.
 
-  dispatch-targets run VAULT MANIFEST --mode silent|interactive [--no-journal]
+  dispatch-targets run VAULT MANIFEST --mode silent|interactive [--no-journal] [--recovered RUN_ID]
       Write the id-supplying target, then the others in order; then routed_to; then, for fully successful units only,
       markers, watermarks and moves; then report.json beside the manifest. Exits 0 even with held units: commit-run
       must still run, and it is what exits non-zero on held. Exits non-zero only if the run failed before writing.
 
 --no-journal is for a run scoped to one external source, whose closed day-files are not this run's business.
+--recovered records the interrupted run that `commit-run --recover` committed as this run's first action.
+Every child call times out after $VAULT_INGEST_CALL_TIMEOUT seconds (default 300): a timed-out writer is a failed
+target, so its unit is held; any other timed-out call aborts the run before markers, as any failure there does.
 """
 import argparse
 import datetime
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import tempfile
@@ -59,8 +63,24 @@ def writer_path(name):
     return str(beside) if beside.exists() else os.path.join(lib(), 'functions', name)
 
 
+# Every call on the unattended path is bounded (spec, Nightly job: fail loud, never hang). A child that blocks, as one
+# did on a TCC prompt, is killed with its whole process group, so a grandchild cannot hold the pipes open.
+CALL_TIMEOUT = int(os.environ.get('VAULT_INGEST_CALL_TIMEOUT', '300'))
+
+
 def call(argv, stdin=None):
-    return subprocess.run(argv, input=stdin, capture_output=True, text=True)
+    proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                            start_new_session=True)
+    try:
+        out, err = proc.communicate(stdin, timeout=CALL_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        proc.communicate()
+        return subprocess.CompletedProcess(argv, 124, '', f'timed out after {CALL_TIMEOUT}s: {os.path.basename(argv[0])}')
+    return subprocess.CompletedProcess(argv, proc.returncode, out, err)
 
 
 def file_notes(command, vault, payload):
@@ -124,7 +144,8 @@ def is_open_day(unit):
 
 
 class Run:
-    def __init__(self, vault, manifest_path, mode, include_journal):
+    def __init__(self, vault, manifest_path, mode, include_journal, recovered=None):
+        self.recovered = recovered
         self.vault, self.manifest_path, self.mode = vault, manifest_path, mode
         self.include_journal = include_journal
         with open(manifest_path, encoding='utf-8') as f:
@@ -325,6 +346,8 @@ class Run:
                   for t in self.thoughts if t['ref'] in self.ids]
         report = {'written': self.written, 'skipped': self.skipped, 'rewritten': rewritten, 'routed': routed,
                   'held': held, 'open_day_failed': open_day, 'warnings': self.warnings}
+        if self.recovered:
+            report['recovered'] = self.recovered
         plan = {'mark_ingested': marks, 'advance': advance, 'archive_moves': moves, 'report': report,
                 'report_path': str(Path(self.manifest_path).resolve().parent / 'report.json')}
         print(json.dumps(file_notes('finish', self.vault, plan), indent=2))
@@ -341,6 +364,7 @@ def main():
     d.add_argument('manifest')
     d.add_argument('--mode', required=True, choices=['silent', 'interactive'])
     d.add_argument('--no-journal', action='store_true')
+    d.add_argument('--recovered', metavar='RUN_ID', help='the run id commit-run --recover printed, recorded in report.json')
     args = p.parse_args()
     vault = Path(args.vault).expanduser()
     if not (vault / 'notes').is_dir():
@@ -350,7 +374,7 @@ def main():
             with open(args.manifest, encoding='utf-8') as f:
                 cmd_route(vault, json.load(f))
         else:
-            Run(vault, args.manifest, args.mode, not args.no_journal).run()
+            Run(vault, args.manifest, args.mode, not args.no_journal, args.recovered).run()
     except (OSError, ValueError, KeyError) as e:
         die(f'{type(e).__name__}: {e}')
 

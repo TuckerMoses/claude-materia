@@ -65,6 +65,10 @@ from the sections below rather than executing them.
 
 ## The drain (both source classes)
 
+0. **Recover (scripted; first action of every drain).** Run `scripts/commit-run --recover <vault>`. It
+   commits what an interrupted earlier run wrote but never committed, and prints
+   `{"recovered": <run-id>}`, or `null` when there was nothing to recover. Pass a non-null id to step 5 as
+   `--recovered <run-id>`. A non-zero exit: report it and stop.
 1. **Window** — run `scripts/journal-candidates <vault> [--today]` and
    `scripts/source-delta <vault>`: the eligible closed day-files, the open day (if `--today`),
    and each vcs source's changed files + hunks / each destructive source's current contents.
@@ -96,7 +100,8 @@ from the sections below rather than executing them.
    correct it. The confirmed labels go in `confirmed-manifest.json`.
 5. **Route and write (scripted).** `scripts/dispatch-targets run <vault> <manifest> --mode
    silent|interactive`, where the manifest is `confirmed-manifest.json`, or `proposals.json` under
-   `--silent`. Add `--no-journal` for a run scoped to one external source. It routes on the confirmed
+   `--silent`. Add `--no-journal` for a run scoped to one external source, and `--recovered <run-id>`
+   when step 0 printed one. It routes on the confirmed
    labels, writes the vault copy (dedup, md5 verify, abort-on-mismatch), then each other target in
    order, records `routed_to` on the note, and **then, in order and only for fully successful
    units:** `ingested` markers → `last_read` advances → destructive staging moves. It writes
@@ -187,6 +192,11 @@ whether silent is safe yet.
 What changes, and what doesn't:
 
 - **Skipped:** the confirm gate (drain step 4). Nothing else.
+- **An empty window still runs to the end.** With nothing to drain, still mint the run, persist an
+  empty `proposals.json` (`notes`, `mark_ingested`, `advance` and `archive_moves` all `[]`), write
+  `run.json` and `entry.md` as usual, and run steps 5 and 6: `commit-run` takes the no-op path and marks the
+  report completed. The nightly wrapper counts a run as successful only when it finds a completed
+  `report.json`, so a run that stops early is reported as failed.
 - **Unchanged:** three-way extraction against the **frozen** vocabulary — no-fit thoughts still
   park under `needs-label`; silent **never mints or suggests labels** — plus scripted verbatim
   filing, ordered commit points, and idempotency.

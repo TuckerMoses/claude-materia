@@ -135,8 +135,13 @@ def held_and_warnings(vault):
 
 
 def lib_json(name, *args, stdin=None):
-    r = subprocess.run([os.path.join(os.environ['AGENT_LIB'], 'functions', name), *args], input=stdin,
-                       capture_output=True, text=True)
+    # Bounded: these read every registered backlog, and one under a TCC-protected folder hung a nightly run.
+    timeout = int(os.environ.get('VAULT_INGEST_CALL_TIMEOUT', '300'))
+    try:
+        r = subprocess.run([os.path.join(os.environ['AGENT_LIB'], 'functions', name), *args], input=stdin,
+                           capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return 124, None, f'{name} timed out after {timeout}s'
     try:
         return r.returncode, json.loads(r.stdout), r.stderr.strip()
     except ValueError:

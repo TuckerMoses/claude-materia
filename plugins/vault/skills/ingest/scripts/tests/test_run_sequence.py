@@ -684,5 +684,99 @@ class Status(Base):
         self.assertIn('reconciliation skipped', r.stdout)
 
 
+class FailLoud(Base):
+    """Nightly job, v2.2: success keys off a completed report; nothing on the unattended path hangs; recovery."""
+
+    def report(self):
+        return json.loads((self.run_dir / 'report.json').read_text())
+
+    def committed_report(self):
+        rel = (self.run_dir / 'report.json').relative_to(self.vault)
+        return json.loads(subprocess.run(['jj', 'file', 'show', '-r', '@-', str(rel)], cwd=self.vault,
+                                         capture_output=True, text=True, check=True).stdout)
+
+    def next_run(self, n):
+        self.run_id = f'2026-11-02-{n}'
+        self.run_dir = self.vault / '_machine' / 'logs' / 'ingest' / self.run_id
+        self.run_dir.mkdir()
+
+    def recover(self):
+        r = self.script('commit-run', '--recover', self.vault)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return json.loads(r.stdout)['recovered']
+
+    def test_a_clean_commit_carries_completed(self):
+        self.day(D1)
+        self.dispatch([note('x', title='a')], [f'journal/{D1}.md'])
+        self.assertNotIn('completed', self.report())
+        self.assertEqual(self.commit().returncode, 0)
+        self.assertIs(self.committed_report()['completed'], True)
+        self.assertIs(self.report()['completed'], True)
+
+    def test_a_held_run_is_completed_and_still_held(self):
+        self.day(D1)
+        self.dispatch([note('y', ['todo', 'workspace:nope'], title='b')], [f'journal/{D1}.md'])
+        self.assertNotEqual(self.commit().returncode, 0)
+        self.assertIs(self.committed_report()['completed'], True)
+        self.assertTrue(self.report()['held'])
+
+    def test_a_no_op_run_is_completed(self):
+        self.dispatch([], [])
+        r = self.commit()
+        self.assertIn('no-op', r.stdout)
+        self.assertIs(self.report()['completed'], True)
+
+    def test_a_rolled_back_commit_is_not_completed(self):
+        self.day(D1)
+        self.dispatch([note('x', title='a')], [f'journal/{D1}.md'])
+        (self.run_dir / 'report.json').write_text(json.dumps(dict(self.report(), written=['notes/absent.md'])))
+        self.assertNotEqual(self.commit().returncode, 0)
+        self.assertNotIn('completed', self.report())
+
+    def test_a_run_killed_before_its_commit_is_recovered_by_the_next(self):
+        self.day(D1)
+        self.dispatch([note('x', title='a')], [f'journal/{D1}.md'])  # written and marked; killed before commit-run
+        killed = self.run_id
+        self.next_run(2)
+        self.assertEqual(self.recover(), killed)
+        log = subprocess.run(['jj', 'log', '--no-graph', '-r', '@-', '-T', 'description'], cwd=self.vault,
+                             capture_output=True, text=True).stdout
+        self.assertIn(f'ingest(recovered): {killed}', log)
+        shown = subprocess.run(['jj', 'show', '--summary', '-r', '@-'], cwd=self.vault, capture_output=True, text=True).stdout
+        self.assertIn('notes/a.md', shown)
+        self.assertIn(f'journal/{D1}.md', shown)
+        self.assertIn(f'{killed}/report.json', shown)
+        self.assertIn(killed, (self.vault / 'CHANGELOG.md').read_text())
+        self.assertIsNone(self.recover())
+        r = self.script('dispatch-targets', 'run', self.vault, self.manifest([], []), '--mode', 'silent', '--recovered', killed)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.report()['recovered'], killed)
+
+    def test_nothing_to_recover_without_an_incomplete_dirty_run(self):
+        self.assertIsNone(self.recover())
+        self.dispatch([], [])
+        self.commit()  # a completed no-op leaves its run dir uncommitted
+        (self.vault / 'notes' / 'hand-edit.md').write_text('mine\n')
+        self.next_run(2)
+        self.assertIsNone(self.recover())
+        self.assertTrue((self.vault / 'notes' / 'hand-edit.md').exists())
+
+    def test_a_hung_writer_is_a_failed_target_and_its_unit_is_held(self):
+        hang = self.lib / 'functions' / 'backlog-append'
+        hang.write_text('#!/bin/sh\nsleep 60 &\nsleep 60\n')  # the grandchild holds the pipes if only the child dies
+        self.day(D1)
+        start = datetime.datetime.now()
+        r = subprocess.run([str(SCRIPTS / 'dispatch-targets'), 'run', str(self.vault),
+                            str(self.manifest([note('y', ['todo', 'workspace:values'], title='b')], [f'journal/{D1}.md'])),
+                            '--mode', 'silent'], capture_output=True, text=True,
+                           env=dict(self.env(), VAULT_INGEST_CALL_TIMEOUT='1'), timeout=30)
+        self.assertLess((datetime.datetime.now() - start).total_seconds(), 20)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        held = json.loads(r.stdout)['held']
+        self.assertEqual([h['day_file'] for h in held], [f'journal/{D1}.md'])
+        self.assertIn('timed out', held[0]['failed'][0]['reason'])
+        self.assertFalse(self.marked(D1))
+
+
 if __name__ == '__main__':
     unittest.main()
