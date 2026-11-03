@@ -103,6 +103,14 @@ class LegacyRoute(Base):
         self.assertNotIn('routed_to', data)
         self.assertEqual(self.items(), [])
 
+    def test_crlf_and_blank_bodies_map_cleanly(self):
+        (self.vault / 'notes' / 'c.md').write_bytes(b'---\ntitle: T\nlabels: [todo]\nsource: x\n---\n\nline1\r\nline2\r\n')
+        (self.vault / 'notes' / 'w.md').write_bytes(b'---\ntitle: T\nlabels: [todo]\nsource: y\n---\n\n   \n')
+        self.assertEqual(self.legacy('--apply').returncode, 0)
+        items = {i['id']: i for i in self.items('kernel')}
+        self.assertEqual(items['c']['body'], 'line1\r\nline2')
+        self.assertNotIn('body', items['w'])
+
     def test_handled_is_closed_with_no_outcome_written(self):
         self.add('h', ['todo'], 'handled: [x]\n')
         self.legacy('--apply')
@@ -221,6 +229,29 @@ class Csv(Base):
         self.convert(path, '--apply')
         self.convert(path, '--apply')
         self.assertEqual((self.vault / 'journal' / '2024-01-02.md').read_text(), 'already here\n\nnew row\n')
+
+    def test_a_short_row_inside_other_text_is_still_added(self):
+        self.day('2024-01-02', 'I should call mom today\n')
+        self.convert(self.csv('Date,Body\n2024-01-02,mom\n'), '--apply')
+        self.assertEqual((self.vault / 'journal' / '2024-01-02.md').read_text(), 'I should call mom today\n\nmom\n')
+
+    def test_a_crlf_row_is_idempotent(self):
+        path = self.tmp / 'crlf.csv'
+        path.write_bytes(b'Date,Body\r\n2024-01-02,"Call mom\r\nbuy milk"\r\n')
+        self.convert(path, '--apply')
+        self.convert(path, '--apply')
+        self.assertEqual((self.vault / 'journal' / '2024-01-02.md').read_text(), 'Call mom\nbuy milk\n')
+
+    def test_apple_style_dates_are_read(self):
+        path = self.csv('Date,Body\n2024-01-02 10:30:00 +0000,a\n"January 3, 2024 at 4:05 PM",b\n')
+        self.assertEqual(self.convert(path, '--apply').returncode, 0)
+        self.assertTrue((self.vault / 'journal' / '2024-01-02.md').exists())
+        self.assertTrue((self.vault / 'journal' / '2024-01-03.md').exists())
+
+    def test_a_body_line_reading_ingested_true_is_not_a_marker(self):
+        self.day('2024-01-02', 'ingested: true\nis just a line\n')
+        self.assertEqual(self.convert(self.csv('Date,Body\n2024-01-02,new\n'), '--apply').returncode, 0)
+        self.assertIn('new', (self.vault / 'journal' / '2024-01-02.md').read_text())
 
     def test_a_marked_day_is_refused(self):
         self.day('2024-01-02', '---\ningested: true\n---\nold\n')

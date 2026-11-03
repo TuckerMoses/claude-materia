@@ -66,7 +66,7 @@ def backlog_bound(result):
 
 
 def status_date(vault, path, today):
-    r = subprocess.run(['git', 'log', '-1', '--format=%ad', '--date=short', '-G', r'^status:', '--', str(path.relative_to(vault))],
+    r = subprocess.run(['git', 'log', '-1', '--follow', '--format=%ad', '--date=short', '-G', r'^status:', '--', str(path.relative_to(vault))],
                        cwd=vault, capture_output=True, text=True)
     value = r.stdout.strip()
     return value if re.fullmatch(r'\d{4}-\d{2}-\d{2}', value) else today
@@ -169,11 +169,11 @@ def main():
         use = new_labels if new_labels is not None else labels
         result = route([(slug, use)])[slug]
         names = ', '.join(f'{t["container"]}:{t["name"]}' for t in result['targets'] if t['artifact'] == 'backlog') or 'nowhere'
-        print(f'{"routed" if args.apply else "would route"}: {slug} [{", ".join(use)}] -> {names}'
-              + ''.join(f'  WARNING {w}' for w in result['warnings']))
         if not SLUG.fullmatch(slug):
             failures.append(f'{slug}: slug is not a valid item id')
             continue
+        print(f'{"routed" if args.apply else "would route"}: {slug} [{", ".join(use)}] -> {names}'
+              + ''.join(f'  WARNING {w}' for w in result['warnings']))
         for u in result['unresolved']:
             failures.append(f'{slug}: {u["reason"]}')
         if result['unresolved']:
@@ -181,7 +181,7 @@ def main():
         counts['routed'] += 1
         if not args.apply:
             continue
-        record = {'body': fm.body_of(text).rstrip('\n'), 'labels': use, 'title': data.get('title') or slug,
+        record = {'body': fm.body_of(text).rstrip('\r\n') if fm.body_of(text).strip() else '', 'labels': use, 'title': data.get('title') or slug,
                   'date': as_day(data.get('captured') or data.get('created'), today), 'source': f'notes/{slug}', 'id': slug}
         routed, ok = [], True
         for target in result['targets']:
