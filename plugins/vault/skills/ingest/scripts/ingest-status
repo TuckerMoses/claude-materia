@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
-"""Read-only vault intake health. Usage: ingest-status VAULT_PATH"""
-import json, re, subprocess, sys
+"""Read-only vault intake health. Usage: ingest-status VAULT_PATH
+
+The first line is `pending closed day-files: N`; the nightly wrapper reads it, so it stays first and stays in this
+form. Reconciliation calls lib functions and only reports: an unusable note or lib is an anomaly, never a crash.
+"""
+import fnmatch, json, os, re, subprocess, sys, time
 from pathlib import Path
 import yaml
+
+import _note_frontmatter as fm
 
 DAY = re.compile(r'^\d{4}-\d{2}-\d{2}\.md$')
 
@@ -53,6 +59,152 @@ def main():
               + ' — remove the marker and re-drain (idempotent, duplicate-free)')
     elif not logs.is_dir():
         print('(no run logs yet — modified-after-ingest detection starts with the first drain)')
+    held_and_warnings(vault)
+    reconcile(vault)
+
+def run_key(run_dir):
+    m = re.match(r'^(\d{4}-\d{2}-\d{2})-(\d+)$', run_dir.name)
+    return (m.group(1), int(m.group(2))) if m else ('', 0)
+
+
+def reports(vault):
+    """(run dir, report, run.json) for each run with a readable report, oldest first."""
+    logs = vault / '_machine' / 'logs' / 'ingest'
+    out = []
+    for run in sorted((d for d in logs.iterdir() if d.is_dir()), key=run_key) if logs.is_dir() else []:
+        try:
+            report = json.loads((run / 'report.json').read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            continue
+        try:
+            info = json.loads((run / 'run.json').read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            info = {}
+        out.append((run, report, info))
+    return out
+
+
+def age(info):
+    ts = info.get('ts')
+    return f'{int((time.time() - ts) / 86400)}d' if isinstance(ts, (int, float)) else '?'
+
+
+def show(title, lines, limit=10):
+    if lines:
+        print(f'{title}: {len(lines)}')
+        for line in lines[:limit]:
+            print(f'  {line}')
+        if len(lines) > limit:
+            print(f'  ... and {len(lines) - limit} more')
+
+
+def held_and_warnings(vault):
+    """Held units from the newest report entries, while still un-ingested; warnings from the five newest runs."""
+    runs = reports(vault)
+    held = {}
+    for run, report, info in runs:
+        for unit in report.get('marked', []):
+            held.pop(unit, None)
+        for h in report.get('held') or []:
+            held[h.get('day_file') or h.get('source', '?')] = (run.name, h.get('failed', []), info)
+    lines = []
+    for unit, (run, failed, info) in sorted(held.items()):
+        for f in failed:
+            target = f.get('target') or {}
+            where = '/'.join(str(target[k]) for k in ('container', 'name', 'artifact') if target.get(k))
+            lines.append(f'{unit} ({age(info)} old, run {run}): {where or "no target"}: {f.get("reason")}')
+    show('held', lines)
+    warnings = [f'{run.name}: {w.get("title", w.get("ref"))}: {w.get("message")}' for run, report, _ in runs[-5:]
+                for w in report.get('warnings') or []]
+    show('routing warnings (5 newest runs)', warnings)
+
+
+def lib_json(name, *args, stdin=None):
+    r = subprocess.run([os.path.join(os.environ['AGENT_LIB'], 'functions', name), *args], input=stdin,
+                       capture_output=True, text=True)
+    try:
+        return r.returncode, json.loads(r.stdout), r.stderr.strip()
+    except ValueError:
+        return r.returncode, None, r.stderr.strip()
+
+
+def read_notes(vault):
+    """(notes with frontmatter, anomalies). An unparseable note is reported and skipped, never fatal."""
+    notes, bad = [], []
+    for p in sorted((vault / 'notes').glob('*.md')):
+        try:
+            notes.append((p.stem, fm.parse(p.read_text(encoding='utf-8'))))
+        except (fm.NoteError, OSError, UnicodeDecodeError) as e:
+            bad.append(f'{p.name}: {e}')
+    return notes, bad
+
+
+def has_backlog(routed):
+    return any(t.get('artifact') == 'backlog' for t in routed or [] if isinstance(t, dict))
+
+
+def outbound_patterns(rules):
+    """Decision 22, derived: any label appearing in a rule whose targets include a non-notes artifact."""
+    found = set()
+    for rule in rules:
+        if all(t['artifact'] == 'notes' for t in rule['to']):
+            continue
+        for term in rule['match']:
+            if isinstance(term, str):
+                found.add(term)
+            elif 'any' in term:
+                found.update(term['any'])
+    return found
+
+
+def lens_violations(vault):
+    path = Path(os.environ['AGENT_LIB']) / 'data' / 'routing.yml'
+    rules = (yaml.safe_load(path.read_text(encoding='utf-8')) or {}).get('rules', []) if path.exists() else []
+    patterns = outbound_patterns(rules)
+    registry = yaml.safe_load((vault / '_machine' / 'ingest_paths.yml').read_text(encoding='utf-8')) or {}
+    return [f'{s["path"]}: lens label {label} is outbound' for s in registry.get('sources') or []
+            for label in s.get('lens') or [] if any(fnmatch.fnmatchcase(label, p) for p in patterns)]
+
+
+def reconcile(vault):
+    root = os.environ.get('AGENT_LIB')
+    if not root or not os.path.isdir(root):
+        print('reconciliation skipped: AGENT_LIB unset or unresolvable')
+        return
+    notes, bad = read_notes(vault)
+    show('unparseable notes', bad)
+    rc, items, err = lib_json('backlog-read')
+    if items is None:
+        print(f'backlog-read failed: {err}')
+        items = None
+    rc, checked, err = lib_json('backlog-validate')
+    if checked is None:
+        print(f'backlog-validate failed: {err}')
+    else:
+        show('invalid backlogs', [f'{f["path"]}: {f["detail"]}' for f in checked['files'] if not f['ok']])
+        show('same id in two backlogs', [f'{a["id"]}: {", ".join(a["paths"])}' for a in checked['anomalies']])
+    candidates = json.loads(subprocess.run(
+        [sys.executable, str(Path(__file__).resolve().parent / 'journal-candidates'), str(vault)],
+        capture_output=True, text=True, check=True).stdout)['closed']
+    unmarked = {c[:-3] for c in candidates}
+    if items is not None:
+        ids = {i['id'] for i in items}
+        show('backlog item gone, no outcome on its note (offer note-outcome dropped)',
+             [slug for slug, data in notes if has_backlog(data.get('routed_to')) and not data.get('outcome') and slug not in ids])
+    open_notes = [(slug, data) for slug, data in notes
+                  if not data.get('outcome') and not data.get('handled') and not has_backlog(data.get('routed_to'))
+                  and data.get('source') not in unmarked and isinstance(data.get('labels'), list)]
+    rc, routed, err = lib_json('route', stdin=json.dumps(
+        [{'ref': slug, 'labels': [str(x) for x in data['labels']]} for slug, data in open_notes]))
+    if routed is None:
+        print(f'route failed: {err}')
+    else:
+        def backlog_bound(r):
+            return any(t['artifact'] == 'backlog' for t in r['targets']) \
+                or any(u['target'].get('artifact') == 'backlog' for u in r['unresolved'])
+        show('orphaned actionables (offer note-outcome dropped)', [r['ref'] for r in routed if backlog_bound(r)])
+    show('lens contains an outbound label', lens_violations(vault))
+
 
 if __name__ == '__main__':
     main()

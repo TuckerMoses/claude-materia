@@ -6,7 +6,7 @@ Usage:
   commit-run --regen VAULT                             # re-render CHANGELOG.md only
 
 Contract:
-- Fileset = touched-path set (written+marked+moved, plus _machine/ingest_paths.yml when
+- Fileset = touched-path set (written+rewritten+marked+moved, plus _machine/ingest_paths.yml when
   `advanced` is non-empty) + skipped paths + run-log sublist (run.json, proposals.json,
   entry.md, report.json, + confirmed-manifest.json iff interactive). CHANGELOG.md never.
 - No-op guard: empty touched-path set -> exit 0, no commit, no regen.
@@ -17,6 +17,8 @@ Contract:
   fileset path is pre-flighted, and a post-commit empty check abandons + rolls back.
 - Failure after commit points -> remove `ingested: true` from report's `marked` files, exit 1.
 - Success -> regenerate CHANGELOG.md from jj log (newest first; renderer owns separators).
+- A non-empty `held` in the report -> commit as usual, then exit non-zero listing what is held. Partial work
+  always lands; the exit is the signal.
 """
 import json, re, subprocess, sys
 from pathlib import Path
@@ -29,6 +31,13 @@ then `commit-run --regen <vault>` to refresh this file (or wait for the next run
 """
 
 SUBLIST = ['run.json', 'proposals.json', 'entry.md', 'report.json']
+
+
+def exit_if_held(report):
+    held = report.get('held') or []
+    if held:
+        names = ', '.join(h.get('day_file') or h.get('source', '?') for h in held)
+        sys.exit(f'held {len(held)} unit(s), each with a failed target: {names}; see report.json')
 
 
 def jj(vault, *args):
@@ -90,12 +99,13 @@ def main():
         sys.exit(f'mode mismatch: --{mode} but confirmed-manifest.json '
                  f'{"present" if has_manifest else "absent"} in {run_dir}')
     report = json.loads(report_path.read_text(encoding='utf-8'))
-    touched = [*report.get('written', []), *report.get('marked', []),
+    touched = [*report.get('written', []), *report.get('rewritten', []), *report.get('marked', []),
                *report.get('moved', [])]
     if report.get('advanced'):
         touched.append('_machine/ingest_paths.yml')
     if not touched:
         print('no-op: nothing touched; no commit, no changelog entry')
+        exit_if_held(report)
         return  # exit 0 - a no-op is the loop's most common healthy outcome
     try:
         counts = json.loads((run_dir / 'run.json').read_text(encoding='utf-8'))
@@ -133,6 +143,7 @@ def main():
                  f'{len(marked)} day-file(s)\n{r.stderr}')
     regen(vault)
     print(json.dumps({'committed': True, 'run': run_id, 'files': len(fileset)}))
+    exit_if_held(report)
 
 
 if __name__ == '__main__':

@@ -1,58 +1,43 @@
 #!/usr/bin/env python3
-"""Serial filer: write confirmed notes idempotently, verify, then commit watermarks.
+"""The vault's note writer. Called by dispatch-targets, which runs the ordering between these steps.
 
-Usage: file-notes VAULT_PATH MANIFEST_JSON
-Order (hard): write+verify ALL notes -> ingested markers -> last_read advances -> staging moves.
-Aborts (exit 1) before any commit point on: empty body, md5 mismatch after write.
-Idempotency: a note is already-filed iff an existing note has identical 'source:' AND identical body; skipped/moved are reported as vault-relative paths (commit-fileset contract).
+  file-notes lookup VAULT MANIFEST   -> {ref: {slug, labels, outcome} | {failed}} for thoughts already filed
+  file-notes write VAULT MANIFEST    -> {results: {ref: {slug, path, status, outcome} | {failed}}}
+  file-notes rewrite VAULT PLAN      -> {rewritten: [...], failed: [{slug, reason}]}
+  file-notes finish VAULT PLAN       -> markers, then watermarks, then moves; writes report.json; prints it
+
+Iron rule: an empty body or an md5 mismatch aborts with exit 1. A note that cannot be used fails only its own
+thought. Idempotency: a note is already filed iff an existing note has the same source and the same body.
 """
-import hashlib, json, re, shutil, sys
+import datetime
+import json
+import re
+import shutil
+import sys
 from pathlib import Path
 
-def slugify(title: str) -> str:
-    s = re.sub(r'[^a-z0-9]+', '-', title.lower()).strip('-')
-    return s[:80] or 'untitled'
+import _ingest_keys
+import _note_frontmatter as fm
 
-def md5(s: str) -> str:
-    return hashlib.md5(s.encode('utf-8')).hexdigest()
 
-def split_note(text: str):
-    """Return (frontmatter, body) for a note file's text."""
-    if not text.startswith('---\n'):
-        return '', text
-    end = text.find('\n---\n', 4)
-    if end == -1:
-        return '', text
-    return text[4:end], text[end + 5:].lstrip('\n')
+def slugify(title):
+    s = re.sub(r'[^a-z0-9]+', '-', title.lower())
+    return s[:80].strip('-') or 'untitled'
 
-def existing_match(notes_dir: Path, source: str, body: str):
-    """Path of an existing note with this exact source + verbatim body, else None."""
-    for p in notes_dir.glob('*.md'):
-        fm, b = split_note(p.read_text(encoding='utf-8'))
-        if re.search(r'^source:\s*' + re.escape(source) + r'\s*$', fm, re.M) and b.rstrip('\n') == body.rstrip('\n'):
-            return p
-    return None
 
-def emit_frontmatter(n: dict) -> str:
-    lines = ['---', f'title: "{n["title"]}"', f'labels: [{", ".join(n["labels"])}]',
-             f'created: {n["created"]}', f'captured: {n["captured"]}', f'source: {n["source"]}']
-    if n.get('related'):
-        lines.append('related: [' + ', '.join(f'"{r}"' for r in n['related']) + ']')
-    lines.append('---')
-    return '\n'.join(lines) + '\n\n'
-
-def within(path: Path, root: Path) -> bool:
+def within(path, root):
     try:
         path.relative_to(root)
         return True
     except ValueError:
         return False
 
-def check_manifest_paths(vault: Path, manifest: dict):
+
+def check_manifest_paths(vault, manifest):
     """Refuse a manifest that reaches outside its bounds, before anything is written.
 
-    The manifest is model-written from captured text, so it is untrusted input: unchecked, an
-    archive move could place a file anywhere and a marker could edit any file.
+    The manifest is model-written from captured text, so it is untrusted input: unchecked, an archive move could
+    place a file anywhere and a marker could edit any file.
     """
     journal = (vault / 'journal').resolve()
     for rel in manifest.get('mark_ingested', []):
@@ -71,60 +56,152 @@ def check_manifest_paths(vault: Path, manifest: dict):
             if not any(within(src, r) for r in roots):
                 sys.exit(f'ABORT: archive_moves source is not in a registered destructive source: {mv["from"]} — nothing committed')
 
-def main():
-    if len(sys.argv) != 3:
-        sys.exit('usage: file-notes VAULT_PATH MANIFEST_JSON')
-    vault = Path(sys.argv[1]).expanduser()
-    notes_dir = vault / 'notes'
-    if not notes_dir.is_dir():
-        sys.exit(f'vault not found (no notes/ under {vault})')
-    manifest = json.loads(Path(sys.argv[2]).read_text(encoding='utf-8'))
-    report = {'written': [], 'skipped': [], 'marked': [], 'advanced': [], 'moved': []}
-    check_manifest_paths(vault, manifest)
 
-    # Phase 1 — write + verify every note (no commit points yet).
-    for n in manifest.get('notes', []):
-        body = n['body']
-        if not body.strip():
-            sys.exit(f'ABORT (iron rule): empty body for "{n["title"]}" — nothing committed')
-        m = existing_match(notes_dir, n['source'], body)
-        if m:
-            report['skipped'].append(str(m.relative_to(vault)))
+def filed_index(vault):
+    """{(source, body md5): (path, text)} for every note whose source line can be read. Lookup by value, not by name."""
+    index = {}
+    for p in sorted((vault / 'notes').glob('*.md')):
+        try:
+            text = p.read_text(encoding='utf-8')
+        except (OSError, UnicodeDecodeError):
             continue
-        before = md5(body.rstrip('\n'))
+        head, _ = fm.split(text)
+        if head is None:
+            continue
+        match = re.search(r'^source:\s*(.*?)\s*$', head, re.M)
+        if match:
+            key = (match.group(1).strip('"\''), _ingest_keys.body_md5(fm.body_of(text)))
+            index.setdefault(key, (p, text))
+    return index
+
+
+def describe(found):
+    path, text = found
+    data = fm.parse(text)
+    return {'slug': path.stem, 'path': f'notes/{path.name}', 'labels': data.get('labels') or [], 'outcome': data.get('outcome')}
+
+
+def as_date(value):
+    return datetime.date.fromisoformat(value) if isinstance(value, str) and re.fullmatch(r'\d{4}-\d{2}-\d{2}', value) else value
+
+
+def note_text(n):
+    data = {'title': n['title'], 'labels': n['labels'], 'created': as_date(n['created']), 'captured': as_date(n['captured']),
+            'source': n['source']}
+    if n.get('related'):
+        data['related'] = n['related']
+    return '---\n' + fm.dump(data) + '---\n\n' + n['body'].rstrip('\n') + '\n'
+
+
+def lookup(vault, manifest):
+    index = filed_index(vault)
+    out = {}
+    for n in manifest.get('notes', []):
+        ref = _ingest_keys.thought_ref(n['source'], n['body'])
+        found = index.get((n['source'], _ingest_keys.body_md5(n['body'])))
+        if found:
+            try:
+                out[ref] = describe(found)
+            except fm.NoteError as e:
+                out[ref] = {'failed': f'{found[0].name}: {e}'}
+    return out
+
+
+def write(vault, manifest):
+    check_manifest_paths(vault, manifest)
+    notes = manifest.get('notes', [])
+    for n in notes:
+        if not n['body'].strip():
+            sys.exit(f'ABORT (iron rule): empty body for "{n["title"]}" — nothing committed')
+    notes_dir = vault / 'notes'
+    index = filed_index(vault)
+    results = {}
+    for n in notes:
+        ref = _ingest_keys.thought_ref(n['source'], n['body'])
+        key = (n['source'], _ingest_keys.body_md5(n['body']))
+        if key in index:
+            try:
+                results[ref] = dict(describe(index[key]), status='skipped')
+            except fm.NoteError as e:
+                results[ref] = {'failed': f'{index[key][0].name}: {e}'}
+            continue
         dest, i = notes_dir / f'{slugify(n["title"])}.md', 2
         while dest.exists():
             dest, i = notes_dir / f'{slugify(n["title"])}-{i}.md', i + 1
-        dest.write_text(emit_frontmatter(n) + body.rstrip('\n') + '\n', encoding='utf-8')
-        _, back = split_note(dest.read_text(encoding='utf-8'))
-        after = md5(back.rstrip('\n'))
-        if before != after or (len(body) > 0 and len(back) == 0):
-            sys.exit(f'ABORT (iron rule): body verify failed for {dest.name} '
-                     f'(before md5 {before}, after md5 {after}) — no watermarks committed')
-        report['written'].append(str(dest.relative_to(vault)))
+        try:
+            dest.write_text(note_text(n), encoding='utf-8')
+            text = dest.read_text(encoding='utf-8')
+        except OSError as e:
+            results[ref] = {'failed': f'{dest.name}: {e.strerror}'}
+            continue
+        before, after = _ingest_keys.body_md5(n['body']), _ingest_keys.body_md5(fm.body_of(text))
+        if before != after:
+            sys.exit(f'ABORT (iron rule): body verify failed for {dest.name} (before md5 {before}, after md5 {after}) — no watermarks committed')
+        index[key] = (dest, text)
+        results[ref] = {'slug': dest.stem, 'path': f'notes/{dest.name}', 'status': 'written', 'outcome': None}
+    return {'results': results}
 
-    # Phase 2 — commit points, strictly ordered.
-    for rel in manifest.get('mark_ingested', []):
+
+def rewrite(vault, plan):
+    """routed_to is unioned, never removed; labels are replaced only when the plan carries them."""
+    rewritten, failed = [], []
+    for entry in plan.get('notes', []):
+        path = vault / 'notes' / f'{entry["slug"]}.md'
+        try:
+            text, stamp = fm.read(path)
+            data = fm.parse(text)
+            before = dict(data)
+            if entry.get('routed_to'):
+                merged = list(data.get('routed_to') or [])
+                seen = {(t['container'], t['artifact'], t['name']) for t in merged}
+                for t in entry['routed_to']:
+                    if (t['container'], t['artifact'], t['name']) not in seen:
+                        merged.append(t)
+                data['routed_to'] = merged
+            if 'labels' in entry:
+                data['labels'] = entry['labels']
+            if data != before:
+                fm.rewrite(path, text, stamp, data)
+                rewritten.append(f'notes/{path.name}')
+        except (fm.NoteError, OSError, UnicodeDecodeError) as e:
+            failed.append({'slug': entry['slug'], 'reason': str(e)})
+    return {'rewritten': rewritten, 'failed': failed}
+
+
+def mark(vault, rels):
+    done = []
+    for rel in rels:
         p = vault / rel
         text = p.read_text(encoding='utf-8')
-        if re.search(r'^ingested:\s*true\s*$', text[4:text.find('\n---', 4)] if text.startswith('---\n') else '', re.M):
+        if text.startswith('---\n') and re.search(r'^ingested:\s*true\s*$', text[4:text.find('\n---', 4)], re.M):
             pass
         elif text.startswith('---\n'):
             p.write_text(text.replace('---\n', '---\ningested: true\n', 1), encoding='utf-8')
         else:
             p.write_text('---\ningested: true\n---\n' + text, encoding='utf-8')
-        report['marked'].append(rel)
-    if manifest.get('advance'):
-        import yaml
-        ip = vault / '_machine' / 'ingest_paths.yml'
-        data = yaml.safe_load(ip.read_text(encoding='utf-8')) or {'sources': []}
-        for adv in manifest['advance']:
-            for s in data.get('sources') or []:
-                if s.get('path') == adv['path']:
-                    s['last_read'] = adv['last_read']
-                    report['advanced'].append(adv['path'])
-        ip.write_text(yaml.safe_dump(data, sort_keys=False), encoding='utf-8')
-    for mv in manifest.get('archive_moves', []):
+        done.append(rel)
+    return done
+
+
+def advance(vault, entries):
+    if not entries:
+        return []
+    import yaml
+    ip = vault / '_machine' / 'ingest_paths.yml'
+    data = yaml.safe_load(ip.read_text(encoding='utf-8')) or {'sources': []}
+    done = []
+    for adv in entries:
+        for s in data.get('sources') or []:
+            if s.get('path') == adv['path']:
+                s['last_read'] = adv['last_read']
+                done.append(adv['path'])
+    ip.write_text(yaml.safe_dump(data, sort_keys=False), encoding='utf-8')
+    return done
+
+
+def archive(vault, moves):
+    done = []
+    for mv in moves:
         src = Path(mv['from']).expanduser()
         dest_dir = vault / '_machine' / 'logs' / 'ingest' / mv['date']
         dest_dir.mkdir(parents=True, exist_ok=True)
@@ -133,9 +210,36 @@ def main():
         while dest.exists():
             dest, i = dest_dir / f'{stem}-{i}{suffix}', i + 1
         shutil.move(str(src), dest)
-        report['moved'].append(str(dest.relative_to(vault)))
+        done.append(str(dest.relative_to(vault)))
+    return done
 
-    print(json.dumps(report, indent=2))
+
+def finish(vault, plan):
+    """Commit points, strictly ordered, then report.json with what dispatch-targets gathered: routed, held, warnings."""
+    check_manifest_paths(vault, plan)
+    report_path = Path(plan['report_path'])
+    if not within(report_path.resolve(), (vault / '_machine' / 'logs' / 'ingest').resolve()):
+        sys.exit(f'ABORT: report_path outside the run logs: {report_path}')
+    report = dict(plan.get('report', {}))
+    report['marked'] = mark(vault, plan.get('mark_ingested', []))
+    report['advanced'] = advance(vault, plan.get('advance', []))
+    report['moved'] = archive(vault, plan.get('archive_moves', []))
+    report_path.write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
+    return report
+
+
+COMMANDS = {'lookup': lookup, 'write': write, 'rewrite': rewrite, 'finish': finish}
+
+
+def main():
+    if len(sys.argv) != 4 or sys.argv[1] not in COMMANDS:
+        sys.exit('usage: file-notes lookup|write|rewrite|finish VAULT_PATH JSON_FILE')
+    vault = Path(sys.argv[2]).expanduser()
+    if not (vault / 'notes').is_dir():
+        sys.exit(f'vault not found (no notes/ under {vault})')
+    data = json.loads(Path(sys.argv[3]).read_text(encoding='utf-8'))
+    print(json.dumps(COMMANDS[sys.argv[1]](vault, data), indent=2))
+
 
 if __name__ == '__main__':
     main()

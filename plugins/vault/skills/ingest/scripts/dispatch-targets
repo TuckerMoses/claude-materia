@@ -1,0 +1,342 @@
+#!/usr/bin/env python3
+"""Route thoughts, dispatch their writers in order, and record what happened. Names no label and no sink.
+
+  dispatch-targets route VAULT MANIFEST
+      For the gate. Per thought: the labels to propose (a filed note's stored labels win, invariant 5), the targets
+      those labels resolve to, anything unresolved, and any routing warnings. Writes nothing.
+
+  dispatch-targets run VAULT MANIFEST --mode silent|interactive [--no-journal]
+      Write the id-supplying target, then the others in order; then routed_to; then, for fully successful units only,
+      markers, watermarks and moves; then report.json beside the manifest. Exits 0 even with held units: commit-run
+      must still run, and it is what exits non-zero on held. Exits non-zero only if the run failed before writing.
+
+--no-journal is for a run scoped to one external source, whose closed day-files are not this run's business.
+"""
+import argparse
+import datetime
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+import jsonschema
+import yaml
+
+import _ingest_keys
+
+HERE = Path(__file__).resolve().parent
+DAY_SOURCE = re.compile(r'^journal/(\d{4}-\d{2}-\d{2})$')
+DIARY = ('diary', 'diary-only', 'diary_only')
+
+
+def die(reason):
+    sys.exit(' '.join(str(reason).split()))
+
+
+def lib():
+    root = os.environ.get('AGENT_LIB')
+    if not root or not os.path.isdir(root):
+        die('AGENT_LIB unset or unresolvable')
+    return root
+
+
+def load_table():
+    with open(HERE / 'dispatch-table.yml', encoding='utf-8') as f:
+        table = yaml.safe_load(f)
+    with open(HERE / 'dispatch-table.schema.json', encoding='utf-8') as f:
+        schema = json.load(f)
+    error = jsonschema.exceptions.best_match(jsonschema.Draft7Validator(schema).iter_errors(table))
+    if error:
+        die(f'dispatch-table.yml fails its schema: {error.message}')
+    return table['artifacts']
+
+
+def writer_path(name):
+    beside = HERE / name
+    return str(beside) if beside.exists() else os.path.join(lib(), 'functions', name)
+
+
+def call(argv, stdin=None):
+    return subprocess.run(argv, input=stdin, capture_output=True, text=True)
+
+
+def file_notes(command, vault, payload):
+    """Run one file-notes step on a temp JSON file. A failure here is an iron-rule abort: it stops the run."""
+    with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False) as f:
+        json.dump(payload, f)
+    try:
+        r = call([str(HERE / 'file-notes'), command, str(vault), f.name])
+    finally:
+        os.unlink(f.name)
+    if r.returncode != 0:
+        die(r.stderr or f'file-notes {command} failed')
+    return json.loads(r.stdout)
+
+
+def thoughts_of(manifest):
+    """The manifest's thoughts with their refs, one per ref. A retry's split decides these, never a stored route."""
+    seen, out = set(), []
+    for n in manifest.get('notes', []):
+        if n.get('disposition') in DIARY:
+            continue
+        ref = _ingest_keys.thought_ref(n['source'], n['body'])
+        if ref not in seen:
+            seen.add(ref)
+            out.append(dict(n, ref=ref))
+    return out
+
+
+def route(records):
+    r = call([os.path.join(lib(), 'functions', 'route')], stdin=json.dumps(records))
+    if r.returncode != 0:
+        die(f'route failed: {r.stderr}')
+    return {x['ref']: x for x in json.loads(r.stdout)}
+
+
+def plain(target):
+    return {k: target[k] for k in ('container', 'artifact', 'name')}
+
+
+def proposed_labels(thought, stored):
+    found = stored.get(thought['ref'])
+    return found['labels'] if found and 'labels' in found else thought['labels']
+
+
+def cmd_route(vault, manifest):
+    thoughts = thoughts_of(manifest)
+    stored = file_notes('lookup', vault, {'notes': thoughts})
+    routes = route([{'ref': t['ref'], 'labels': proposed_labels(t, stored)} for t in thoughts])
+    print(json.dumps([dict(routes[t['ref']], labels=proposed_labels(t, stored), already_filed=t['ref'] in stored,
+                           failed=stored.get(t['ref'], {}).get('failed')) for t in thoughts], indent=2))
+
+
+def unit_of(source):
+    """A journal thought's day-file, or None for an external source."""
+    match = DAY_SOURCE.match(source)
+    return f'journal/{match.group(1)}.md' if match else None
+
+
+def is_open_day(unit):
+    return unit is not None and Path(unit).stem >= datetime.date.today().isoformat()
+
+
+class Run:
+    def __init__(self, vault, manifest_path, mode, include_journal):
+        self.vault, self.manifest_path, self.mode = vault, manifest_path, mode
+        self.include_journal = include_journal
+        with open(manifest_path, encoding='utf-8') as f:
+            self.manifest = json.load(f)
+        self.table = load_table()
+        self.thoughts = thoughts_of(self.manifest)
+        self.failed = {}     # ref -> [{ref, id?, target, reason}]
+        self.success = {}    # ref -> [targets]
+        self.ids = {}        # ref -> id from the id-supplying writer
+        self.outcome = {}    # ref -> outcome stored on the note
+        self.written, self.skipped, self.warnings = [], [], []
+
+    def fail(self, thought, target, reason):
+        entry = {'ref': thought['ref'], 'target': target, 'reason': ' '.join(str(reason).split())}
+        if thought['ref'] in self.ids:
+            entry['id'] = self.ids[thought['ref']]
+        self.failed.setdefault(thought['ref'], []).append(entry)
+
+    def ok(self, thought, target):
+        self.success.setdefault(thought['ref'], []).append(plain(target))
+
+    def confirm_labels(self, stored):
+        """Under --silent a filed note's stored labels stand. At a gate, the confirmed labels may differ."""
+        self.changed = {}
+        for t in self.thoughts:
+            found = stored.get(t['ref'])
+            if not found or 'labels' not in found:
+                continue
+            if self.mode == 'silent':
+                t['labels'] = found['labels']
+            elif t['labels'] != found['labels']:
+                self.changed[t['ref']] = t['labels']
+
+    def check_table(self, routes):
+        """Step 2: an unknown artifact fails the run before anything is written."""
+        for r in routes.values():
+            for target in r['targets']:
+                if target['artifact'] not in self.table:
+                    die(f'artifact {target["artifact"]} has no dispatch table entry; nothing written. '
+                        'Revert the offending lib commit with jj.')
+
+    def targets_in_order(self, route_result):
+        return sorted(route_result['targets'], key=lambda t: self.table[t['artifact']]['order'])
+
+    def write_suppliers(self, routes, stored):
+        """Step 3. A supplier failure, including an unusable existing note, leaves the thought's other targets alone."""
+        by_writer = {}
+        for t in self.thoughts:
+            for target in self.targets_in_order(routes[t['ref']]):
+                if self.table[target['artifact']]['supplies_id']:
+                    found = stored.get(t['ref'], {})
+                    if 'failed' in found:
+                        self.fail(t, plain(target), found['failed'])
+                    else:
+                        by_writer.setdefault(target['artifact'], []).append((t, target))
+        for artifact, pairs in sorted(by_writer.items(), key=lambda kv: self.table[kv[0]]['order']):
+            notes = [{k: v for k, v in t.items() if k != 'ref'} for t, _ in pairs]
+            payload = {'notes': notes}
+            for key in ('mark_ingested', 'archive_moves'):
+                payload[key] = self.manifest.get(key, [])
+            results = self.batch(artifact, payload)
+            for t, target in pairs:
+                result = results.get(t['ref'], {'failed': 'writer returned nothing for this thought'})
+                if 'failed' in result:
+                    self.fail(t, plain(target), result['failed'])
+                    continue
+                self.ids[t['ref']] = result['slug']
+                self.outcome[t['ref']] = result.get('outcome')
+                self.ok(t, target)
+                (self.written if result['status'] == 'written' else self.skipped).append(result['path'])
+
+    def batch(self, artifact, payload):
+        with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False) as f:
+            json.dump(payload, f)
+        try:
+            r = call([writer_path(self.table[artifact]['writer']), 'write', str(self.vault), f.name])
+        finally:
+            os.unlink(f.name)
+        if r.returncode != 0:
+            die(r.stderr or f'{artifact} writer failed')
+        return json.loads(r.stdout)['results']
+
+    def write_others(self, routes):
+        """Step 4. Skipped for a note carrying an outcome: the ritual finished the item while the day-file was held."""
+        for t in self.thoughts:
+            supplied = t['ref'] in self.ids
+            supplier_failed = any(self.table[x['target']['artifact']]['supplies_id'] for x in self.failed.get(t['ref'], [])
+                                  if x['target'].get('artifact') in self.table)
+            for target in self.targets_in_order(routes[t['ref']]):
+                entry = self.table[target['artifact']]
+                if entry['supplies_id'] or supplier_failed:
+                    continue
+                if entry['takes_id'] and not supplied:
+                    self.fail(t, plain(target), 'no id source')
+                    continue
+                if self.outcome.get(t['ref']):
+                    continue
+                self.write_one(t, target, entry)
+
+    def write_one(self, t, target, entry):
+        record = {'body': t['body'], 'labels': t['labels'], 'source': t['source'], 'title': t['title'],
+                  'date': str(t['captured'])}
+        if entry['takes_id']:
+            record['id'] = self.ids[t['ref']]
+        r = call([writer_path(entry['writer']), '--path', target['path'], '--thought', json.dumps(record)])
+        if r.returncode == 0:
+            self.ok(t, target)
+        else:
+            self.fail(t, plain(target), r.stderr or f'{entry["writer"]} failed')
+
+    def record_routes(self, routes):
+        """Every unresolved route, and a thought no rule matched at all, is a failed target. Nothing is dropped."""
+        for t in self.thoughts:
+            r = routes[t['ref']]
+            for u in r['unresolved']:
+                self.fail(t, u['target'], u['reason'])
+            if not r['targets'] and not r['unresolved']:
+                self.fail(t, {}, 'no routing rule matched this thought')
+            self.warnings += [{'ref': t['ref'], 'title': t['title'], 'message': m} for m in r.get('warnings', [])]
+
+    def write_routed_to(self):
+        """Step 5, first half. Only successful targets are recorded; gate-changed labels go with them."""
+        slugs = {t['ref']: self.ids[t['ref']] for t in self.thoughts if t['ref'] in self.ids}
+        entries = []
+        for t in self.thoughts:
+            if t['ref'] in slugs:
+                entry = {'slug': slugs[t['ref']], 'routed_to': self.success.get(t['ref'], [])}
+                if t['ref'] in self.changed:
+                    entry['labels'] = self.changed[t['ref']]
+                entries.append(entry)
+        result = file_notes('rewrite', self.vault, {'notes': entries})
+        by_slug = {slug: ref for ref, slug in slugs.items()}
+        thoughts = {t['ref']: t for t in self.thoughts}
+        for failure in result['failed']:
+            ref = by_slug[failure['slug']]
+            self.fail(thoughts[ref], {'artifact': 'routed_to'}, failure['reason'])
+        return result['rewritten']
+
+    def closed_candidates(self):
+        r = call([str(HERE / 'journal-candidates'), str(self.vault)])
+        if r.returncode != 0:
+            die(f'journal-candidates failed: {r.stderr}')
+        return json.loads(r.stdout)['closed']
+
+    def settle_units(self):
+        """Which units are held, and which commit points may land. The open day holds nothing and is never marked."""
+        by_unit, external, open_day = {}, [], []
+        thoughts = {t['ref']: t for t in self.thoughts}
+        for ref, failures in self.failed.items():
+            unit = unit_of(thoughts[ref]['source'])
+            if is_open_day(unit):
+                open_day += failures
+            elif unit:
+                by_unit.setdefault(unit, []).extend(failures)
+            else:
+                external += failures
+        wanted = [u for u in self.manifest.get('mark_ingested', []) if not is_open_day(u)]
+        if self.include_journal:
+            for unit in self.closed_candidates():
+                if unit not in wanted and unit not in by_unit:
+                    by_unit[unit] = [{'target': {}, 'reason': "not accounted for by this run's manifest"}]
+        held = [{'day_file': u, 'failed': f} for u, f in sorted(by_unit.items())]
+        advance, moves = self.manifest.get('advance', []), self.manifest.get('archive_moves', [])
+        if external:
+            held.append({'source': 'external', 'failed': external})
+            advance, moves = [], []
+        return held, open_day, [u for u in wanted if u not in by_unit], advance, moves
+
+    def run(self):
+        stored = file_notes('lookup', self.vault, {'notes': self.thoughts})
+        self.confirm_labels(stored)
+        routes = route([{'ref': t['ref'], 'labels': t['labels']} for t in self.thoughts])
+        self.check_table(routes)
+        self.record_routes(routes)
+        self.write_suppliers(routes, stored)
+        self.write_others(routes)
+        rewritten = self.write_routed_to()
+        held, open_day, marks, advance, moves = self.settle_units()
+        routed = [{'id': self.ids[t['ref']], 'targets': self.success.get(t['ref'], []), 'labels': t['labels'],
+                   'source': t['source'], 'body_md5': _ingest_keys.body_md5(t['body'])}
+                  for t in self.thoughts if t['ref'] in self.ids]
+        report = {'written': self.written, 'skipped': self.skipped, 'rewritten': rewritten, 'routed': routed,
+                  'held': held, 'open_day_failed': open_day, 'warnings': self.warnings}
+        plan = {'mark_ingested': marks, 'advance': advance, 'archive_moves': moves, 'report': report,
+                'report_path': str(Path(self.manifest_path).resolve().parent / 'report.json')}
+        print(json.dumps(file_notes('finish', self.vault, plan), indent=2))
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest='command', required=True)
+    r = sub.add_parser('route')
+    r.add_argument('vault')
+    r.add_argument('manifest')
+    d = sub.add_parser('run')
+    d.add_argument('vault')
+    d.add_argument('manifest')
+    d.add_argument('--mode', required=True, choices=['silent', 'interactive'])
+    d.add_argument('--no-journal', action='store_true')
+    args = p.parse_args()
+    vault = Path(args.vault).expanduser()
+    if not (vault / 'notes').is_dir():
+        die(f'vault not found (no notes/ under {vault})')
+    try:
+        if args.command == 'route':
+            with open(args.manifest, encoding='utf-8') as f:
+                cmd_route(vault, json.load(f))
+        else:
+            Run(vault, args.manifest, args.mode, not args.no_journal).run()
+    except (OSError, ValueError, KeyError) as e:
+        die(f'{type(e).__name__}: {e}')
+
+
+if __name__ == '__main__':
+    main()
