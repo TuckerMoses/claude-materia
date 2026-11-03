@@ -271,7 +271,7 @@ class Run:
 
     def settle_units(self):
         """Which units are held, and which commit points may land. The open day holds nothing and is never marked."""
-        by_unit, external, open_day = {}, [], []
+        by_unit, external, open_day = {}, {}, []
         thoughts = {t['ref']: t for t in self.thoughts}
         for ref, failures in self.failed.items():
             unit = unit_of(thoughts[ref]['source'])
@@ -280,7 +280,7 @@ class Run:
             elif unit:
                 by_unit.setdefault(unit, []).extend(failures)
             else:
-                external += failures
+                external.setdefault(thoughts[ref]['source'], []).extend(failures)
         wanted = [u for u in self.manifest.get('mark_ingested', []) if not is_open_day(u)]
         if self.include_journal:
             for unit in self.closed_candidates():
@@ -288,10 +288,27 @@ class Run:
                     by_unit[unit] = [{'target': {}, 'reason': "not accounted for by this run's manifest"}]
         held = [{'day_file': u, 'failed': f} for u, f in sorted(by_unit.items())]
         advance, moves = self.manifest.get('advance', []), self.manifest.get('archive_moves', [])
+        for source, failures in sorted(external.items()):
+            held.append({'source': source, 'failed': failures})
         if external:
-            held.append({'source': 'external', 'failed': external})
-            advance, moves = [], []
+            advance, moves = self.independent_sources(advance, moves, list(external))
         return held, open_day, [u for u in wanted if u not in by_unit], advance, moves
+
+    def independent_sources(self, advance, moves, failed_sources):
+        """Sources are independent: only a failed source's commit points wait. A thought's source names its registered
+        path; a failure that names none could belong to any source, so then every source waits."""
+        with open(self.vault / '_machine' / 'ingest_paths.yml', encoding='utf-8') as f:
+            registry = yaml.safe_load(f) or {}
+        paths = [s['path'] for s in registry.get('sources') or [] if isinstance(s, dict) and 'path' in s]
+        blocked = set()
+        for source in failed_sources:
+            owners = [p for p in paths if p in source]
+            if not owners:
+                return [], []
+            blocked.update(owners)
+        under = lambda moved, root: str(Path(moved).expanduser()).startswith(str(Path(root).expanduser()))
+        return ([a for a in advance if a['path'] not in blocked],
+                [m for m in moves if not any(under(m['from'], root) for root in blocked)])
 
     def run(self):
         stored = file_notes('lookup', self.vault, {'notes': self.thoughts})

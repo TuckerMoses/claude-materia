@@ -90,8 +90,8 @@ the vocabulary by hand. Retiring a label is deferred: `label-retire` is not buil
 ## Source registry
 
 `_machine/ingest_paths.yml` lists external ingest sources. **Loop guard:** any label appearing in a routing rule
-whose targets include a non-`notes` artifact is *outbound*, and a source's lens may never include one. Ingest skips
-source lines carrying a vault-minted id, and `ingest status` flags a violation.
+whose targets include a non-`notes` artifact is *outbound*, and a source's lens may never include one. `ingest status` flags a violation.
+A vault-minted id is a note's slug, its filename without `.md`. Skip a source line containing `[[<slug>]]` or `<container>/<slug>` for an existing note: that line came from this vault.
 
 ## Binding schema (the define-once home for the seam)
 

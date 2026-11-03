@@ -12,6 +12,21 @@ import _note_frontmatter as fm
 
 DAY = re.compile(r'^\d{4}-\d{2}-\d{2}\.md$')
 
+def registered_sources(data):
+    """Registry entries usable by a reader. A malformed one is reported and skipped, never fatal."""
+    sources = data.get('sources') or []
+    if not isinstance(sources, list):
+        print('malformed registry: sources is not a list')
+        return []
+    good = []
+    for s in sources:
+        if isinstance(s, dict) and isinstance(s.get('path'), str) and s.get('track') in ('vcs', 'destructive'):
+            good.append(s)
+        else:
+            print(f'malformed registry entry: {s}')
+    return good
+
+
 def main():
     if len(sys.argv) != 2:
         sys.exit('usage: ingest-status VAULT_PATH')
@@ -25,7 +40,7 @@ def main():
     print(f"pending closed day-files: {len(cand['closed'])}"
           + (f" ({', '.join(p.split('/')[-1] for p in cand['closed'])})" if cand['closed'] else ''))
     data = yaml.safe_load((vault / '_machine' / 'ingest_paths.yml').read_text(encoding='utf-8')) or {}
-    for s in data.get('sources') or []:
+    for s in registered_sources(data):
         if s['track'] == 'vcs' and s.get('last_read'):
             n = subprocess.run(['git', 'rev-list', '--count', f"{s['last_read']}..HEAD"],
                                cwd=Path(s['path']).expanduser(), capture_output=True, text=True)
@@ -144,7 +159,11 @@ def has_backlog(routed):
 
 
 def outbound_patterns(rules):
-    """Decision 22, derived: any label appearing in a rule whose targets include a non-notes artifact."""
+    """Decision 22, derived: any label appearing in a rule whose targets include a non-notes artifact.
+
+    A `none` term does not count: it sends nothing anywhere, it only stops a rule firing, so a lens carrying that
+    label cannot feed a loop through it.
+    """
     found = set()
     for rule in rules:
         if all(t['artifact'] == 'notes' for t in rule['to']):
@@ -159,11 +178,26 @@ def outbound_patterns(rules):
 
 def lens_violations(vault):
     path = Path(os.environ['AGENT_LIB']) / 'data' / 'routing.yml'
-    rules = (yaml.safe_load(path.read_text(encoding='utf-8')) or {}).get('rules', []) if path.exists() else []
-    patterns = outbound_patterns(rules)
+    if not path.exists():
+        print('loop guard not checked: routing.yml is absent')
+        return []
+    patterns = outbound_patterns((yaml.safe_load(path.read_text(encoding='utf-8')) or {}).get('rules', []))
     registry = yaml.safe_load((vault / '_machine' / 'ingest_paths.yml').read_text(encoding='utf-8')) or {}
-    return [f'{s["path"]}: lens label {label} is outbound' for s in registry.get('sources') or []
-            for label in s.get('lens') or [] if any(fnmatch.fnmatchcase(label, p) for p in patterns)]
+    found = []
+    with open(os.devnull, 'w') as quiet:  # main already reported malformed entries
+        stdout, sys.stdout = sys.stdout, quiet
+        try:
+            sources = registered_sources(registry)
+        finally:
+            sys.stdout = stdout
+    for s in sources:
+        lens = s.get('lens') or []
+        if not isinstance(lens, list) or not all(isinstance(x, str) for x in lens):
+            found.append(f'{s["path"]}: lens is not a list of labels, so it cannot be checked')
+            continue
+        found += [f'{s["path"]}: lens label {label} is outbound' for label in lens
+                  if any(fnmatch.fnmatchcase(label, p) for p in patterns)]
+    return found
 
 
 def reconcile(vault):

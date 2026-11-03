@@ -62,7 +62,7 @@ def filed_index(vault):
     index = {}
     for p in sorted((vault / 'notes').glob('*.md')):
         try:
-            text = p.read_text(encoding='utf-8')
+            text = fm.read_text(p)
         except (OSError, UnicodeDecodeError):
             continue
         head, _ = fm.split(text)
@@ -70,15 +70,23 @@ def filed_index(vault):
             continue
         match = re.search(r'^source:\s*(.*?)\s*$', head, re.M)
         if match:
-            key = (match.group(1).strip('"\''), _ingest_keys.body_md5(fm.body_of(text)))
+            key = index_key(match.group(1).strip('"\''), fm.body_of(text))
             index.setdefault(key, (p, text))
     return index
+
+
+def index_key(source, body):
+    """Blank lines before a body are not part of it: the note format puts one there. Trailing ones are in the md5."""
+    return (source, _ingest_keys.body_md5(body.lstrip('\n')))
 
 
 def describe(found):
     path, text = found
     data = fm.parse(text)
-    return {'slug': path.stem, 'path': f'notes/{path.name}', 'labels': data.get('labels') or [], 'outcome': data.get('outcome')}
+    labels = data.get('labels') or []
+    if not isinstance(labels, list) or not all(isinstance(x, str) for x in labels):
+        raise fm.NoteError('labels is not a list of strings')
+    return {'slug': path.stem, 'path': f'notes/{path.name}', 'labels': labels, 'outcome': data.get('outcome')}
 
 
 def as_date(value):
@@ -90,7 +98,7 @@ def note_text(n):
             'source': n['source']}
     if n.get('related'):
         data['related'] = n['related']
-    return '---\n' + fm.dump(data) + '---\n\n' + n['body'].rstrip('\n') + '\n'
+    return '---\n' + fm.dump(data) + '---\n\n' + n['body'].strip('\n') + '\n'
 
 
 def lookup(vault, manifest):
@@ -98,7 +106,7 @@ def lookup(vault, manifest):
     out = {}
     for n in manifest.get('notes', []):
         ref = _ingest_keys.thought_ref(n['source'], n['body'])
-        found = index.get((n['source'], _ingest_keys.body_md5(n['body'])))
+        found = index.get(index_key(n['source'], n['body']))
         if found:
             try:
                 out[ref] = describe(found)
@@ -118,7 +126,7 @@ def write(vault, manifest):
     results = {}
     for n in notes:
         ref = _ingest_keys.thought_ref(n['source'], n['body'])
-        key = (n['source'], _ingest_keys.body_md5(n['body']))
+        key = index_key(n['source'], n['body'])
         if key in index:
             try:
                 results[ref] = dict(describe(index[key]), status='skipped')
@@ -129,12 +137,13 @@ def write(vault, manifest):
         while dest.exists():
             dest, i = notes_dir / f'{slugify(n["title"])}-{i}.md', i + 1
         try:
-            dest.write_text(note_text(n), encoding='utf-8')
-            text = dest.read_text(encoding='utf-8')
+            with open(dest, 'w', encoding='utf-8', newline='') as f:
+                f.write(note_text(n))
+            text = fm.read_text(dest)
         except OSError as e:
             results[ref] = {'failed': f'{dest.name}: {e.strerror}'}
             continue
-        before, after = _ingest_keys.body_md5(n['body']), _ingest_keys.body_md5(fm.body_of(text))
+        before, after = _ingest_keys.body_md5(n['body'].lstrip('\n')), _ingest_keys.body_md5(fm.body_of(text))
         if before != after:
             sys.exit(f'ABORT (iron rule): body verify failed for {dest.name} (before md5 {before}, after md5 {after}) — no watermarks committed')
         index[key] = (dest, text)
@@ -152,7 +161,10 @@ def rewrite(vault, plan):
             data = fm.parse(text)
             before = dict(data)
             if entry.get('routed_to'):
-                merged = list(data.get('routed_to') or [])
+                merged = data.get('routed_to') or []
+                if not isinstance(merged, list) or not all(isinstance(t, dict) and {'container', 'artifact', 'name'} <= set(t) for t in merged):
+                    raise fm.NoteError('existing routed_to is malformed')
+                merged = list(merged)
                 seen = {(t['container'], t['artifact'], t['name']) for t in merged}
                 for t in entry['routed_to']:
                     if (t['container'], t['artifact'], t['name']) not in seen:

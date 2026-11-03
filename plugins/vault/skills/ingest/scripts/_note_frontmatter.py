@@ -48,11 +48,16 @@ def dump(data):
     return yaml.safe_dump(data, sort_keys=False, allow_unicode=True, default_flow_style=None, width=10 ** 6)
 
 
+def read_text(path):
+    """A note's text exactly as stored: line endings are part of a verbatim body."""
+    with open(path, encoding='utf-8', newline='') as f:
+        return f.read()
+
+
 def read(path):
     """(text, stamp) for a note; the stamp is what rewrite compares against."""
-    p = Path(path)
-    st = p.stat()
-    return p.read_text(encoding='utf-8'), (st.st_mtime_ns, st.st_size)
+    st = Path(path).stat()
+    return read_text(path), (st.st_mtime_ns, st.st_size)
 
 
 def rewrite(path, text, stamp, data):
@@ -66,7 +71,8 @@ def rewrite(path, text, stamp, data):
     p = Path(path)
     tmp = p.with_name(f'.{p.name}.tmp')
     try:
-        tmp.write_text(new, encoding='utf-8')
+        with open(tmp, 'w', encoding='utf-8', newline='') as f:
+            f.write(new)
         st = p.stat()
         if (st.st_mtime_ns, st.st_size) != stamp:
             raise NoteError('note changed while this script was running; nothing written')

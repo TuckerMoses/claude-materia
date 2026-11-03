@@ -174,7 +174,7 @@ from the sections below rather than executing them.
   label's `when_to_apply` is the extraction instruction). Out-of-lens content is out of scope —
   it stays in the source, unextracted, never parked. `needs-label` is journal-only: the journal
   is the unfiltered brain-stream; a registered source was pointed here through a deliberate lens.
-- **Loop guard:** skip any source line carrying a vault-minted id. A lens may never include an
+- **Loop guard:** A vault-minted id is a note's slug, its filename without `.md`. Skip a source line containing `[[<slug>]]` or `<container>/<slug>` for an existing note: that line came from this vault. A lens may never include an
   outbound label (one that routes to a non-notes artifact); `status` flags a violation.
 
 ## Silent mode (`--silent`)

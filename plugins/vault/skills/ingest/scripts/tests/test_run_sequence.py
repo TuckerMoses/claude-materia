@@ -477,6 +477,84 @@ class ReRuns(Base):
         self.assertTrue(self.marked(D1))
 
 
+class OddNotes(Base):
+    def filed(self, frontmatter):
+        (self.vault / 'notes' / 'odd.md').write_text(f'---\ntitle: T\nsource: journal/{D1}\n{frontmatter}---\n\nodd body\n')
+
+    def only_its_own_thought_fails(self, report):
+        self.assertIn('notes/fine.md', report['written'])
+        self.assertEqual(len(report['held'][0]['failed']), 1)
+
+    def test_malformed_routed_to_fails_only_its_own_thought(self):
+        self.day(D1)
+        for shape in ('routed_to:\n- foo\n', 'routed_to: nope\n', 'routed_to:\n- {container: x}\n'):
+            with self.subTest(shape):
+                self.filed(shape + 'labels: [todo, workspace:values]\n')
+                report = self.dispatch([note('odd body', ['todo', 'workspace:values'], title='o'), note('fine', title='fine')], [f'journal/{D1}.md'])
+                self.assertEqual(report['held'][0]['day_file'], f'journal/{D1}.md')
+                self.assertIn('malformed', report['held'][0]['failed'][0]['reason'])
+                (self.vault / 'notes' / 'fine.md').unlink()
+                (self.tmp / 'values' / 'BACKLOG.yml').write_text('items: []\n')
+
+    def test_non_list_labels_fail_only_their_own_thought(self):
+        self.day(D1)
+        self.filed('labels: todo\n')
+        report = self.dispatch([note('odd body', ['todo'], title='o'), note('fine', title='fine')], [f'journal/{D1}.md'])
+        self.only_its_own_thought_fails(report)
+        self.assertIn('labels', report['held'][0]['failed'][0]['reason'])
+
+    def test_leading_blank_lines_are_not_an_abort_and_still_dedup(self):
+        self.day(D1)
+        n = [note('\n\nfoo bar', title='t')]
+        report = self.dispatch(n, [f'journal/{D1}.md'])
+        self.assertEqual(report['written'], ['notes/t.md'])
+        self.assertEqual(self.dispatch(n, [f'journal/{D1}.md'])['skipped'], ['notes/t.md'])
+        self.assertEqual([p.name for p in (self.vault / 'notes').iterdir()], ['t.md'])
+
+    def test_crlf_body_is_stored_verbatim_and_dedups(self):
+        self.day(D1)
+        n = [note('a\r\nb', title='t')]
+        self.assertEqual(self.dispatch(n, [f'journal/{D1}.md'])['written'], ['notes/t.md'])
+        with open(self.vault / 'notes' / 't.md', newline='') as f:
+            self.assertIn('a\r\nb', f.read())
+        self.assertEqual(self.dispatch(n, [f'journal/{D1}.md'])['skipped'], ['notes/t.md'])
+        report = self.script('note-outcome', self.vault, 't', 'done', '--resolved', '2026-02-01')
+        self.assertEqual(report.returncode, 0, report.stderr)
+        with open(self.vault / 'notes' / 't.md', newline='') as f:
+            self.assertIn('a\r\nb', f.read())
+
+
+class Sources(Base):
+    def setUp(self):
+        super().setUp()
+        self.a, self.b = self.tmp / 'src-a', self.tmp / 'src-b'
+        for d in (self.a, self.b):
+            d.mkdir()
+            (d / 'in.md').write_text('content\n')
+        (self.vault / '_machine' / 'ingest_paths.yml').write_text(yaml.safe_dump({'sources': [
+            {'path': str(self.a), 'track': 'destructive', 'lens': ['idea']},
+            {'path': str(self.b), 'track': 'destructive', 'lens': ['idea']}]}))
+
+    def run_sources(self, source_a_labels):
+        moves = [{'from': str(d / 'in.md'), 'date': '2026-07-05'} for d in (self.a, self.b)]
+        notes = [dict(note('from a', source_a_labels, title='a'), source=f'r {self.a} @1'),
+                 dict(note('from b', title='b'), source=f'r {self.b} @1')]
+        r = self.script('dispatch-targets', 'run', self.vault, self.manifest(notes, archive_moves=moves), '--mode', 'silent', '--no-journal')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return json.loads(r.stdout)
+
+    def test_one_failed_source_never_blocks_another(self):
+        report = self.run_sources(['todo', 'workspace:nope'])
+        self.assertEqual(len(report['moved']), 1)
+        self.assertTrue((self.a / 'in.md').exists())
+        self.assertFalse((self.b / 'in.md').exists())
+        self.assertEqual(len(report['held']), 1)
+        self.assertIn(str(self.a), report['held'][0]['source'])
+
+    def test_all_sources_succeeding_all_move(self):
+        self.assertEqual(len(self.run_sources(['idea'])['moved']), 2)
+
+
 class NoteOutcome(Base):
     def setUp(self):
         super().setUp()
@@ -566,6 +644,29 @@ class Status(Base):
         self.assertIn('lens label todo is outbound', out)
         self.assertIn('lens label workspace:values is outbound', out)
         self.assertNotIn('lens label idea', out)
+
+    def registry(self, sources):
+        (self.vault / '_machine' / 'ingest_paths.yml').write_text(yaml.safe_dump({'sources': sources}))
+
+    def test_a_lens_that_is_not_a_list_is_reported_not_missed(self):
+        self.registry([{'path': '/tmp/x', 'track': 'destructive', 'lens': 'todo'}])
+        self.assertIn('not a list of labels', self.status())
+        self.registry([{'path': '/tmp/x', 'track': 'destructive', 'lens': ['idea', 5]}])
+        self.assertIn('not a list of labels', self.status())
+
+    def test_malformed_registry_entries_are_reported_not_crashes(self):
+        for sources in (['foo'], [{'track': 'destructive'}], [{'path': '/tmp/x'}], 'x'):
+            (self.vault / '_machine' / 'ingest_paths.yml').write_text(yaml.safe_dump({'sources': sources}))
+            self.assertIn('malformed registry', self.status())
+
+    def test_absent_rules_are_stated_not_silently_clean(self):
+        (self.lib / 'data' / 'routing.yml').unlink()
+        self.assertIn('loop guard not checked', self.status())
+
+    def test_a_none_term_makes_nothing_outbound(self):
+        self.save_lib({'rules': [{'match': [{'none': ['x']}], 'to': [{'container': 'kernel', 'artifact': 'backlog'}]}]})
+        self.registry([{'path': '/tmp/x', 'track': 'destructive', 'lens': ['x']}])
+        self.assertNotIn('outbound', self.status())
 
     def test_the_catch_all_alone_makes_nothing_outbound(self):
         self.save_lib({'rules': [RULES['rules'][0]]})
