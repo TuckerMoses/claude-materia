@@ -13,7 +13,8 @@
 --no-journal is for a run scoped to one external source, whose closed day-files are not this run's business.
 --recovered records the interrupted run that `commit-run --recover` committed as this run's first action.
 Every child call times out after $VAULT_INGEST_CALL_TIMEOUT seconds (default 300): a timed-out writer is a failed
-target, so its unit is held; any other timed-out call aborts the run before markers, as any failure there does.
+target (a timed-out batch fails every thought in it), so its unit is held; any other timed-out call aborts the run
+before markers, as any failure there does.
 """
 import argparse
 import datetime
@@ -66,6 +67,7 @@ def writer_path(name):
 # Every call on the unattended path is bounded (spec, Nightly job: fail loud, never hang). A child that blocks, as one
 # did on a TCC prompt, is killed with its whole process group, so a grandchild cannot hold the pipes open.
 CALL_TIMEOUT = int(os.environ.get('VAULT_INGEST_CALL_TIMEOUT', '300'))
+TIMED_OUT = 124
 
 
 def call(argv, stdin=None):
@@ -78,8 +80,11 @@ def call(argv, stdin=None):
             os.killpg(proc.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
-        proc.communicate()
-        return subprocess.CompletedProcess(argv, 124, '', f'timed out after {CALL_TIMEOUT}s: {os.path.basename(argv[0])}')
+        try:
+            proc.communicate(timeout=5)
+        except subprocess.TimeoutExpired:  # a descendant that left the group still holds the pipes
+            pass
+        return subprocess.CompletedProcess(argv, TIMED_OUT, '', f'timed out after {CALL_TIMEOUT}s: {os.path.basename(argv[0])}')
     return subprocess.CompletedProcess(argv, proc.returncode, out, err)
 
 
@@ -207,6 +212,10 @@ class Run:
             for key in ('mark_ingested', 'archive_moves'):
                 payload[key] = self.manifest.get(key, [])
             results = self.batch(artifact, payload)
+            if isinstance(results, str):  # the batch timed out: every thought in it is a failed target, its unit held
+                for t, target in pairs:
+                    self.fail(t, plain(target), results)
+                continue
             for t, target in pairs:
                 result = results.get(t['ref'], {'failed': 'writer returned nothing for this thought'})
                 if 'failed' in result:
@@ -224,6 +233,8 @@ class Run:
             r = call([writer_path(self.table[artifact]['writer']), 'write', str(self.vault), f.name])
         finally:
             os.unlink(f.name)
+        if r.returncode == TIMED_OUT:
+            return r.stderr
         if r.returncode != 0:
             die(r.stderr or f'{artifact} writer failed')
         return json.loads(r.stdout)['results']

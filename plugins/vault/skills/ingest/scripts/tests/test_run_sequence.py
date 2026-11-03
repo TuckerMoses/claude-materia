@@ -731,7 +731,9 @@ class FailLoud(Base):
         self.dispatch([note('x', title='a')], [f'journal/{D1}.md'])
         (self.run_dir / 'report.json').write_text(json.dumps(dict(self.report(), written=['notes/absent.md'])))
         self.assertNotEqual(self.commit().returncode, 0)
-        self.assertNotIn('completed', self.report())
+        self.assertIs(self.report()['completed'], False)
+        self.next_run(2)
+        self.assertIsNone(self.recover())  # a rollback is not a kill: its markers are already gone
 
     def test_a_run_killed_before_its_commit_is_recovered_by_the_next(self):
         self.day(D1)
@@ -760,6 +762,54 @@ class FailLoud(Base):
         self.next_run(2)
         self.assertIsNone(self.recover())
         self.assertTrue((self.vault / 'notes' / 'hand-edit.md').exists())
+
+    def test_an_open_day_file_and_an_aborted_run_are_not_a_recovery(self):
+        (self.run_dir / 'run.json').write_text('{}')  # aborted before dispatch: no report
+        self.day(TODAY, 'captured this morning\n')
+        (self.vault / 'notes' / 'hand-edit.md').write_text('mine\n')
+        self.next_run(2)
+        self.assertIsNone(self.recover())
+        st = subprocess.run(['jj', 'diff', '--name-only'], cwd=self.vault, capture_output=True, text=True).stdout
+        self.assertIn(f'journal/{TODAY}.md', st)
+        self.assertIn('notes/hand-edit.md', st)
+
+    def test_recovery_commits_only_the_killed_runs_own_paths(self):
+        self.day(D1)
+        self.dispatch([note('x', title='a')], [f'journal/{D1}.md'])
+        self.day(TODAY, 'open day\n')
+        killed = self.run_id
+        self.next_run(2)
+        self.assertEqual(self.recover(), killed)
+        shown = subprocess.run(['jj', 'show', '--summary', '-r', '@-'], cwd=self.vault, capture_output=True, text=True).stdout
+        self.assertNotIn(f'journal/{TODAY}.md', shown)
+        self.assertIn('notes/a.md', shown)
+
+    def test_a_kill_after_completed_was_written_but_before_the_commit_is_recovered(self):
+        self.day(D1)
+        self.dispatch([note('x', title='a')], [f'journal/{D1}.md'])
+        (self.run_dir / 'report.json').write_text(json.dumps(dict(self.report(), completed=True)))  # then killed
+        killed = self.run_id
+        self.next_run(2)
+        self.assertEqual(self.recover(), killed)
+        self.assertTrue(self.marked(D1))
+        self.assertIsNone(self.recover())
+
+    def test_a_hung_supplier_batch_holds_its_units_instead_of_aborting(self):
+        scripts = self.tmp / 'scripts'
+        shutil.copytree(SCRIPTS, scripts, ignore=shutil.ignore_patterns('tests', '__pycache__'))
+        real = scripts / 'file-notes.real'
+        (scripts / 'file-notes').rename(real)
+        (scripts / 'file-notes').write_text(f'#!/bin/sh\n[ "$1" = write ] && exec sleep 60\nexec "{real}" "$@"\n')
+        (scripts / 'file-notes').chmod(0o755)
+        self.day(D1)
+        r = subprocess.run([str(scripts / 'dispatch-targets'), 'run', str(self.vault),
+                            str(self.manifest([note('x', title='a')], [f'journal/{D1}.md'])), '--mode', 'silent'],
+                           capture_output=True, text=True, env=dict(self.env(), VAULT_INGEST_CALL_TIMEOUT='1'), timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        held = json.loads(r.stdout)['held']
+        self.assertEqual([h['day_file'] for h in held], [f'journal/{D1}.md'])
+        self.assertIn('timed out', held[0]['failed'][0]['reason'])
+        self.assertFalse(self.marked(D1))
 
     def test_a_hung_writer_is_a_failed_target_and_its_unit_is_held(self):
         hang = self.lib / 'functions' / 'backlog-append'
