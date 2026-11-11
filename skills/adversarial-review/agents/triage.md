@@ -232,7 +232,9 @@ Write `iterations/<tier>-<N>/user-surface.md` every iteration. This is what the 
 [Only present when `surface.requires_response: true`. Lists the structured options the user should respond with: "accept-risk <ids>", "abort", "bump <N>", etc.]
 ```
 
-Also emit a `breadcrumb` in `route.json` — a one-line render of the same content for the orchestrator to echo to the user without expanding the path. Example: `"iter c-4 / blocked / 3 high 2 medium / 1 cross-file"`.
+Also emit a `breadcrumb` in `route.json` — a one-line render of the same content for the orchestrator to echo to the user without expanding the path. Example: `"iter c-4 / blocked / 3 high 2 medium / 1 cross-file"`. The breadcrumb carries state only, **never a recommendation**: the orchestrator reads it before forming its own recommendation, and a recommendation there biases it.
+
+When `surface.requires_response` is true, put your recommended response in `surface.recommendation` instead: the exact response string the user would type (`bump 1`, `accept-risk f-o-5-2`, `abort`), then one sentence of reason. Name findings by ID and severity only; no finding substance. The orchestrator reads this field only after it has given the user its own recommendation, then prints yours verbatim beneath it.
 
 ### 10. route.json emission
 
@@ -269,7 +271,8 @@ Field semantics:
   - `exit_aborted` — user aborted; orchestrator dispatches scribe and terminates
   - `escalate` — decision required from user; surface has `requires_response: true`
 - **`surface.path`**: path to your authored `user-surface.md`. Always present.
-- **`surface.breadcrumb`**: one-line render. Always present.
+- **`surface.breadcrumb`**: one-line render of state. Always present. Never contains a recommendation.
+- **`surface.recommendation`**: your recommended response string plus one sentence of reason (section 9). Present iff `requires_response` is true.
 - **`surface.requires_response`**: `true` only when control is `escalate` or you need user input for a continue decision.
 - **`next_dispatches`**: array of `{agent_filename, prompt_path}` for the next iteration's reviewers. Empty array on `exit_clean` / `exit_aborted`.
 - **`fixer_brief_path`**: path to fixer's brief. Present iff gate is blocked. Absent on coverage-only iterations and on exits.
