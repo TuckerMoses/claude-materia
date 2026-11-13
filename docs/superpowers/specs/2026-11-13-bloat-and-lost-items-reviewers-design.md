@@ -26,6 +26,7 @@ Both are invisible for the same reason: no agent in the loop can see the pre-rev
 - Judging whether the original's points were good. Lost-items protects what was there; design and coherence judge it.
 - Changing the scribe, the `route.json` schema, or the gate rule.
 - Giving reviewers the ability to run commands. Reviewers stay passive readers.
+- Attributing edits the user makes to scope files mid-loop. They are judged like loop changes; the user accept-risks any resulting lost-items or bloat finding.
 
 ## Anti-goals
 
@@ -61,10 +62,10 @@ This happens after the step-2 VCS checkpoint, so for files in the checkpointed s
 
 At the start of every numbered iteration, immediately before dispatching reviewers (step 3 `continue`, between b and c), the orchestrator runs one Bash command, `bash "<skill-directory>/scripts/baseline-compare.sh" <session-dir> <iteration-dir> >/dev/null 2>&1` (`<skill-directory>` as in SKILL.md), which writes two files into the new iteration directory itself; the orchestrator discards stdout and stderr so nothing enters its context. Both arguments are absolute; `<iteration-dir>` is `<session-dir>/review/iterations/<tier>-<N>`, derived from the tier and N the orchestrator already tracks, exactly as for `route.json`, which is unchanged; the script reads `<session-dir>/review/baseline/` and `<iteration-dir>/scope.txt`.
 
-- `iterations/<tier>-<N>/baseline.diff`: `diff -u` from `review/baseline/` to the current files, labelled `baseline` or `current` followed directly by the absolute path (`baseline/a/b`; `/dev/null` for a missing side). The file set is the union of the baseline's files and `scope.txt`. A file present on only one side is diffed against empty, so a deleted file appears as all-removed and a created file as all-added. A rename appears as old path all-removed plus new path all-added; moved text is neither a loss (§5 rule 1) nor an addition (§6).
-- `iterations/<tier>-<N>/baseline-sizes.tsv`: header `path<TAB>baseline_lines<TAB>current_lines<TAB>delta`, delta = current - baseline, a missing side counts 0, line counts include a final unterminated line, rows sorted by path, last row path `TOTAL`. A file is binary when diff reports `Binary files`; it gets a row with `binary` in the count columns, is excluded from `TOTAL`, and shows one `Binary files differ` diff line.
+- `iterations/<tier>-<N>/baseline.diff`: `diff -u` from `review/baseline/` to the current files, labelled `baseline` or `current` followed directly by the absolute path (`baseline/a/b`; `/dev/null` for a missing side). The file set is the union of the baseline's files and `scope.txt`. A file present on only one side is diffed against empty, so a deleted file appears as all-removed and a created file as all-added. A path absent from both sides is skipped (no diff, no size row). A rename appears as old path all-removed plus new path all-added; moved text is neither a loss (§5 rule 1) nor an addition (§6).
+- `iterations/<tier>-<N>/baseline-sizes.tsv`: header `path<TAB>baseline_lines<TAB>current_lines<TAB>delta`, delta = current - baseline, a missing side counts 0, line counts include a final unterminated line, rows sorted by path, last row path `TOTAL`. A file is binary when diff reports `Binary files`; it gets a row with `binary` in all three numeric columns, is excluded from `TOTAL`, and shows one `Binary files differ` diff line.
 
-It runs unconditionally; the orchestrator does not reason about which reviewers need it. In iteration 1 of the cheap tier the diff is empty. The orchestrator branches only on the command's exit status, never on output. The script exits non-zero unless it wrote both files, and exits 0 whenever it did, including when diff reports differences (diff status 1); non-zero only for diff status >= 2 or an I/O error (unreadable baseline, unwritable output, missing `scope.txt`). A non-zero exit is surfaced under Surfacing exclusivity case 3 (extended in §10): one line naming the iteration directory, no reviewer dispatched. On `retry` the orchestrator reruns the script itself (no triage dispatch, no `user-response.md`); on `abort` it dispatches the scribe with `termination_kind` aborted.
+It runs unconditionally; the orchestrator does not reason about which reviewers need it. In iteration 1 of the cheap tier the diff is empty. The orchestrator branches only on the command's exit status, never on output. The script exits non-zero unless it wrote both files, and exits 0 whenever it did, including when diff reports differences (diff status 1); non-zero only for diff status >= 2 or an I/O error (unreadable baseline, unwritable output, missing `scope.txt`). A non-zero exit is surfaced under Surfacing exclusivity case 3 (extended in §10): one line naming the iteration directory, no reviewer dispatched. On `retry` the orchestrator reruns the script itself (no triage dispatch, no `user-response.md`); on `abort` it dispatches the scribe with `termination_kind` aborted; any other reply re-surfaces the same one-liner.
 
 The orchestrator does not resolve scope and reads no scope source (`manifest.yml`, `scope-pinned.json`). Triage is the sole scope resolver during Phase 2 (Phase 1 resolution is unchanged; triage.md §8): alongside each next iteration's dispatch prompts it writes `iterations/<tier>-<N+1>/scope.txt`, one absolute path per line, as the de-duplicated union of the freshly resolved scope and iteration N's `scope.txt` (including fixer appends); a path is never dropped by this union (deleted files are handled by the baseline side). Triage-init writes the freshly resolved scope for the first iteration of each tier; for `o-1` it takes the union with the last cheap-tier `scope.txt` in place of N's. The script consumes `scope.txt` and the baseline directory listing; the orchestrator never Reads either. Because the fixer runs after triage writes `scope.txt`, the fixer appends the new path of each file it creates or renames to it (see §4). Deleted files need no handling: they remain in the baseline side of the union.
 
@@ -81,9 +82,9 @@ The reviewer dispatch template gains a section, written identically for every re
 - Baseline (pre-review original): <baseline_dir>
 - Baseline diff for this iteration: iterations/<tier>-<N+1>/baseline.diff
 - Size table for this iteration: iterations/<tier>-<N+1>/baseline-sizes.tsv
-- Scope list for this iteration: iterations/<tier>-<N+1>/scope.txt (authoritative; supersedes the Scope section above)
-- Fixer changelogs: [paths, oldest first, including iterations/<tier>-<N>/fixer-changelog.md whenever triage emits fixer_brief_path, since the fixer runs before reviewers are dispatched; "none" if no fixer has run]
-- Triage outputs: [paths, oldest first]
+- Scope list for this iteration: iterations/<tier>-<N+1>/scope.txt (authoritative; supersedes the Scope section above; a listed path absent from disk was deleted or renamed and is not an error)
+- Fixer changelogs: [every changelog in the session, both tiers, oldest first, including iterations/<tier>-<N>/fixer-changelog.md whenever triage emits fixer_brief_path, since the fixer runs before reviewers are dispatched; "none" if no fixer has run]
+- Triage outputs: [every triage output in the session, both tiers, oldest first]
 ```
 
 Triage's dispatch context gains `baseline_dir`, `next_baseline_diff_path`, `next_baseline_sizes_path`, and `next_scope_list_path` so it writes these paths without computing them. The files at the two `next_baseline_*` paths do not exist when triage writes the prompt; the orchestrator creates them before the reviewer is dispatched. Triage itself writes `next_scope_list_path` (see §2).
@@ -104,7 +105,7 @@ The changelog template gains a required section between "Findings addressed" and
   **Disposition**: deleted | moved to <file, section> | merged into <file, section>
 ```
 
-Each "Findings addressed" entry also gains `**Restores**: <baseline file, heading> -> <current file, section>: "<short quote of restored text>" | none`.
+Each "Findings addressed" entry also gains `**Restores**: <baseline file, heading> -> <current file, section>: "<restored text, in full>" | none`.
 
 A rewrite counts as a removal when any statement the old text made is no longer made by the new text.
 
@@ -112,7 +113,7 @@ New constraint: do not delete, weaken, or drop content unless the finding being 
 
 If the fixer creates or renames a scope file, it appends the new absolute path to the next iteration's `scope.txt` (path supplied in the fixer brief as `next_scope_list_path`). This is the only file outside the scope that the fixer writes besides its changelog. For a deletion nothing is appended; the baseline side of the union covers it.
 
-fixer.md edits by section: "What you change" allows appending to the brief's scope list path; "Output: fixer changelog" gains Removals and the `Restores` field; "Constraints" gains the preservation constraint. triage.md §3's fixer brief template gains `next_scope_list_path`.
+fixer.md edits by section: "What you change" allows appending to the brief's scope list path; "Output: fixer changelog" gains Removals and the `Restores` field; "Constraints" gains the preservation constraint. "What you read" gains the baseline directory as a read-only source for restoring lost content. triage.md §3's fixer brief template gains `next_scope_list_path` and `baseline_dir` (read-only).
 
 The ledger does not need to be trustworthy to be useful. An accidental drop is by nature unlogged, and an unlogged loss is exactly what lost-items reports; a fixer may log it later (§5 rule 2).
 
@@ -134,15 +135,15 @@ What it checks, working from the removed lines in `baseline.diff` and confirming
 A removal is **not** a finding when any one of these holds:
 
 1. The meaning appears elsewhere in the current scope (`scope.txt`; moved, merged, renamed, or reworded). Wording changes are never findings; only meaning is compared.
-2. A fixer changelog's Removals section, from this or any later iteration, logs it against a finding id `f-<tier>-<N>-<seq>`, and that finding, looked up in `iterations/<tier>-<N>/triage-output.json`, did call for removing or replacing that meaning. An id absent there, or a finding that did not call for the removal, does not excuse it.
+2. A fixer changelog's Removals section, in any fixer changelog in the session, logs it against a finding id `f-<tier>-<N>-<seq>`, and that finding, looked up in `iterations/<tier>-<N>/triage-output.json`, did call for removing or replacing that meaning. An id absent there, or a finding that did not call for the removal, does not excuse it.
 
 Accepted risks are matched by triage, not the reviewer (§7).
 
-Each finding's `location` is a stable locator: baseline file, section heading, and a short quote. It also states which current file the meaning should live in The suggestion is to restore the meaning in the fewest words that carry it (or, for a removal a resolved finding plausibly called for, to log it in this round's Removals against that id), at the place the current structure puts such content; it does not ask for the original wording back.
+Each finding's `location` is a stable locator: baseline file, section heading, and a short quote. It also states which current file the meaning should live in. The suggestion is to restore the meaning in the fewest words that carry it (or, for a removal a resolved finding plausibly called for, to log it in this round's Removals against that id), at the place the current structure puts such content; it does not ask for the original wording back.
 
 Does not check: whether the lost content was good, whether the artifact is consistent, anything about added text.
 
-Baseline signals (shared with bloat): no `## Session inputs` section (the single-pass `run` subcommand) means "no baseline provided" and no findings. Section present with an empty diff and a size table showing no delta means no findings. Section present but a Session inputs path (baseline dir, diff, size table, scope list, named changelogs and triage outputs) is missing or unreadable, or the diff is empty while the size table shows a non-zero delta, is a high `baseline_unavailable` finding. A `scope.txt` path absent from disk is a deleted or renamed file, read from the diff, not a missing input. If the reviewer cannot read the whole diff, it emits a high `incomplete_check` naming what it did not cover.
+Baseline signals (shared with bloat): no `## Session inputs` section (the single-pass `run` subcommand) means "no baseline provided" and no findings. Section present with an empty diff and a size table showing no delta means no findings. Section present but a Session inputs path (baseline dir, diff, size table, scope list, named changelogs and triage outputs) is missing or unreadable, or the diff is empty while the size table shows a non-zero delta, is a high `baseline_unavailable` finding. If the reviewer cannot read the whole diff, it emits a high `incomplete_check` naming what it did not cover.
 
 ### 6. `defaults/reviewers/bloat.md`
 
@@ -174,11 +175,12 @@ Baseline signals as in §5. Moved text is not an addition.
 
 ### 7. Triage changes (agents/triage.md)
 
-- **§3 dispatch template**: the Session inputs section above; the fixer brief template gains `next_scope_list_path`.
+- **§3 dispatch template**: the Session inputs section above; the fixer brief template gains `next_scope_list_path` and `baseline_dir` (§4).
 - **Accepted risks**: lost-items findings keep a stable id for a recurring loss (existing rule: ids stable for the same issue), so triage's existing accepted-risk filtering applies; reviewers do not read `accepted-risks.json`.
 - **§5 diagnosis**: add a fifth pattern, **Growth**: total scope size rising (current total > previous iteration's total > the total before that, counting across tiers; fewer than three data points means no Growth diagnosis), computed from the `scope_size` fields in prior iterations' `triage-output.json` (which triage already receives as history) plus the `TOTAL` row of the current iteration's `baseline-sizes.tsv`. Triage records the current totals in `triage-output.json` as `scope_size: {baseline_lines, current_lines}` and names the trend in `user-surface.md`. Triage's dispatch context gains the path to the current iteration's `baseline-sizes.tsv`; it is not handed earlier tables. triage.md "Context you receive" (and §11 tier-init) gains that path plus `baseline_dir`, `next_baseline_diff_path`, `next_baseline_sizes_path`, and `next_scope_list_path`. Growth is a diagnosis for the user; it never blocks the gate by itself.
 - **§1 normalization, conflict rule**: when, in one iteration, a finding asks to cut a passage and another asks to restore or keep the same meaning, triage merges them into one finding (highest source severity, trace shape synthesis) whose suggestion is "state this meaning once, in the fewest words that carry it". Preserving meaning takes precedence over brevity. The rule is phrased by finding content, not reviewer name.
-- **Sequential cycle**: a cut/consolidate finding whose quoted passage lies within a changelog `Restores` entry's recorded quote at that entry's current location, with the quote still appearing verbatim, is downgraded to low (deferred); otherwise it is judged normally. The downgrade carries across the cheap-to-opus boundary (triage receives the cheap-tier history at `o-init`).
+- **Sequential cycle**: a cut/consolidate finding whose quoted passage overlaps a changelog `Restores` entry's recorded text at that entry's current location, with that text still appearing verbatim, is downgraded to low with `status: deferred`, so the fixer skips it; otherwise it is judged normally. The downgrade carries across the cheap-to-opus boundary (triage receives the cheap-tier history at `o-init`).
+- **Baseline plumbing failures**: triage does not route `baseline_unavailable` or `incomplete_check` to the fixer. It emits `control: escalate` in the same iteration with options `accept-risk <id>` and `abort`, and `user-surface.md` states that accepting the risk disables that reviewer's check for the rest of the session.
 - Recurrence of such a pair across iterations is diagnosed as oscillation under §5 and escalated per §12 (3+ recurring iterations after the user has been notified once).
 
 ### 8. Auditor (agents/auditor.md)
@@ -200,7 +202,7 @@ Bundled defaults skip the semantic audit, so this is not needed for the two new 
 ### 10. Docs and version
 
 - New `scripts/baseline-compare.sh` (§2).
-- SKILL.md: Surfacing exclusivity case 3 gains "orchestrator-run baseline comparison failed (non-zero exit)" with the §2 retry/abort handling, and Iteration validity invariant (c) also permits branching on that exit status and the user's retry/abort reply; Phase 2 step 3d, the tier-init dispatch, and the user-response re-dispatch path lists gain the five paths above (orchestrator derives them by the `iterations/<tier>-<N>` convention, as for `route.json`); "three default reviewers" → five, at the SKILL.md line 12 count and any other occurrence (grep); session layout shows `review/baseline/`; iteration layout shows `scope.txt`, `baseline.diff`, `baseline-sizes.tsv`; Phase 1 step 5 and Phase 2 step 3 as above.
+- SKILL.md: Surfacing exclusivity case 3 gains "orchestrator-run baseline comparison failed (non-zero exit)" with the §2 retry/abort handling, and Iteration validity invariant (c) also permits branching on that exit status and the user's retry/abort reply; Phase 2 step 3d, the tier-init dispatch, and the user-response re-dispatch path lists gain the five paths above (`baseline_dir` from `session-meta.json`; the other four by the `iterations/<tier>-<N>` convention, as for `route.json`); "three default reviewers" → five, at the SKILL.md line 12 count and any other occurrence (grep); session layout shows `review/baseline/`; iteration layout shows `scope.txt`, `baseline.diff`, `baseline-sizes.tsv`; Phase 1 step 5 and Phase 2 step 3 as above.
 - README.md materia table: five default reviewers, named (and its own "three" count if present).
 - `.claude-plugin/plugin.json`: 0.14.0 → 0.15.0.
 - Branch `adversarial-review/bloat-and-lost-items` off `origin/main`. `feat/capture-to-week` carries an unmerged commit touching SKILL.md Phase 2 step 1 and triage §9–10; this change edits other sections.
