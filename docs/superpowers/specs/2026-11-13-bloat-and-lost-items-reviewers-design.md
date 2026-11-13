@@ -53,7 +53,7 @@ Rejected: a reviewer that misses a loss in the round it happened never sees it a
 
 When the session directory is populated, the orchestrator copies every file in the resolved scope to `review/baseline/`, mirroring each file's absolute path with the leading `/` removed (`/a/b/c.md` → `review/baseline/a/b/c.md`). The copy is done with Bash `cp`; the orchestrator never Reads the files.
 
-This happens after the step-2 VCS checkpoint, so the baseline equals the content at `pre_review_vcs_ref`. The baseline is written once and never updated, in both `live` and `pinned` scope modes and across the tier promotion.
+This happens after the step-2 VCS checkpoint, so for files in the checkpointed scope the baseline equals the content at `pre_review_vcs_ref`. A file added to the scope when the user edits `locations` at step 4 was not in the checkpoint; its baseline copy is its content at step 5, which is the pre-review state for the loop's purposes. The baseline is written once and never updated, in both `live` and `pinned` scope modes and across the tier promotion.
 
 `review/session-meta.json` gains `baseline_dir` (the absolute path of `review/baseline/`).
 
@@ -64,11 +64,13 @@ At the start of every numbered iteration, immediately before dispatching reviewe
 - `iterations/<tier>-<N>/baseline.diff`: unified diff from `review/baseline/` to the current files. The file set compared is the union of the baseline's files and the current resolved scope. A file present on only one side is diffed against empty, so a deleted file appears as all-removed and a created file as all-added.
 - `iterations/<tier>-<N>/baseline-sizes.tsv`: one row per file in that union: path, baseline lines, current lines, delta; plus a `TOTAL` row. A missing side counts as 0.
 
-It runs unconditionally, whether or not either new reviewer is dispatched; the orchestrator does not reason about which reviewers need it. In iteration 1 of the cheap tier the diff is empty. The orchestrator obtains the current resolved scope the same way Phase 1 does (expand `locations` minus `exclude` for `live`; read `scope-pinned.json` for `pinned`).
+It runs unconditionally, whether or not either new reviewer is dispatched; the orchestrator does not reason about which reviewers need it. In iteration 1 of the cheap tier the diff is empty.
+
+The orchestrator does not resolve scope and reads no scope source (`manifest.yml`, `scope-pinned.json`). Triage remains the single scope resolver (triage.md §8): alongside each next iteration's dispatch prompts it writes the resolved scope list to `iterations/<tier>-<N+1>/scope.txt`, one absolute path per line, and triage-init writes the same file for the first iteration of each tier (including `o-1`). The Bash command consumes `scope.txt` and the baseline directory listing as its file set; the orchestrator never Reads either. Because the fixer runs after triage writes `scope.txt`, a file the fixer creates would be missing from it; the fixer therefore appends the path of each file it creates to that `scope.txt` (see §4). Deleted files need no handling: they remain in the baseline side of the union.
 
 The orchestrator generates this, rather than triage, because triage authors round N+1's dispatch prompts before the round-N fixer runs; the post-fix state does not exist yet when triage writes them.
 
-Both files are added to the Read-discipline rule's MUST NOT Read list.
+Both files, and `scope.txt`, are added to the Read-discipline rule's MUST NOT Read list. The rule's authorized-reads list is unchanged: `iterations/<tier>-<N>/route.json` remains the orchestrator's only authorized Phase 2 read. The Bash command's inputs (`scope.txt`, `review/baseline/`) are consumed by the shell, not read into orchestrator context.
 
 ### 3. Dispatch prompt (agents/triage.md §3)
 
@@ -83,7 +85,7 @@ The reviewer dispatch template gains a section, written identically for every re
 - Accepted risks: review/accepted-risks.json
 ```
 
-Triage's dispatch context gains `baseline_dir`, `next_baseline_diff_path`, and `next_baseline_sizes_path` so it writes these paths without computing them. The files at the two `next_*` paths do not exist when triage writes the prompt; the orchestrator creates them before the reviewer is dispatched.
+Triage's dispatch context gains `baseline_dir`, `next_baseline_diff_path`, `next_baseline_sizes_path`, and `next_scope_list_path` so it writes these paths without computing them. The files at the two `next_baseline_*` paths do not exist when triage writes the prompt; the orchestrator creates them before the reviewer is dispatched. Triage itself writes `next_scope_list_path` (see §2).
 
 Reviewers that do not need these inputs ignore them. User-supplied reviewers may use them.
 
@@ -105,6 +107,8 @@ A rewrite counts as a removal when any statement the old text made is no longer 
 
 New constraint: do not delete, weaken, or drop content unless the finding being addressed calls for it. Content that must move or merge keeps its full meaning at the destination. When executing a consolidation, every distinct condition, exception, and example in the passages being merged survives the merge.
 
+If the fixer creates a scope file, it appends that file's absolute path to the next iteration's `scope.txt`, whose path is added to the fixer's dispatch brief. This is the only file outside the scope that the fixer writes besides its changelog. If the fixer renames or deletes a file, nothing is appended; the baseline side of the union covers it.
+
 The ledger does not need to be trustworthy to be useful. An accidental drop is by nature unlogged, and an unlogged loss is exactly what lost-items reports.
 
 ### 5. `defaults/reviewers/lost-items.md`
@@ -112,7 +116,7 @@ The ledger does not need to be trustworthy to be useful. An accidental drop is b
 Frontmatter:
 
 - `required: true`, `trigger: null`
-- `precondition`: "The fixer has modified at least one scope file since the pre-review baseline, and the current state has not been checked against the baseline for lost content"
+- `precondition`: "The fixer has modified at least one scope file since the pre-review baseline, and the current state has not been checked against the baseline for lost content within the current tier"
 - `severity_guidance`: `dropped_content` high; `weakened_requirement` high; `dropped_detail` medium
 
 What it checks, working from the removed lines in `baseline.diff` and confirming against the baseline and current files:
@@ -138,7 +142,7 @@ If the dispatch prompt carries no baseline (the single-pass `run` subcommand), i
 Frontmatter:
 
 - `required: true`, `trigger: null`
-- `precondition`: "The fixer has modified at least one scope file since the pre-review baseline, and the current state has not been checked for loop-added bloat"
+- `precondition`: "The fixer has modified at least one scope file since the pre-review baseline, and the current state has not been checked for loop-added bloat within the current tier"
 - `severity_guidance`: `redundant_restatement` medium; `patch_on_patch` medium; `unmotivated_addition` medium; `defensive_padding` low
 
 What it checks, working from the added lines in `baseline.diff` and the size table:
@@ -161,9 +165,9 @@ No baseline in the dispatch prompt → states so and emits no findings.
 ### 7. Triage changes (agents/triage.md)
 
 - **§3 dispatch template**: the Session inputs section above.
-- **§5 diagnosis**: add a fifth pattern, **Growth**: total scope size rising across iterations, read from each iteration's `baseline-sizes.tsv` `TOTAL` row. Triage records the totals in `triage-output.json` as `scope_size: {baseline_lines, current_lines}` and names the trend in `user-surface.md`. Triage's dispatch context gains the path to the current iteration's `baseline-sizes.tsv`. Growth is a diagnosis for the user; it never blocks the gate by itself.
+- **§5 diagnosis**: add a fifth pattern, **Growth**: total scope size rising across iterations, computed from the `scope_size` fields in prior iterations' `triage-output.json` (which triage already receives as history) plus the `TOTAL` row of the current iteration's `baseline-sizes.tsv`. Triage records the current totals in `triage-output.json` as `scope_size: {baseline_lines, current_lines}` and names the trend in `user-surface.md`. Triage's dispatch context gains the path to the current iteration's `baseline-sizes.tsv`; it is not handed earlier tables. Growth is a diagnosis for the user; it never blocks the gate by itself.
 - **§1 normalization, conflict rule**: when, in one iteration, a finding asks to cut a passage and another asks to restore or keep the same meaning, triage merges them into one finding whose suggestion is "state this meaning once, in the fewest words that carry it". Preserving meaning takes precedence over brevity. The rule is phrased by finding content, not reviewer name.
-- Recurrence of such a pair across iterations is already covered by §12 (oscillation escalates to the user after 3 iterations).
+- Recurrence of such a pair across iterations is diagnosed as oscillation under §5 and escalated per §12 (3+ recurring iterations after the user has been notified once).
 
 ### 8. Auditor (agents/auditor.md)
 
@@ -179,7 +183,7 @@ Bundled defaults skip the semantic audit, so this is not needed for the two new 
 4. Orchestrator writes round 2's `baseline.diff` and `baseline-sizes.tsv`.
 5. Round 2 reviewers run, bloat and lost-items among them.
 6. Triage normalizes. A `dropped_content` finding (high) blocks the gate; the fixer restores it in round 2's fix step; round 3 re-checks.
-7. `exit_clean` requires, under the existing coverage rule, that both have run against the final state with no medium+ finding. Same again on the opus tier, where the precondition is met at `o-init` if the cheap tier changed anything.
+7. `exit_clean` requires, under the existing coverage rule, that both have run against the final state with no medium+ finding. Same again on the opus tier. Both preconditions are scoped per tier ("within the current tier"), so at `o-init` the clause is true by construction: no check has yet run in the opus tier. Triage evaluates them at `o-init` as `met` whenever the scope differs from the baseline, which it knows from the cheap tier's last `scope_size` (current_lines differs from baseline_lines) or from fixer changelogs having reported any modification. If the cheap tier never changed anything, the first clause fails and both stay dormant.
 
 ### 10. Docs and version
 
@@ -200,4 +204,4 @@ Bundled defaults skip the semantic audit, so this is not needed for the two new 
 
 - The exact Bash for the diff and size table (must handle one-sided files and binary files without error, and print nothing).
 - Wording of the reviewer bodies beyond the rules above, following the section layout of `defaults/reviewers/coherence.md`.
-- A verification pass: a fixture pair (baseline containing a point, current without it, and a current with a patch-on-patch passage) run through `/adversarial-review run` with a hand-written dispatch prompt, confirming each reviewer reports it; plus one full loop on a small file confirming `review/baseline/`, the two per-iteration files, and round-2 activation.
+- A verification pass: a fixture pair (baseline containing a point, current without it, and a current with a patch-on-patch passage) dispatched directly to each new reviewer as a subagent with a hand-written dispatch prompt that includes the baseline, diff, and size-table paths (not via `/adversarial-review run`, which supplies no baseline and so yields only the no-baseline null result), confirming each reviewer reports it; plus one full loop on a small file confirming `review/baseline/`, the two per-iteration files, and round-2 activation.
