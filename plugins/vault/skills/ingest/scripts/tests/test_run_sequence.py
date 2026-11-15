@@ -7,9 +7,11 @@ import datetime
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -826,6 +828,44 @@ class FailLoud(Base):
         self.assertEqual([h['day_file'] for h in held], [f'journal/{D1}.md'])
         self.assertIn('timed out', held[0]['failed'][0]['reason'])
         self.assertFalse(self.marked(D1))
+
+    def test_the_run_deadline_bounds_the_calls_sum_and_holds_the_unit(self):
+        # F1: a caller with its own timeout (claude's Bash tool) can bound the whole command, not one call.
+        hang = self.lib / 'functions' / 'backlog-append'
+        hang.write_text('#!/bin/sh\nsleep 60\n')
+        self.day(D1)
+        start = datetime.datetime.now()
+        r = subprocess.run([str(SCRIPTS / 'dispatch-targets'), 'run', str(self.vault),
+                            str(self.manifest([note('y', ['todo', 'workspace:values'], title='b')], [f'journal/{D1}.md'])),
+                            '--mode', 'silent'], capture_output=True, text=True,
+                           env=dict(self.env(), VAULT_INGEST_CALL_TIMEOUT='60', VAULT_INGEST_RUN_DEADLINE='2'), timeout=30)
+        self.assertLess((datetime.datetime.now() - start).total_seconds(), 20)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        held = json.loads(r.stdout)['held']
+        self.assertEqual([h['day_file'] for h in held], [f'journal/{D1}.md'])
+        self.assertIn('timed out', held[0]['failed'][0]['reason'])
+        self.assertFalse(self.marked(D1))
+
+    def test_sigterm_kills_the_running_writer_group(self):
+        # F1: the writers run in their own sessions; killing dispatch-targets must not leave one running.
+        pids = self.tmp / 'writer-pids'
+        hang = self.lib / 'functions' / 'backlog-append'
+        hang.write_text(f'#!/bin/sh\necho $$ >>{pids}\nsleep 60 &\necho $! >>{pids}\nsleep 60\n')
+        self.day(D1)
+        proc = subprocess.Popen([str(SCRIPTS / 'dispatch-targets'), 'run', str(self.vault),
+                                 str(self.manifest([note('y', ['todo', 'workspace:values'], title='b')], [f'journal/{D1}.md'])),
+                                 '--mode', 'silent'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=self.env())
+        for _ in range(100):
+            if pids.exists() and len(pids.read_text().split()) == 2:
+                break
+            time.sleep(0.1)
+        writers = [int(p) for p in pids.read_text().split()]
+        proc.send_signal(signal.SIGTERM)
+        self.assertEqual(proc.wait(timeout=10), 128 + signal.SIGTERM)
+        time.sleep(0.5)
+        for pid in writers:
+            with self.assertRaises(ProcessLookupError, msg=f'writer {pid} survived'):
+                os.kill(pid, 0)
 
 
 if __name__ == '__main__':

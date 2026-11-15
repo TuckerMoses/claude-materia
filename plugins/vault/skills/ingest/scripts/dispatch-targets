@@ -14,7 +14,12 @@
 --recovered records the interrupted run that `commit-run --recover` committed as this run's first action.
 Every child call times out after $VAULT_INGEST_CALL_TIMEOUT seconds (default 300): a timed-out writer is a failed
 target (a timed-out batch fails every thought in it), so its unit is held; any other timed-out call aborts the run
-before markers, as any failure there does.
+before markers, as any failure there does. $VAULT_INGEST_RUN_DEADLINE (seconds, unset = none; the nightly sets it)
+bounds the writer calls' sum, whose count grows with the thoughts: each writer gets what is left, and one past it
+times out at once, so its unit is held. The other calls are a fixed handful (lookup, route, rewrite,
+journal-candidates, finish), so this whole command is bounded by the deadline plus five call timeouts, and a caller
+can bound it, as the nightly does with claude's Bash timeout. SIGTERM or SIGHUP kills the running
+child's process group before exiting: the writers run in their own sessions and would outlive this process.
 """
 import argparse
 import datetime
@@ -25,6 +30,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 import jsonschema
@@ -67,24 +73,44 @@ def writer_path(name):
 # Every call on the unattended path is bounded (spec, Nightly job: fail loud, never hang). A child that blocks, as one
 # did on a TCC prompt, is killed with its whole process group, so a grandchild cannot hold the pipes open.
 CALL_TIMEOUT = int(os.environ.get('VAULT_INGEST_CALL_TIMEOUT', '300'))
+RUN_DEADLINE = float(os.environ.get('VAULT_INGEST_RUN_DEADLINE') or 'inf')
+STARTED = time.monotonic()
 TIMED_OUT = 124
+child = None  # the running call, for the signal handler
 
 
-def call(argv, stdin=None):
-    proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                            start_new_session=True)
+def kill_group(proc):
     try:
-        out, err = proc.communicate(stdin, timeout=CALL_TIMEOUT)
+        os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
+def on_signal(signum, _frame):
+    if child is not None:
+        kill_group(child)
+    sys.exit(128 + signum)
+
+
+def call(argv, stdin=None, writer=False):
+    global child
+    name = os.path.basename(argv[0])
+    budget = min(CALL_TIMEOUT, RUN_DEADLINE - (time.monotonic() - STARTED)) if writer else CALL_TIMEOUT
+    if budget <= 0:
+        return subprocess.CompletedProcess(argv, TIMED_OUT, '', f'timed out: the run deadline of {RUN_DEADLINE:g}s passed before {name}')
+    proc = child = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                    text=True, start_new_session=True)
+    try:
+        out, err = proc.communicate(stdin, timeout=budget)
     except subprocess.TimeoutExpired:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+        kill_group(proc)
         try:
             proc.communicate(timeout=5)
         except subprocess.TimeoutExpired:  # a descendant that left the group still holds the pipes
             pass
-        return subprocess.CompletedProcess(argv, TIMED_OUT, '', f'timed out after {CALL_TIMEOUT}s: {os.path.basename(argv[0])}')
+        return subprocess.CompletedProcess(argv, TIMED_OUT, '', f'timed out after {budget:g}s: {name}')
+    finally:
+        child = None
     return subprocess.CompletedProcess(argv, proc.returncode, out, err)
 
 
@@ -230,7 +256,7 @@ class Run:
         with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False) as f:
             json.dump(payload, f)
         try:
-            r = call([writer_path(self.table[artifact]['writer']), 'write', str(self.vault), f.name])
+            r = call([writer_path(self.table[artifact]['writer']), 'write', str(self.vault), f.name], writer=True)
         finally:
             os.unlink(f.name)
         if r.returncode == TIMED_OUT:
@@ -261,7 +287,7 @@ class Run:
                   'date': str(t['captured'])}
         if entry['takes_id']:
             record['id'] = self.ids[t['ref']]
-        r = call([writer_path(entry['writer']), '--path', target['path'], '--thought', json.dumps(record)])
+        r = call([writer_path(entry['writer']), '--path', target['path'], '--thought', json.dumps(record)], writer=True)
         if r.returncode == 0:
             self.ok(t, target)
         else:
@@ -365,6 +391,8 @@ class Run:
 
 
 def main():
+    signal.signal(signal.SIGTERM, on_signal)
+    signal.signal(signal.SIGHUP, on_signal)
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest='command', required=True)
     r = sub.add_parser('route')
