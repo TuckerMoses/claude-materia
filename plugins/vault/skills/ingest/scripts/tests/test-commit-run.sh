@@ -115,4 +115,23 @@ assert_contains "regen recreates file with header" "# Vault Changelog" "$(cat "$
 assert_contains "surviving run still rendered" "2026-01-09-2" "$(cat "$V7/CHANGELOG.md")"
 case "$(cat "$V7/CHANGELOG.md")" in *"2026-01-09-1"*) echo "FAIL - abandoned run still rendered"; FAILS=$((FAILS+1));; *) echo "ok - abandoned run vanished from render";; esac
 
+# --- --landed (F2): completed:true is written before the commit, so the nightly asks whether the commit landed ---
+V8=$(jj_vault); mk_run "$V8" 2026-01-10-1 silent
+RD8="$V8/_machine/logs/ingest/2026-01-10-1"
+python3 - "$RD8/report.json" <<'PY'   # killed between set_completed(True) and the commit
+import json, sys; p = sys.argv[1]; r = json.load(open(p)); r['completed'] = True; json.dump(r, open(p, 'w'))
+PY
+python3 "$SCRIPT" --landed "$V8" 2026-01-10-1 >/dev/null 2>&1; assert_eq "--landed: written, not committed -> 1" "1" "$?"
+python3 "$SCRIPT" "$V8" "$RD8/report.json" "$RD8/entry.md" 2026-01-10-1 silent >/dev/null 2>&1
+python3 "$SCRIPT" --landed "$V8" 2026-01-10-1 >/dev/null 2>&1; assert_eq "--landed: committed -> 0" "0" "$?"
+RD8b="$V8/_machine/logs/ingest/2026-01-10-2"; mkdir -p "$RD8b"
+printf '{"written": [], "marked": [], "advanced": [], "moved": [], "skipped": [], "completed": true}\n' > "$RD8b/report.json"
+python3 "$SCRIPT" --landed "$V8" 2026-01-10-2 >/dev/null 2>&1; assert_eq "--landed: uncommitted no-op -> 0" "0" "$?"
+python3 "$SCRIPT" --landed "$V8" 2026-01-10-9 >/dev/null 2>&1; assert_eq "--landed: no report -> 2" "2" "$?"
+python3 "$SCRIPT" --landed "$(new_vault)" 2026-01-10-1 >/dev/null 2>&1; assert_eq "--landed: not a jj vault -> 2" "2" "$?"
+BEFORE=$(cd "$V8" && jj op log --no-graph -T 'id.short() ++ "\n"' | wc -l)
+python3 "$SCRIPT" --landed "$V8" 2026-01-10-1 >/dev/null 2>&1
+AFTER=$(cd "$V8" && jj op log --no-graph -T 'id.short() ++ "\n"' | wc -l)
+assert_eq "--landed writes no commit" "$BEFORE" "$AFTER"
+
 finish

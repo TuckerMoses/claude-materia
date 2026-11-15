@@ -5,6 +5,7 @@ Usage:
   commit-run VAULT REPORT_JSON ENTRY_MD RUN_ID MODE    # drain step 6
   commit-run --regen VAULT                             # re-render CHANGELOG.md only
   commit-run --recover VAULT                           # a run's first action: land an interrupted run's writes
+  commit-run --landed VAULT RUN_ID                     # read-only: did RUN_ID's commit land? (the nightly asks)
 
 Contract:
 - Fileset = touched-path set (written+rewritten+marked+moved, plus _machine/ingest_paths.yml when
@@ -28,6 +29,9 @@ Contract:
   paths (its report's written/rewritten/marked/moved/skipped, ingest_paths.yml if it advanced, its run dir) are
   committed under its id, oldest first, and nothing else: an open day-file or a hand-edited note stays uncommitted.
   Prints {"recovered": <newest run-id>}, or null. The caller records it in its own report.json.
+- --landed (F2): `completed: true` is written before the commit, so a kill between the two reads as success. Exits 0
+  when RUN_ID's commit landed or it was a no-op, 1 when it is one --recover would pick up (the same test), 2 when it
+  cannot tell. Writes nothing.
 - Every jj call is bounded ($VAULT_INGEST_CALL_TIMEOUT, default 300 s); a timed-out commit is a failed commit.
 """
 import json, os, re, subprocess, sys
@@ -106,23 +110,51 @@ def unmark(vault: Path, rels):
                      encoding='utf-8')
 
 
-def recover(vault: Path):
+PREFIX = '_machine/logs/ingest/'
+
+
+def dirty_paths(vault: Path, who):
     r = jj(vault, 'diff', '--name-only', '-r', '@')
     if r.returncode != 0:
-        sys.exit(f'recover: jj diff failed\n{r.stderr}')
-    dirty = {line for line in r.stdout.splitlines() if line}
-    prefix = '_machine/logs/ingest/'
+        sys.exit(f'{who}: jj diff failed\n{r.stderr}')
+    return {line for line in r.stdout.splitlines() if line}
+
+
+def pending(vault: Path, run, dirty):
+    """RUN's report if its commit has not landed (dirty report.json, touched paths, not rolled back), else None."""
+    if not RUN_ID.fullmatch(run) or f'{PREFIX}{run}/report.json' not in dirty:
+        return None
+    try:
+        report = json.loads((vault / PREFIX / run / 'report.json').read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(report, dict) or report.get('completed') is False or not touched_paths(report):
+        return None
+    return report
+
+
+def landed(vault: Path, run):
+    if not (vault / PREFIX / run / 'report.json').is_file():
+        print(f'cannot tell: no report.json for {run}', file=sys.stderr)
+        sys.exit(2)
+    r = jj(vault, 'diff', '--name-only', '-r', '@')
+    if r.returncode != 0:
+        print(f'cannot tell: jj diff failed\n{r.stderr}', file=sys.stderr)
+        sys.exit(2)
+    if pending(vault, run, {line for line in r.stdout.splitlines() if line}) is not None:
+        print(f'not landed: {run} wrote its report but its commit is not in the history', file=sys.stderr)
+        sys.exit(1)
+    print(json.dumps({'landed': run}))
+
+
+def recover(vault: Path):
+    dirty = dirty_paths(vault, 'recover')
+    prefix = PREFIX
     runs = []
     for run in {p[len(prefix):].split('/', 1)[0] for p in dirty if p.startswith(prefix)}:
-        if not RUN_ID.fullmatch(run) or f'{prefix}{run}/report.json' not in dirty:
-            continue
-        try:
-            report = json.loads((vault / prefix / run / 'report.json').read_text(encoding='utf-8'))
-        except (OSError, ValueError):
-            continue
-        if not isinstance(report, dict) or report.get('completed') is False or not touched_paths(report):
-            continue
-        runs.append((run, report))
+        report = pending(vault, run, dirty)
+        if report is not None:
+            runs.append((run, report))
     if not runs:
         print(json.dumps({'recovered': None}))
         return
@@ -152,6 +184,13 @@ def main():
             sys.exit(f'not a jj vault: {vault}')
         recover(vault)
         return
+    if len(sys.argv) == 4 and sys.argv[1] == '--landed':
+        vault = Path(sys.argv[2]).expanduser().resolve()
+        if not (vault / '.jj').is_dir():
+            print(f'cannot tell: not a jj vault: {vault}', file=sys.stderr)
+            sys.exit(2)
+        landed(vault, sys.argv[3])
+        return
     if len(sys.argv) == 3 and sys.argv[1] == '--regen':
         vault = Path(sys.argv[2]).expanduser().resolve()
         if not (vault / '.jj').is_dir():
@@ -161,7 +200,7 @@ def main():
         return
     if len(sys.argv) != 6:
         sys.exit('usage: commit-run VAULT REPORT_JSON ENTRY_MD RUN_ID MODE'
-                 '  |  commit-run --regen VAULT  |  commit-run --recover VAULT')
+                 '  |  commit-run --regen VAULT  |  commit-run --recover VAULT  |  commit-run --landed VAULT RUN_ID')
     vault = Path(sys.argv[1]).expanduser().resolve()
     report_path, entry_path = Path(sys.argv[2]), Path(sys.argv[3])
     run_id, mode = sys.argv[4], sys.argv[5]
