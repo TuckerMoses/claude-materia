@@ -134,4 +134,15 @@ python3 "$SCRIPT" --landed "$V8" 2026-01-10-1 >/dev/null 2>&1
 AFTER=$(cd "$V8" && jj op log --no-graph -T 'id.short() ++ "\n"' | wc -l)
 assert_eq "--landed writes no commit" "$BEFORE" "$AFTER"
 
+# --- F8: a regen failure after the commit landed warns and exits 0, as --recover does ---
+V9=$(jj_vault); mk_run "$V9" 2026-01-11-1 silent
+SHIM=$(mktemp -d); REALJJ=$(command -v jj)
+printf '#!/bin/sh\ncase "$*" in *"ingest(*"*) echo "jj broke" >&2; exit 1;; esac\nexec "%s" "$@"\n' "$REALJJ" > "$SHIM/jj"; chmod +x "$SHIM/jj"
+OUT9=$(PATH="$SHIM:$PATH" python3 "$SCRIPT" "$V9" "$V9/_machine/logs/ingest/2026-01-11-1/report.json" \
+  "$V9/_machine/logs/ingest/2026-01-11-1/entry.md" 2026-01-11-1 silent 2>&1); RC9=$?
+assert_eq "regen failure after the commit exits 0" "0" "$RC9"
+assert_contains "regen failure is a warning" "warning: regen failed" "$OUT9"
+assert_contains "the commit is still reported" '"committed": true' "$OUT9"
+python3 "$SCRIPT" --landed "$V9" 2026-01-11-1 >/dev/null 2>&1; assert_eq "and it landed" "0" "$?"
+
 finish
