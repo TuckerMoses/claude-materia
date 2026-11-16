@@ -180,8 +180,8 @@ def rewrite(vault, plan):
     return {'rewritten': rewritten, 'failed': failed}
 
 
-def mark(vault, rels):
-    done = []
+# Each step appends to `done` as each item lands, so a raise part-way leaves an exact record (F3).
+def mark(vault, rels, done):
     for rel in rels:
         p = vault / rel
         text = p.read_text(encoding='utf-8')
@@ -195,24 +195,24 @@ def mark(vault, rels):
     return done
 
 
-def advance(vault, entries):
+def advance(vault, entries, done):
     if not entries:
-        return []
+        return done
     import yaml
     ip = vault / '_machine' / 'ingest_paths.yml'
     data = yaml.safe_load(ip.read_text(encoding='utf-8')) or {'sources': []}
-    done = []
+    paths = []
     for adv in entries:
         for s in data.get('sources') or []:
             if s.get('path') == adv['path']:
                 s['last_read'] = adv['last_read']
-                done.append(adv['path'])
+                paths.append(adv['path'])
     ip.write_text(yaml.safe_dump(data, sort_keys=False), encoding='utf-8')
+    done.extend(paths)  # one write: all advanced, or none
     return done
 
 
-def archive(vault, moves):
-    done = []
+def archive(vault, moves, done):
     for mv in moves:
         src = Path(mv['from']).expanduser()
         dest_dir = vault / '_machine' / 'logs' / 'ingest' / mv['date']
@@ -232,11 +232,15 @@ def finish(vault, plan):
     report_path = Path(plan['report_path'])
     if not within(report_path.resolve(), (vault / '_machine' / 'logs' / 'ingest').resolve()):
         sys.exit(f'ABORT: report_path outside the run logs: {report_path}')
-    report = dict(plan.get('report', {}))
-    report['marked'] = mark(vault, plan.get('mark_ingested', []))
-    report['advanced'] = advance(vault, plan.get('advance', []))
-    report['moved'] = archive(vault, plan.get('archive_moves', []))
-    report_path.write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
+    report = dict(plan.get('report', {}), marked=[], advanced=[], moved=[])
+    # F3: report.json is written even when a step raises, recording exactly what landed and no `completed`, so the
+    # run fails loud and the next run's commit-run --recover (which keys on a dirty report.json) commits it.
+    try:
+        mark(vault, plan.get('mark_ingested', []), report['marked'])
+        advance(vault, plan.get('advance', []), report['advanced'])
+        archive(vault, plan.get('archive_moves', []), report['moved'])
+    finally:
+        report_path.write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
     return report
 
 

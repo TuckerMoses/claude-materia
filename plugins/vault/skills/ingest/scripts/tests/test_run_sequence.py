@@ -829,6 +829,22 @@ class FailLoud(Base):
         self.assertIn('timed out', held[0]['failed'][0]['reason'])
         self.assertFalse(self.marked(D1))
 
+    def test_a_raise_part_way_through_finish_still_writes_a_recoverable_report(self):
+        # F3: mark -> advance -> archive used to raise before report.json, so --recover never saw the run.
+        self.day(D1)
+        (self.vault / 'notes' / 'a.md').write_text('---\ntitle: "a"\n---\nbody\n')
+        plan = self.tmp / 'plan.json'
+        plan.write_text(json.dumps({'report_path': str(self.run_dir / 'report.json'), 'report': {'written': ['notes/a.md']},
+                                    'mark_ingested': [f'journal/{D1}.md', 'journal/1999-01-01.md'],  # the 2nd is missing
+                                    'advance': [], 'archive_moves': []}))
+        r = self.script('file-notes', 'finish', self.vault, plan)
+        self.assertNotEqual(r.returncode, 0)
+        report = json.loads((self.run_dir / 'report.json').read_text())
+        self.assertEqual(report['marked'], [f'journal/{D1}.md'])
+        self.assertNotIn('completed', report)
+        self.assertTrue(self.marked(D1))
+        self.assertEqual(self.recover(), self.run_id)
+
     def test_the_run_deadline_bounds_the_calls_sum_and_holds_the_unit(self):
         # F1: a caller with its own timeout (claude's Bash tool) can bound the whole command, not one call.
         hang = self.lib / 'functions' / 'backlog-append'
