@@ -145,4 +145,17 @@ assert_contains "regen failure is a warning" "warning: regen failed" "$OUT9"
 assert_contains "the commit is still reported" '"committed": true' "$OUT9"
 python3 "$SCRIPT" --landed "$V9" 2026-01-11-1 >/dev/null 2>&1; assert_eq "and it landed" "0" "$?"
 
+# --- --landed edge cases (review): rolled back, no completed, corrupt report, bad id ---
+V10=$(jj_vault); RD10="$V10/_machine/logs/ingest/2026-01-12-1"; mkdir -p "$RD10"
+printf '{"written": ["notes/t.md"], "completed": false}\n' > "$RD10/report.json"
+python3 "$SCRIPT" --landed "$V10" 2026-01-12-1 >/dev/null 2>&1; assert_eq "--landed: rolled back -> 1" "1" "$?"
+printf '{"written": [], "marked": []}\n' > "$RD10/report.json"
+python3 "$SCRIPT" --landed "$V10" 2026-01-12-1 >/dev/null 2>&1; assert_eq "--landed: no completed (a finish that raised) -> 1" "1" "$?"
+printf 'not json' > "$RD10/report.json"
+python3 "$SCRIPT" --landed "$V10" 2026-01-12-1 >/dev/null 2>&1; assert_eq "--landed: corrupt report -> 2" "2" "$?"
+printf '[]\n' > "$RD10/report.json"
+python3 "$SCRIPT" --landed "$V10" 2026-01-12-1 >/dev/null 2>&1; assert_eq "--landed: report not an object -> 2" "2" "$?"
+mkdir -p "$V10/_machine/logs/x"; printf '{"completed": true}\n' > "$V10/_machine/logs/x/report.json"
+python3 "$SCRIPT" --landed "$V10" ../x >/dev/null 2>&1; assert_eq "--landed: a path for a run id -> 2" "2" "$?"
+
 finish
