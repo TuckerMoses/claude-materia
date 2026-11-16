@@ -65,7 +65,9 @@ def set_completed(report_path, report, done):
 
 def jj(vault, *args):
     try:
-        return subprocess.run(['jj', *args], cwd=vault, capture_output=True, text=True, timeout=TIMEOUT)
+        # F11: no stdin and no pager, so nothing on the unattended path can wait on a terminal.
+        return subprocess.run(['jj', '--no-pager', *args], cwd=vault, stdin=subprocess.DEVNULL, capture_output=True,
+                              text=True, timeout=TIMEOUT)
     except subprocess.TimeoutExpired:
         return subprocess.CompletedProcess(['jj', *args], 124, '', f'jj {args[0]} timed out after {TIMEOUT}s')
 

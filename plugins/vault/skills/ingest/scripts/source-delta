@@ -12,7 +12,9 @@ import yaml
 def sh(args, cwd):
     try:
         # Bounded (Nightly job: never hang): a source repo under a TCC-protected folder blocks git indefinitely.
-        return subprocess.run(args, cwd=cwd, capture_output=True, text=True, check=True,
+        # F11: no stdin, no pager, no credential prompt.
+        return subprocess.run(args, cwd=cwd, stdin=subprocess.DEVNULL, capture_output=True, text=True, check=True,
+                              env=dict(os.environ, GIT_TERMINAL_PROMPT='0', GIT_PAGER='cat'),
                               timeout=int(os.environ.get('VAULT_INGEST_CALL_TIMEOUT', '300'))).stdout
     except subprocess.TimeoutExpired:
         sys.exit(f"source-delta: {' '.join(args[:2])} timed out in {cwd}")
