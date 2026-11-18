@@ -18,10 +18,11 @@ All inputs are passed as paths in your dispatch brief.
 2. **The scope files** — the files listed in your dispatch brief's "Scope" section. These are the resolved file paths you may modify. Modify nothing outside this list.
 3. **The manifest** (`sessions/<id>/manifest.yml`) — intent and `flags` describe the review's goals and any user concerns. Respect deliberate decisions surfaced in flags. If a finding's suggestion conflicts with a flagged intent, annotate the finding as `unable_to_resolve` with an explanation rather than overriding the intent.
 4. **`SCOPE.md`** — the profile of the review scope describing format, purpose, structural constraints, and per-file roles. Your fixes must respect these constraints — if the scope has structural rules, the fixed version must still conform.
+5. **The baseline directory** (`baseline_dir` in your brief) — read-only copies of the scope files as they were before the review, mirroring each file's absolute path. Read it when a finding asks you to restore lost content. Never modify it.
 
 ## What you change
 
-The scope files listed in your dispatch brief. Nothing else. You do not modify the manifest, SCOPE.md, triage output, agent specs, session-state files, or any other file.
+The scope files listed in your dispatch brief. Nothing else, with one exception: if you create or rename a scope file, append its new absolute path, on its own line, to the scope list at `next_scope_list_path` in your brief. For a deletion, append nothing. You do not modify the manifest, SCOPE.md, triage output, agent specs, the baseline, other session-state files, or any other file.
 
 ## How to work
 
@@ -47,12 +48,21 @@ After applying fixes, emit a markdown changelog at `iterations/<tier>-<N>/fixer-
 **Files**: A.ts, B.ts
 **Action**: Resolved by [description of change]
 **Location**: [where in the files]
+**Restores**: <baseline file, heading> -> <current file, section>: "<restored text, in full>" | none
 **Side effects**: Also resolves f-c-2-3
 
 ### f-c-2-4: implicit_assumption (high)
 **Files**: SKILL.md
 **Action**: unable_to_resolve
 **Reason**: Resolving this requires choosing between X and Y, which is a design decision. Flagged for user input.
+
+## Removals
+[One entry per passage whose meaning no longer appears at its original location. "None" if there are none.]
+
+- **File**: A.ts
+  **Removed**: [quote, or a precise description if longer than a few lines]
+  **Finding**: f-c-2-1
+  **Disposition**: deleted | moved to <file, section> | merged into <file, section>
 
 ## File operations
 [List any file creations, renames, or deletions, with reason.]
@@ -66,9 +76,13 @@ After applying fixes, emit a markdown changelog at `iterations/<tier>-<N>/fixer-
 - Files deleted: 0
 ```
 
+Every "Findings addressed" entry carries a `Restores` line: the exact text you put back and where, or `none`. A rewrite counts as a removal when any statement the old text made is no longer made by the new text; log it under Removals. If a finding asks you to log an earlier unlogged removal, add the Removals entry against the finding id that called for that removal.
+
 ## Constraints
 
 - Never add content that wasn't motivated by a specific finding. Your job is to fix what triage identified, not to improve the scope generally.
+- Never delete, weaken, or drop content unless the finding you are addressing calls for it. Content that must move or merge keeps its full meaning at the destination. When you consolidate passages, every distinct condition, exception, and example in them survives the merge.
+- Prefer rewriting a passage once over adding a sentence that qualifies it. Text added to patch text an earlier iteration added is the growth the loop is trying to avoid.
 - Preserve the scope's voice and style. Fix the substance, not the prose.
 - If the scope is under version control, your changes will be committed per-iteration. Make changes that are coherent as a single unit of work.
 - After writing the changelog, end your turn with the literal text `ACK <path-to-fixer-changelog.md>` and nothing else. No preamble, no summary, no closing prose. The orchestrator extracts only the path token from your ack — anything else you write is wasted context that bleeds into the orchestrator's session. The orchestrator never reads the changelog or the triage output; the ack is its only signal that the iteration's fix step completed.
