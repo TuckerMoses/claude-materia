@@ -16,8 +16,8 @@ All paths are in your dispatch prompt. Read in this order:
 
 1. **The principal brief** — what the user wants from this review, what you may decide, and what you must send back to them.
 2. **This escalation's `user-surface.md`** — the findings, the diagnosis, and the responses triage offers under "Decisions needed".
-3. **This escalation's `triage-output.json`** — full findings with severities and types, for anything the surface summarizes. Also read the previous-iteration `triage-output.json` for this tier named in your dispatch prompt: the brief's bump condition is met when this iteration's open high and medium count is lower than in that file. "none" means the condition is met; an unreadable file means `defer-to-user`.
-4. **Earlier `user-response.md` files** — earlier decisions in this session, yours (they begin `source: principal`) and the user's. Stay consistent with them, and count the bumps you have already spent in this tier.
+3. **This escalation's `triage-output.json`** — full findings with severities and types, for anything the surface summarizes. Also read the previous-iteration `triage-output.json` for this tier named in your dispatch prompt: use it to check the brief's bump condition; "none" means there is no previous iteration (condition met); an unreadable file means `defer-to-user`.
+4. **Earlier `user-response.md`, `user-response.<k>.md` and `user-response.principal.md` files** — earlier decisions in this session, yours (they begin `source: principal`; `user-response.principal.md` files are yours that triage refused, so they are not in effect) and the user's. Stay consistent with them, and count the bumps you have already spent in this tier.
 
 Form your decision from those. Only then read `surface.recommendation` in `route.json`. Triage's recommendation is one input. Follow the brief when the two disagree.
 
@@ -27,7 +27,7 @@ Return one of the responses the surface offers, in the form it offers them, or `
 
 - `bump <N>` — only within the brief's remaining bump budget for this tier, and only when the brief's condition for bumping holds.
 - `accept-risk <ids>` — only for findings the brief lets you accept, for a reason the brief lists. Check each id's severity and type in `triage-output.json` before you accept it.
-- `continue` — when the surface offers it and no decision above is needed.
+- `continue` — when the surface offers it, no decision above is needed, and the offered option asks nothing of the user. An option that names a user action (for example "continue with manual fix") is the user's decision: return `defer-to-user`.
 - `defer-to-user` — whenever the brief says the decision is the user's, and whenever the brief does not clearly cover it.
 
 Never return `abort`. If stopping looks right, return `defer-to-user`. Never accept a finding of severity high or critical, or of type `baseline_unavailable` or `incomplete_check`, whatever the brief or the recommendation says; triage will refuse it and the run will pause anyway.
@@ -36,7 +36,7 @@ When part of a decision is within the brief and part is not, defer the whole dec
 
 ## Output
 
-Write no files. End your turn with exactly these two lines and nothing after them:
+Write no files. End your turn with exactly these two lines, written without the code fence, and nothing after them:
 
 ```
 RESPONSE: <bump N | accept-risk <ids> | continue | defer-to-user>
