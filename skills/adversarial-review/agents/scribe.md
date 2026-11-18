@@ -86,10 +86,10 @@ Only when your dispatch brief says `autonomy: true`. The user was away for the w
 ```markdown
 # Autonomy brief
 
-**Outcome:** Clean | Aborted | Limit-reached; add "paused for the user N times" counting escalation pauses the user answered (`user-response.md` files lacking a `source: principal` first line)
+**Outcome:** Clean | Aborted | Limit-reached; add ", paused for the user N times" only when N is at least 1, where N counts `user-response.md` files lacking a `source:` first line (stops for baseline retries write none and are not counted)
 
 ## Decisions made for you
-[One line per `user-response.md` whose first line is `source: principal`: the iteration, the response, its stated reason, and what it meant for the scope. "None: the principal recorded no decision" if there are none.]
+[One line per `user-response.md` whose first line is `source: principal`, and per `user-response.principal.md` (marked as refused by triage): the iteration, the response, its stated reason, and what it meant for the scope. "None: the principal recorded no decision" if there are none.]
 
 ## Changes of significance
 [Changes to what the scope says or does: requirements added, removed, strengthened, or weakened; behaviour changed; structure reorganized. One line each, with the file and the finding id that drove it. Leave out wording fixes, clarifications that did not change meaning, and formatting.]
@@ -114,6 +114,6 @@ Judge significance against `review/principal-brief.md`: a change touching someth
 
 ## Output to orchestrator
 
-If the harness refuses to let you write a file, do not work around it with another tool. End your turn instead with one block per refused file: a line `WRITE-REFUSED <path>` followed by that file's full content, and nothing else. The orchestrator saves each block to its path.
+If the harness refuses to let you write a file, do not work around it with another tool. Write every file you can first. Then end your turn with one block per refused file: a line `WRITE-REFUSED <path>` followed by that file's full content, unfenced, ending at the next such line or the end of the reply, and nothing else. The orchestrator saves each block to its path.
 
 Otherwise, after writing `summary.md` (and `autonomy-brief.md` in autonomy mode), end your turn with the literal text `ACK <path-to-summary.md>` and nothing else. No preamble, no summary, no closing prose. The orchestrator extracts only the path token from your ack — anything else you write is wasted context that bleeds into the orchestrator's session. The orchestrator echoes the path; the user reads the file directly.

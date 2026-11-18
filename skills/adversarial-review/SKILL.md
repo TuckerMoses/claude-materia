@@ -59,7 +59,7 @@ All three are procedural, not substantive — bounded one-liners.
 
 ### Dispatch-discipline rule
 
-When dispatching a subagent (reviewer, triage, fixer, scribe, auditor, principal), the orchestrator MUST use this exact wrapper template — verbatim — and add no other content:
+When dispatching a subagent (reviewer, triage, fixer, scribe, auditor, principal — whose last line Autonomy mode replaces), the orchestrator MUST use this exact wrapper template — verbatim — and add no other content:
 
 ```
 You are <agent-bare-name>. Adopt the role at <session-dir>/agents/<agent_filename>.
@@ -400,12 +400,12 @@ When opus exits clean (or any tier exits aborted/limit-reached):
    - Path to session-meta.json (for `pre_review_vcs_ref` and `vcs` flag)
    - Paths to all `iterations/*/triage-output.json`
    - Paths to all `iterations/*/fixer-changelog.md`
-   - Paths to all `iterations/*/user-response.md` (if any)
+   - Paths to all `iterations/*/user-response.md` and `iterations/*/user-response.principal.md` (if any)
    - Path to accepted-risks.json
    - Path to deferred-lows.json
    - `termination_kind`: `clean | aborted | limit_reached`
    - In autonomy mode, also: `autonomy: true`, the path to `review/principal-brief.md`, and the path to the last numbered iteration's `baseline-sizes.tsv`. The scribe then writes `review/autonomy-brief.md` as well.
-2. Wait for the literal `ACK <summary.md path>` acknowledgment. **Write fallback:** some harnesses refuse a subagent's write of a report file. The scribe then ends its turn with one block per refused file: a line `WRITE-REFUSED <path>` followed by that file's full content. Save each block's content verbatim to its path and continue. This is the one case where the orchestrator handles a subagent's content; the loop is already over.
+2. Wait for the literal `ACK <summary.md path>` acknowledgment. **Write fallback:** some harnesses refuse a subagent's write of a report file. The scribe then ends its turn with one block per refused file: a line `WRITE-REFUSED <path>` followed by that file's full content. Save each block's content verbatim to its path and continue; the blocks stand in for the ACK. This is the one case where the orchestrator handles a subagent's content; the loop is already over.
 3. Echo: "Review complete. Summary at `<session-path>/review/summary.md`."
 4. Terminate.
 
@@ -426,7 +426,7 @@ A preference stated in an earlier, unrelated task does not count. When you infer
 
 ### Setup
 
-- **Step 1 (manifest).** Build the manifest from the conversation without asking. If `intent` cannot be derived from the conversation, ask for it once, as outside autonomy mode; everything else proceeds unasked.
+- **Step 1 (manifest).** Build the manifest from the conversation without asking. If `intent`, or the artifact when no path was given, cannot be derived from the conversation, ask for it once, as outside autonomy mode; everything else proceeds unasked.
 - **Step 2 (version control).** Unchanged. The no-VCS "Continue?" still waits for the user.
 - **Step 4 (confirmation).** Show the manifest summary and the proposed pool, then proceed without waiting.
 - **Step 5 (session directory).** Also copy `principal.md` into `agents/` with the other system agents, and write `review/principal-brief.md`.
@@ -467,7 +467,8 @@ When `surface.requires_response` is true and `surface.human_only` is not true, d
    - user-surface: <surface.path>
    - triage-output: <session-dir>/review/iterations/<tier>-<N>/triage-output.json
    - route.json: <session-dir>/review/iterations/<tier>-<N>/route.json
-   - earlier user responses: [paths to every user-response.md in the session, oldest first; "none"]
+   - earlier user responses: [paths to every user-response.md and user-response.principal.md in the session, oldest first; "none"]
+   - previous triage-output (same tier): <session-dir>/review/iterations/<tier>-<N-1>/triage-output.json, or "none" at iteration 1 of a tier
    ```
 
 3. Dispatch the principal on the most capable model with the dispatch-discipline wrapper, its last line replaced by: `End your turn with the two-line RESPONSE / REASON decision your role file specifies and nothing else.`
@@ -492,7 +493,7 @@ When `surface.requires_response` is true and `surface.human_only` is not true, d
 
    Then re-dispatch triage and continue exactly as after a human reply.
 
-**Pausing for the user.** On `defer-to-user` (from the principal or a hard limit), and whenever `surface.human_only` is true, surface to the user as Phase 2 step 1 does outside autonomy mode, preceded by one line: "Autonomy mode paused: this decision is outside what the principal may decide." Wait. Write the user's typed reply to `user-response.md` with no `source:` line, re-dispatch triage, and resume in autonomy mode.
+**Pausing for the user.** On `defer-to-user` (from the principal or a hard limit), and whenever `surface.human_only` is true, surface to the user as Phase 2 step 1 does outside autonomy mode, preceded by one line: "Autonomy mode paused: this decision is outside what the principal may decide." Wait. If this iteration already holds a principal-written `user-response.md`, first rename it to `user-response.principal.md`. Write the user's typed reply to `user-response.md` with no `source:` line, re-dispatch triage, and resume in autonomy mode.
 
 **Triage's guard.** Only triage sees severities. If a principal response accepts a finding it may not (high or critical severity, or type `baseline_unavailable` or `incomplete_check`), triage refuses it and emits a surface with `human_only: true`. You do not check severities yourself.
 
@@ -516,7 +517,7 @@ Do not restate the brief. Do not soften an item because the review ended clean.
 ```
 review/principal-brief.md                      session-authored at setup; the principal reads it
 review/autonomy-brief.md                       scribe-authored at the end; the session reads it once
-iterations/<tier>-<N>/dispatches/principal.md  orchestrator-authored, paths only (iff an escalation occurred)
+iterations/<tier>-<N>/dispatches/principal.md  orchestrator-authored, paths only (iff the principal was consulted)
 ```
 
 ---
