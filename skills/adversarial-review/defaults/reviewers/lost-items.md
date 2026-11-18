@@ -53,8 +53,8 @@ For each finding, emit:
 
 - **finding_type**: One of `dropped_content`, `weakened_requirement`, `dropped_detail`, `baseline_unavailable`, `incomplete_check`
 - **severity**: Your assessment (critical, high, medium, low)
-- **files**: The current file path(s) where the meaning should live. If the baseline file no longer exists, name the current file that now covers that subject.
-- **location**: A stable locator for the loss — the baseline file, its section heading, and a short verbatim quote of the lost text. Use the same locator if you report the same loss in a later iteration, so it keeps one identity.
+- **files**: The current file path(s) where the meaning should live. If the baseline file no longer exists, name the current scope file where the meaning should live, never only the deleted path.
+- **location**: A stable locator for the loss — the baseline file, its section heading, and a short verbatim quote of the lost text, starting at the first line of the lost passage. Use the same locator if you report the same loss in a later iteration, so it keeps one identity.
 - **description**: What the baseline said that the current scope no longer says. For `weakened_requirement`, quote both the baseline wording and the current wording.
 - **suggestion**: Restore the meaning in the fewest words that carry it, at the place the current structure puts such content. Do not ask for the original wording back. If a resolved finding plausibly called for the removal but no changelog logged it, suggest instead that the fixer log it in this round's Removals against that finding id.
 

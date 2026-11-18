@@ -32,7 +32,7 @@ During Phase 2, the orchestrator MUST NOT Read the following files:
 - `iterations/<tier>-<N>/<reviewer>-output.md` (raw reviewer output)
 - `iterations/<tier>-<N>/fixer-changelog.md` (fixer's audit trail)
 - `iterations/<tier>-<N>/user-surface.md` (triage-authored; orchestrator echoes the path, never reads it)
-- `iterations/<tier>-<N>/scope.txt` (triage-authored scope list; the baseline comparison script consumes it)
+- `iterations/<tier>-<N>/scope.txt` (triage-authored, fixer-appended scope list; the baseline comparison script consumes it)
 - `iterations/<tier>-<N>/baseline.diff` and `iterations/<tier>-<N>/baseline-sizes.tsv` (script output; reviewers and triage read them)
 - anything under `review/baseline/` (the pre-review copies of the scope files)
 
@@ -335,7 +335,7 @@ o-init/, o-1/, o-2/ ...                    same shape, opus tier
 
 Convention: **dispatches live in the iteration where they're consumed**. Triage at `c-N` writes dispatches into `c-(N+1)/dispatches/` (creating that directory) and writes `c-(N+1)/scope.txt` beside them. Orchestrator's loop entry at `c-(N+1)` finds prompts and scope list already in place.
 
-**Baseline paths.** Every triage dispatch (tier-init, numbered iteration, and re-dispatch after a user response) also passes five paths: `baseline_dir` (from `session-meta.json`), the current iteration's `baseline-sizes.tsv` (absent in tier-init), and for the next iteration `next_baseline_diff_path`, `next_baseline_sizes_path`, and `next_scope_list_path`. The last four follow the `iterations/<tier>-<N>` convention, exactly as `route.json` does. Triage writes the scope list; the orchestrator's script writes the other two before reviewers are dispatched.
+**Baseline paths.** Every triage dispatch (tier-init, numbered iteration, and re-dispatch after a user response) also passes absolute paths (five, or four at tier-init): `baseline_dir` (from `session-meta.json`), the current iteration's `baseline-sizes.tsv` (absent in tier-init), and for the next iteration `next_baseline_diff_path`, `next_baseline_sizes_path`, and `next_scope_list_path`. The last four are built under `<session-dir>/review/iterations/<tier>-<N>/`, exactly as `route.json` is. Triage writes the scope list; the orchestrator's script writes the other two before reviewers are dispatched.
 
 **Tier-init iteration.** Every tier starts with a tier-init triage call. The orchestrator dispatches triage with: scope, manifest, SCOPE.md, no reviewer outputs, prior triage history (empty for cheap-init; full cheap-tier history for opus-init), tier label, iteration=0. Triage cold-start-evaluates preconditions, writes `c-1/scope.txt` (or `o-1/scope.txt`), and emits `c-init/route.json` (or `o-init/route.json`) with `next_dispatches` for iteration 1. No `triage-output.json` is produced.
 

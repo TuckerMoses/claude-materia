@@ -76,7 +76,7 @@ After applying fixes, emit a markdown changelog at `iterations/<tier>-<N>/fixer-
 - Files deleted: 0
 ```
 
-Every "Findings addressed" entry carries a `Restores` line: the exact text you put back and where, or `none`. A rewrite counts as a removal when any statement the old text made is no longer made by the new text; log it under Removals. If a finding asks you to log an earlier unlogged removal, add the Removals entry against the finding id that called for that removal.
+Every resolved "Findings addressed" entry carries a `Restores` line (`unable_to_resolve` entries do not): the exact text you put back and where, or `none`. A rewrite counts as a removal when any statement the old text made is no longer made by the new text; log it under Removals. If a finding asks you to log an earlier unlogged removal, add the Removals entry against the finding id that called for that removal.
 
 ## Constraints
 
