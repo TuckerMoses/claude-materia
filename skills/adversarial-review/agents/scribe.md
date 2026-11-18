@@ -86,10 +86,10 @@ Only when your dispatch brief says `autonomy: true`. The user was away for the w
 ```markdown
 # Autonomy brief
 
-**Outcome:** Clean | Aborted | Limit-reached; add "paused for the user N times" if any `user-response.md` lacks a `source: principal` first line
+**Outcome:** Clean | Aborted | Limit-reached; add "paused for the user N times" counting escalation pauses the user answered (`user-response.md` files lacking a `source: principal` first line)
 
 ## Decisions made for you
-[One line per `user-response.md` whose first line is `source: principal`: the iteration, the response, its stated reason, and what it meant for the scope. "None: no escalation occurred" if there are none.]
+[One line per `user-response.md` whose first line is `source: principal`: the iteration, the response, its stated reason, and what it meant for the scope. "None: the principal recorded no decision" if there are none.]
 
 ## Changes of significance
 [Changes to what the scope says or does: requirements added, removed, strengthened, or weakened; behaviour changed; structure reorganized. One line each, with the file and the finding id that drove it. Leave out wording fixes, clarifications that did not change meaning, and formatting.]

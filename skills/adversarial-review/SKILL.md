@@ -39,6 +39,7 @@ During Phase 2, the orchestrator MUST NOT Read the following files:
 The orchestrator's only authorized Phase 2 reads are:
 
 - `iterations/<tier>-<N>/route.json` (small routing instruction)
+- In autonomy mode only: the principal's final two lines (`RESPONSE:` / `REASON:`), and the first two lines of this tier's principal-sourced `user-response.md` files
 
 The baseline comparison script's inputs (`scope.txt`, `review/baseline/`) are consumed by the shell, not read into orchestrator context; running the script is not a read.
 
@@ -52,7 +53,7 @@ Inside Phase 2, **triage owns all surfacing of substance**. The orchestrator sur
 
 1. In Phase 1 setup (manifest confirmation, pool confirmation, baseline snapshot failure)
 2. On tier-transition announcements (cheap → opus promotion)
-3. On triage-itself-failed exceptions (malformed `route.json`, missing JSON, schema mismatch), and when the orchestrator-run baseline comparison fails (non-zero exit; see Phase 2 step 3)
+3. On triage-itself-failed exceptions (malformed `route.json`, missing JSON, schema mismatch), when the orchestrator-run baseline comparison fails (non-zero exit; see Phase 2 step 3), and, in autonomy mode, the fixed pause line that precedes a surface the principal may not answer
 
 All three are procedural, not substantive — bounded one-liners.
 
