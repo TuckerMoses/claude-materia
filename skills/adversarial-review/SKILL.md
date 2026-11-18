@@ -50,7 +50,7 @@ Substance never lands in orchestrator context. The temptation to verify, summari
 
 Inside Phase 2, **triage owns all surfacing of substance**. The orchestrator surfaces directly only:
 
-1. In Phase 1 setup (manifest confirmation, pool confirmation)
+1. In Phase 1 setup (manifest confirmation, pool confirmation, baseline snapshot failure)
 2. On tier-transition announcements (cheap → opus promotion)
 3. On triage-itself-failed exceptions (malformed `route.json`, missing JSON, schema mismatch), and when the orchestrator-run baseline comparison fails (non-zero exit; see Phase 2 step 3)
 
@@ -290,7 +290,7 @@ Distinct from raw `Task` dispatch in that `run` performs the same scope resoluti
 5. **Create the session directory.**
    - Path: `<plugin-data-dir>/sessions/<timestamp>-<intent-slug>/`. Already created in step 1 for `manifest.yml`; now populate the rest.
    - Create subdirectories: `agents/`, `review/`, `review/iterations/`, `review/baseline/`
-   - **Snapshot the baseline.** Copy every file in the resolved scope into `review/baseline/`, mirroring each file's absolute path with the leading `/` removed (`/a/b/c.md` → `review/baseline/a/b/c.md`). Use Bash `cp` (creating parent directories), and if any copy exits non-zero, stop setup and surface one line under Surfacing exclusivity case 1, "Baseline snapshot failed for `<session-dir>/review/baseline/`. Reply `retry` (rerun the copy) or `abort`."; never Read the files. This runs after the step-2 checkpoint, so for checkpointed files the baseline equals the content at `pre_review_vcs_ref`; a file added to the scope at step 4 is baselined as it stands now. The baseline is written once and never updated, in both scope modes and across the tier promotion. It is the only record of the pre-review original that reviewers can see.
+   - **Snapshot the baseline.** Copy every file in the resolved scope into `review/baseline/`, mirroring each file's absolute path with the leading `/` removed (`/a/b/c.md` → `review/baseline/a/b/c.md`). Use Bash `cp` (creating parent directories), and if any copy exits non-zero, stop setup and surface one line under Surfacing exclusivity case 1, "Baseline snapshot failed for `<session-dir>/review/baseline/`. Reply `retry` or `abort`."; `retry` reruns the copy, `abort` ends the session without dispatching the scribe, and any other reply re-surfaces the same line; never Read the files. This runs after the step-2 checkpoint, so for checkpointed files the baseline equals the content at `pre_review_vcs_ref`; a file added to the scope at step 4 is baselined as it stands now. The baseline is written once and never updated, in both scope modes and across the tier promotion. It is the only record of the pre-review original that reviewers can see.
    - Snapshot the resolved-and-confirmed pool into `sessions/<id>/agents/` using namespace-prefixed filenames (`default__coherence.md`, `manual__custom-thing.md`, etc.). The snapshot reflects the locked pool.
    - Copy system agent files (triage, fixer, auditor, scribe) into `sessions/<id>/agents/` with their bare names (no namespace prefix; system agents have no source-namespace).
    - Create `review/accepted-risks.json` with initial content `[]`
