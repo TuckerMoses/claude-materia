@@ -255,7 +255,7 @@ Write `iterations/<tier>-<N>/user-surface.md` every iteration. This is what the 
 [Per agent in pool: included/excluded with reason from precondition evaluation.]
 
 ## Decisions needed (if any)
-[Only present when `surface.requires_response: true`. Lists the structured options the user should respond with: "accept-risk <ids>", "abort", "bump <N>", etc.]
+[Only present when `surface.requires_response: true`. Lists the structured options the user should respond with: "accept-risk <ids>", "abort", "bump <N>", etc. When you set `surface.human_only`, say here in one line why the decision reached the user: for example, that a stand-in may not accept a high finding.]
 ```
 
 Also emit a `breadcrumb` in `route.json` — a one-line render of the same content for the orchestrator to echo to the user without expanding the path. Example: `"iter c-4 / blocked / 3 high 2 medium / 1 cross-file"`.
@@ -297,6 +297,7 @@ Field semantics:
 - **`surface.path`**: path to your authored `user-surface.md`. Always present.
 - **`surface.breadcrumb`**: one-line render. Always present.
 - **`surface.requires_response`**: `true` only when control is `escalate` or you need user input for a continue decision.
+- **`surface.human_only`**: optional boolean; absent means false. Set it to `true` only when refusing a principal response (section 12). It tells the orchestrator to put this decision to the user even when a principal is answering escalations.
 - **`next_dispatches`**: array of `{agent_filename, prompt_path}` for the next iteration's reviewers. Empty array on `exit_clean` / `exit_aborted`.
 - **`fixer_brief_path`**: path to fixer's brief. Present iff gate is blocked. Absent on coverage-only iterations and on exits.
 - **`tier_max_increment`**: optional integer. When you parse a `user-response.md` containing "bump N", set this to N; orchestrator increases its tier_max accordingly. Otherwise null.
@@ -333,6 +334,7 @@ You raise `control: escalate` (with `surface.requires_response: true`) in these 
 - **Material scope change** (live globs): when scope expands by more than ~25% file count, surface for confirmation before dispatching reviewers against the expanded scope.
 
 When a user response arrives at `iterations/<tier>-<N>/user-response.md`:
+- **Principal responses.** If the file's first line is `source: principal`, a principal agent answered in the user's place: the second line is the response and the third its reason. Treat it as the user's response, with one guard. If it accepts a finding whose severity is high or critical, or whose type is `baseline_unavailable` or `incomplete_check`, refuse the whole response: leave `accepted-risks.json` unchanged and emit `control: escalate` with `surface.requires_response: true` and `surface.human_only: true`, offering the same options again. A file without that first line is the user's own reply and has no guard.
 - Parse intent: `accept-risk <ids>`, `abort`, `bump <N>`, `continue`, or free-form prose.
 - Update `accepted-risks.json` if appropriate.
 - Set `tier_max_increment` if appropriate.

@@ -2,7 +2,7 @@
 name: adversarial-review
 description: "Run an adversarial review loop on a scope (one file, many files, or a YAML manifest declaring both intent and locations). Dispatches reviewer agents to find issues, a triage agent to synthesize and route, a fixer to apply changes, and a scribe at the end to author the summary. Loops until clean, then promotes to opus for final verification. Use this skill whenever you need rigorous validation of a written artifact, when reviewing designs before implementation, when checking specs that AI agents will consume, or when the user asks to review, validate, stress-test, or audit something. Even if the user just says 'review this' or 'check this for issues', this skill applies."
 user-invocable: true
-argument-hint: "[subcommand] [args] — run <ref> [path], create-default (author mode), or just [path] for the full loop"
+argument-hint: "[subcommand] [args] — run <ref> [path], create-default (author mode), or just [path] for the full loop; add --autonomy to run hands off"
 ---
 
 # Adversarial Review
@@ -58,7 +58,7 @@ All three are procedural, not substantive — bounded one-liners.
 
 ### Dispatch-discipline rule
 
-When dispatching a subagent (reviewer, triage, fixer, scribe, auditor), the orchestrator MUST use this exact wrapper template — verbatim — and add no other content:
+When dispatching a subagent (reviewer, triage, fixer, scribe, auditor, principal), the orchestrator MUST use this exact wrapper template — verbatim — and add no other content:
 
 ```
 You are <agent-bare-name>. Adopt the role at <session-dir>/agents/<agent_filename>.
@@ -81,6 +81,8 @@ For the auditor in Phase 1 (no triage exists yet), the orchestrator authors the 
 
 Subagents MUST end their turns with literal `ACK <output-path>` — no other text after that line, no preamble. The orchestrator MUST NOT read or summarize anything in the subagent's response beyond extracting the path token. Treat the response as an opaque parse for the path; ignore the rest.
 
+Two agents end differently, and only as their sections specify: the principal ends with a two-line `RESPONSE:` / `REASON:` decision in place of an ACK (see **Autonomy mode**), and the scribe may end with `WRITE-REFUSED` blocks when the harness refuses its writes (see Phase 4).
+
 If a subagent's response does not match the literal ack format, treat it as an agent-failed exception (the orchestrator surfaces under case 3 of the Surfacing exclusivity rule). Do not "salvage" substance from a malformed ack — that re-creates the leak the discipline prevents.
 
 ### Known platform leak: file-modification reminders
@@ -95,7 +97,7 @@ An iteration is only valid if (a) each reviewer ran as an independent subagent �
 
 ## Subcommands
 
-- `/adversarial-review [path]` — Run the full review loop. `path` may be (a) a YAML manifest, (b) a single file, or (c) omitted (infer the artifact from conversation context — if context insufficient, ask). For (b) and (c), Phase 1 builds a manifest interactively.
+- `/adversarial-review [path]` — Run the full review loop. `path` may be (a) a YAML manifest, (b) a single file, or (c) omitted (infer the artifact from conversation context — if context insufficient, ask). For (b) and (c), Phase 1 builds a manifest interactively. Add `--autonomy` to run the loop hands off, with a principal agent answering escalations (see **Autonomy mode**).
 - `/adversarial-review run <ref> <path>` — Single-pass: dispatch one reviewer agent against the scope. No loop, no triage, no fixer, no scribe. Useful for rapid iteration during artifact development.
 - `/adversarial-review create-default` — Author-mode subcommand for skill authors only. Walks the author through guided creation of a new default reviewer. Available only when cwd is a claude-materia source checkout.
 
@@ -165,6 +167,8 @@ Distinct from raw `Task` dispatch in that `run` performs the same scope resoluti
 ## Full Review Loop
 
 ### Phase 1: Session Setup
+
+In autonomy mode, steps 1, 4 and 5 change as described under **Autonomy mode → Setup**. Decide whether the mode is on before step 1.
 
 1. **Build or load the manifest, then compose `SCOPE.md`.**
 
@@ -301,6 +305,8 @@ Distinct from raw `Task` dispatch in that `run` performs the same scope resoluti
 
 ### Phase 2: The Review Loop
 
+In autonomy mode, step 1 and the failure branch of step 3 (b2) change as described under **Autonomy mode → Answering an escalation**.
+
 **Configuration:**
 - `sonnet_max`: Maximum iterations for the cheap tier (default: 5, overridable via `--sonnet-max`)
 - `opus_max`: Maximum iterations for the opus tier (default: 5, overridable via `--opus-max`)
@@ -397,11 +403,120 @@ When opus exits clean (or any tier exits aborted/limit-reached):
    - Path to accepted-risks.json
    - Path to deferred-lows.json
    - `termination_kind`: `clean | aborted | limit_reached`
-2. Wait for the literal `ACK <summary.md path>` acknowledgment.
+   - In autonomy mode, also: `autonomy: true`, the path to `review/principal-brief.md`, and the path to the last numbered iteration's `baseline-sizes.tsv`. The scribe then writes `review/autonomy-brief.md` as well.
+2. Wait for the literal `ACK <summary.md path>` acknowledgment. **Write fallback:** some harnesses refuse a subagent's write of a report file. The scribe then ends its turn with one block per refused file: a line `WRITE-REFUSED <path>` followed by that file's full content. Save each block's content verbatim to its path and continue. This is the one case where the orchestrator handles a subagent's content; the loop is already over.
 3. Echo: "Review complete. Summary at `<session-path>/review/summary.md`."
 4. Terminate.
 
-The orchestrator never reads any session-state file at terminate time. The scribe's acknowledgment is the only signal.
+The orchestrator never reads any session-state file at terminate time, with one exception: in autonomy mode it reads `review/autonomy-brief.md` (see **Autonomy mode → The end-of-run brief**). Otherwise the scribe's acknowledgment is the only signal.
+
+## Autonomy mode
+
+In autonomy mode the review runs without the user answering. A **principal** agent answers escalations in the user's place, from a brief the session writes at setup. The principal is a subagent, so finding substance stays out of orchestrator context; the brief is how the user's intent reaches it. Triage is unchanged in role: it still normalizes, routes, and authors every surface. The principal replaces only the person who answers.
+
+### Trigger
+
+Autonomy mode is on when either holds:
+
+- the invocation carries `--autonomy`; or
+- the user has said, in the conversation that invokes the skill, that they want to be hands off for this review (for example "run it without me", "I'll be away", "don't stop to ask me").
+
+A preference stated in an earlier, unrelated task does not count. When you infer the mode from conversation, say so in one line at setup ("Running in autonomy mode because you said …") so the user can correct it. The mode is fixed at setup and recorded in `review/session-meta.json` as `autonomy: true | false`.
+
+### Setup
+
+- **Step 1 (manifest).** Build the manifest from the conversation without asking. If `intent` cannot be derived from the conversation, ask for it once, as outside autonomy mode; everything else proceeds unasked.
+- **Step 2 (version control).** Unchanged. The no-VCS "Continue?" still waits for the user.
+- **Step 4 (confirmation).** Show the manifest summary and the proposed pool, then proceed without waiting.
+- **Step 5 (session directory).** Also copy `principal.md` into `agents/` with the other system agents, and write `review/principal-brief.md`.
+
+**The principal brief.** Write it from the conversation before any reviewer runs. This is the only point where your knowledge of the user's intent enters the loop. State only what the conversation supports, and quote the user where you can.
+
+```markdown
+# Principal brief
+
+## What the user wants from this review
+[What they said the review is for, what they care about most, what they would rather not see.]
+
+## What you may decide
+[The default limits below, widened or narrowed only where the user said so, quoting what they said. State the bump limit as a number.]
+
+## What you must send back
+[The defaults below, plus anything the user said they want to decide themselves.]
+```
+
+Default limits, used unless the user said otherwise:
+
+- `bump`: at most 3 extra iterations per tier in total, and only while the count of open high and medium findings is falling: lower than in the previous iteration of the same tier. With no previous iteration in the tier, the condition is met.
+- `accept-risk`: medium and low findings only, and only for a reason the brief lists. Default reasons: the finding contradicts a decision the user already made; it concerns behaviour outside what this review is for; its fix would remove meaning the user wants kept.
+- Send back: any high or critical finding that needs a decision; any `baseline_unavailable` or `incomplete_check` finding; any wish to abort; anything the brief does not cover.
+
+Record the bump limit in `review/session-meta.json` as `principal_bump_limit`. Show the user the brief's path and its "What you may decide" and "What you must send back" sections. Do not wait.
+
+### Answering an escalation
+
+When `surface.requires_response` is true and `surface.human_only` is not true, do this in place of Phase 2 step 1's ask-the-user step:
+
+1. Echo `surface.breadcrumb` and `surface.path`, so the transcript shows the escalation.
+2. Write `iterations/<tier>-<N>/dispatches/principal.md` from this fixed template, paths only:
+
+   ```markdown
+   # Principal dispatch — iteration <tier>-<N>
+   - brief: <session-dir>/review/principal-brief.md
+   - user-surface: <surface.path>
+   - triage-output: <session-dir>/review/iterations/<tier>-<N>/triage-output.json
+   - route.json: <session-dir>/review/iterations/<tier>-<N>/route.json
+   - earlier user responses: [paths to every user-response.md in the session, oldest first; "none"]
+   ```
+
+3. Dispatch the principal on the most capable model with the dispatch-discipline wrapper, its last line replaced by: `End your turn with the two-line RESPONSE / REASON decision your role file specifies and nothing else.`
+4. Read the last two lines of its reply, and nothing else in it:
+
+   ```
+   RESPONSE: <bump N | accept-risk <ids> | continue | defer-to-user>
+   REASON: <one sentence; findings named by id and severity only>
+   ```
+
+5. Apply the hard limits. Treat the reply as `defer-to-user` when any of these holds:
+   - it does not end with a well-formed `RESPONSE:` / `REASON:` pair;
+   - `RESPONSE` is `abort`, or anything other than the four forms above;
+   - `RESPONSE` is `bump <N>` and N plus the principal's earlier bumps in this tier exceeds `principal_bump_limit`. Count earlier bumps from this tier's `user-response.md` files whose first line is `source: principal`; these are files you wrote, and reading their first two lines is permitted.
+6. Otherwise write `iterations/<tier>-<N>/user-response.md` as exactly:
+
+   ```
+   source: principal
+   <the RESPONSE value>
+   reason: <the REASON value>
+   ```
+
+   Then re-dispatch triage and continue exactly as after a human reply.
+
+**Pausing for the user.** On `defer-to-user` (from the principal or a hard limit), and whenever `surface.human_only` is true, surface to the user as Phase 2 step 1 does outside autonomy mode, preceded by one line: "Autonomy mode paused: this decision is outside what the principal may decide." Wait. Write the user's typed reply to `user-response.md` with no `source:` line, re-dispatch triage, and resume in autonomy mode.
+
+**Triage's guard.** Only triage sees severities. If a principal response accepts a finding it may not (high or critical severity, or type `baseline_unavailable` or `incomplete_check`), triage refuses it and emits a surface with `human_only: true`. You do not check severities yourself.
+
+**Baseline comparison failure** (step 3 b2, non-zero exit): rerun the script once without asking. If it fails again, surface the usual `retry` / `abort` line to the user and wait. Do not consult the principal; it cannot repair plumbing.
+
+**Triage contract violation** (step 4, iteration limit fail-safe): surface to the user, never the principal.
+
+### The end-of-run brief
+
+In autonomy mode the scribe writes `review/autonomy-brief.md` alongside the summary: the decisions the principal made, the changes of significance, what is still open, and the size change. It is what a user who was away should read first.
+
+After the scribe returns (Phase 4 step 2), Read `review/autonomy-brief.md` and only that file. This read is authorized: the loop is over, and the Read-discipline rule governs Phase 2. Then tell the user, in a few lines:
+
+- the outcome and where the brief and the summary are;
+- which items in the brief they are likely to mind, given what they said in the conversation, and why; or, plainly, that nothing stands out.
+
+Do not restate the brief. Do not soften an item because the review ended clean.
+
+### Files this mode adds to a session
+
+```
+review/principal-brief.md                      session-authored at setup; the principal reads it
+review/autonomy-brief.md                       scribe-authored at the end; the session reads it once
+iterations/<tier>-<N>/dispatches/principal.md  orchestrator-authored, paths only (iff an escalation occurred)
+```
 
 ---
 
