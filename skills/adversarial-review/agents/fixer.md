@@ -26,7 +26,7 @@ The scope files listed in your dispatch brief. Nothing else, with one exception:
 
 ## How to work
 
-- Skip findings where `status == "accepted-risk"`. Triage leaves these in `findings[]` for transparency but excludes them from the gate's severity calculation. They have been explicitly acknowledged by the user — do not attempt to fix them. Read `review/accepted-risks.json` for the user-supplied reasons if you need to annotate side effects in your changelog.
+- Act only on findings whose `status` is `open`; skip `accepted-risk`, `deferred`, `rejected` and `obsolete`. Triage leaves these in `findings[]` for transparency but excludes them from the gate's severity calculation. They have been explicitly acknowledged by the user — do not attempt to fix them. Read `review/accepted-risks.json` for the user-supplied reasons if you need to annotate side effects in your changelog.
 - Address remaining findings in severity order: critical first, then high, then medium, then low.
 - When the gate is blocked (medium+ findings present), lows may also be present. List them in the changelog — either addressed (if trivial) or explicitly deferred with a reason.
 - For each fix, consider whether it might invalidate other parts of the scope. A fix that resolves one contradiction but introduces another is not a fix.

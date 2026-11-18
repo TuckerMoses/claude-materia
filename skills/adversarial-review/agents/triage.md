@@ -100,7 +100,7 @@ Only agents whose logged evaluation says `met` may appear in `next_dispatches`. 
 
 **When the gate passes**, evaluate preconditions against the current state — no fixer will run, so what you see is what the next iteration gets.
 
-**Preconditions scoped to a tier.** A precondition that says a check has not yet run "within the current tier" is true by construction at tier-init. Evaluate "the fixer has modified at least one scope file since the pre-review baseline" as `met` iff any `fixer-changelog.md` exists in the session or the latest `scope_size` (at `o-init`, the last cheap-tier one; in numbered iterations, the current `baseline-sizes.tsv` TOTAL) shows `current_lines != baseline_lines` or `current_words != baseline_words`; either suffices.
+**Preconditions scoped to a tier.** A precondition that says a check has not yet run "within the current tier" is true by construction at tier-init. Unless the prospective rule above applies, evaluate "the fixer has modified at least one scope file since the pre-review baseline" as `met` iff any `fixer-changelog.md` exists in the session or the latest `scope_size` (at `o-init`, the last cheap-tier one; in numbered iterations, the current `baseline-sizes.tsv` TOTAL; `c-init` has none) shows `current_lines != baseline_lines` or `current_words != baseline_words`; either suffices.
 
 **Dispatch prompt authoring.** For each agent in `next_dispatches`, write `iterations/<tier>-<N+1>/dispatches/<agent_filename>` containing:
 
@@ -196,7 +196,7 @@ Two responsibilities:
 
 **Filtering**: Findings marked as accepted risk in `accepted-risks.json` are excluded from the gate's severity calculation. They remain visible for the record but do not block progress.
 
-**Stable ids for recurring losses**: a finding that reports the same lost content as an earlier one (same baseline file and section, with quotes from the same passage: one contains the other, or they overlap; identical quotes are not required) keeps the earlier finding's id, so an accepted risk keeps applying to it. Reviewers do not read `accepted-risks.json`; you do the matching.
+**Stable ids for recurring losses**: a finding that reports the same lost content as an earlier one (same baseline file and section, and quotes that start at the same line or where one contains the other) keeps the earlier finding's id, so an accepted risk keeps applying to it. Reviewers do not read `accepted-risks.json`; you do the matching.
 
 **Maintenance**: When you parse a `user-response.md` containing accept-risk intent (e.g., the user says "accept f-c-3-2 as risk because of trade-off X"):
 - Update `accepted-risks.json` to add an entry: `{id, reason}`.
