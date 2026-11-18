@@ -192,7 +192,7 @@ When user interventions exist in the history, factor them in. Don't re-raise pat
 
 ### 6. Accepted-risk filtering and maintenance
 
-Two responsibilities:
+Three responsibilities:
 
 **Filtering**: Findings marked as accepted risk in `accepted-risks.json` are excluded from the gate's severity calculation. They remain visible for the record but do not block progress.
 
@@ -315,7 +315,7 @@ State combinations the orchestrator branches on:
 
 The orchestrator dispatches you in **tier-init mode** at the start of each tier (cheap-tier session start, and again on promotion to opus). In tier-init:
 
-- You receive: scope (resolved), manifest, no reviewer outputs, prior triage history (empty for cheap-tier-init; full cheap-tier history for opus-tier-init).
+- You receive: scope (resolved), manifest, no reviewer outputs, prior triage history (empty for cheap-tier-init; full cheap-tier history for opus-tier-init), `baseline_dir`, and the three `next_*` paths.
 - You produce: a `route.json` with `control: continue`, no `fixer_brief_path`, and `next_dispatches` populated by cold-start precondition evaluation.
 - You do not produce a `triage-output.json` (no findings to record yet).
 - You author the iteration-1 dispatch prompts in `iterations/<tier>-1/dispatches/` and the iteration-1 scope list at `next_scope_list_path`.
