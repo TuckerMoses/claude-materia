@@ -31,6 +31,17 @@ Mark complete with `[x]`.
   scenarios" an explicit method instruction in the default reviewers — both o-1 reviewers credit
   it, not model acuity, for the yield; (c) instruct fixers toward surgical/tightening edits by
   default — the c-7 "narrowest edit" instruction measurably arrested prose drift (+31 → +2 lines).
+- [ ] **adversarial-review: check whether the bloat reviewer is holding growth down** (evidence:
+  session `20261118-pr2-autonomy`). With bloat in the pool from c-2 through o-6, the scope still
+  grew 7.4% in words (12,060 → 12,947; ~186 words were a merged base commit and 53 hand fixes, the
+  rest fixer growth in almost every round), and triage's c-4 goal of a net cut was not met. The
+  session records hold the data to tell which of these happened: (a) bloat raised findings that
+  triage rated or deferred as low, so the gate never forced a cut; (b) bloat raised little because
+  each addition was traceable to a finding and so "motivated"; (c) the sequential-cycle rule
+  deferred cuts to restored text. Read each iteration's `default__bloat-output.md` against
+  `triage-output.json` and the `baseline-sizes.tsv` TOTAL rows. Likely levers, depending on the
+  answer: `severity_guidance`, a Growth threshold that escalates, or a fixer rule that a fix may
+  not add net words without saying why.
 - [ ] **weekly-planner: vault-query wiring** (approved 2026-07-07, queued behind the kind-vault
   bridge build in `sc-kind-vault-bridge`). The deferred #4 edge: query `todo AND status:open` as a
   lifecycle consumer into weekly planning. Kernel skill — respect its `improvements.md`

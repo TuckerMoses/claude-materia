@@ -9,7 +9,7 @@ argument-hint: "[subcommand] [args] — run <ref> [path], create-default (author
 
 An adversarial review loop that validates a review scope through multiple independent reviewer agents, synthesized by a triage agent, with fixes applied by a dedicated fixer agent and the final summary written by a scribe.
 
-The skill ships with three default reviewers (coherence, design, detail) and supports user-supplied reviewers via configuration or ad-hoc invocation. Reviewer agents declare what they check and how they report; the loop's contract is enforced on the consumer side through a semantic audit step before pool composition.
+The skill ships with five default reviewers (coherence, design, detail, lost-items, bloat) and supports user-supplied reviewers via configuration or ad-hoc invocation. Reviewer agents declare what they check and how they report; the loop's contract is enforced on the consumer side through a semantic audit step before pool composition.
 
 ## Glossary
 
@@ -32,10 +32,15 @@ During Phase 2, the orchestrator MUST NOT Read the following files:
 - `iterations/<tier>-<N>/<reviewer>-output.md` (raw reviewer output)
 - `iterations/<tier>-<N>/fixer-changelog.md` (fixer's audit trail)
 - `iterations/<tier>-<N>/user-surface.md` (triage-authored; orchestrator echoes the path, never reads it)
+- `iterations/<tier>-<N>/scope.txt` (triage-authored, fixer-appended scope list; the baseline comparison script consumes it)
+- `iterations/<tier>-<N>/baseline.diff` and `iterations/<tier>-<N>/baseline-sizes.tsv` (script output; reviewers and triage read them)
+- anything under `review/baseline/` (the pre-review copies of the scope files)
 
 The orchestrator's only authorized Phase 2 reads are:
 
 - `iterations/<tier>-<N>/route.json` (small routing instruction)
+
+The baseline comparison script's inputs (`scope.txt`, `review/baseline/`) are consumed by the shell, not read into orchestrator context; running the script is not a read.
 
 Substance never lands in orchestrator context. The temptation to verify, summarize, or "just check" is the failure mode this rule prevents — every read of a substance file recreates the bug.
 
@@ -45,9 +50,9 @@ Substance never lands in orchestrator context. The temptation to verify, summari
 
 Inside Phase 2, **triage owns all surfacing of substance**. The orchestrator surfaces directly only:
 
-1. In Phase 1 setup (manifest confirmation, pool confirmation)
+1. In Phase 1 setup (manifest confirmation, pool confirmation, baseline snapshot failure)
 2. On tier-transition announcements (cheap → opus promotion)
-3. On triage-itself-failed exceptions (malformed `route.json`, missing JSON, schema mismatch)
+3. On triage-itself-failed exceptions (malformed `route.json`, missing JSON, schema mismatch), and when the orchestrator-run baseline comparison fails (non-zero exit; see Phase 2 step 3)
 
 All three are procedural, not substantive — bounded one-liners.
 
@@ -86,7 +91,7 @@ Practical impact: budget for ~3-10k tokens of orchestrator-context bleed per fix
 
 ### Iteration validity invariant
 
-An iteration is only valid if (a) each reviewer ran as an independent subagent — one Agent tool call per reviewer, never combined, (b) triage ran as its own subagent and produced a `route.json` file, and (c) the orchestrator's branching decisions reference only fields in `route.json`, never substance from any other file.
+An iteration is only valid if (a) each reviewer ran as an independent subagent — one Agent tool call per reviewer, never combined, (b) triage ran as its own subagent and produced a `route.json` file, and (c) the orchestrator's branching decisions reference only fields in `route.json`, never substance from any other file. One exception: the orchestrator also branches on the exit status of the baseline comparison script and on the user's `retry` / `abort` reply to its failure (Phase 2 step 3).
 
 ## Subcommands
 
@@ -150,7 +155,7 @@ Scaffolded single-reviewer dispatch for rapid iteration during artifact developm
    - Otherwise, build an ephemeral manifest with `locations: [<path>]` and `intent: "(single-pass review)"`.
 3. Resolve scope from manifest's `locations` (and `exclude` if present). Build `SCOPE.md` (see Phase 1 step 1).
 4. Run the audit pipeline against the resolved candidate (Step 1 + Step 2 of the audit pipeline; cache-hits avoid re-dispatch).
-5. Construct a minimal dispatch prompt for the reviewer with: scope file list, the manifest, `SCOPE.md`. No prior-iteration context.
+5. Construct a minimal dispatch prompt for the reviewer with: scope file list, the manifest, `SCOPE.md`. No prior-iteration context and no `## Session inputs` section: a single pass has no baseline, so a baseline-dependent reviewer (lost-items, bloat) reports "no baseline provided" and emits no findings.
 6. Dispatch the reviewer as a subagent. Present its raw output to the user. No triage, no fixer, no scribe.
 
 Distinct from raw `Task` dispatch in that `run` performs the same scope resolution and `SCOPE.md` composition the full loop does.
@@ -284,14 +289,15 @@ Distinct from raw `Task` dispatch in that `run` performs the same scope resoluti
 
 5. **Create the session directory.**
    - Path: `<plugin-data-dir>/sessions/<timestamp>-<intent-slug>/`. Already created in step 1 for `manifest.yml`; now populate the rest.
-   - Create subdirectories: `agents/`, `review/`, `review/iterations/`
+   - Create subdirectories: `agents/`, `review/`, `review/iterations/`, `review/baseline/`
+   - **Snapshot the baseline.** Copy every file in the resolved scope into `review/baseline/`, mirroring each file's absolute path with the leading `/` removed (`/a/b/c.md` → `review/baseline/a/b/c.md`). Use Bash `cp` (creating parent directories), and if any copy exits non-zero, stop setup and surface one line under Surfacing exclusivity case 1, "Baseline snapshot failed for `<session-dir>/review/baseline/`. Reply `retry` or `abort`."; `retry` reruns the copy, `abort` ends the session without dispatching the scribe, and any other reply re-surfaces the same line; never Read the files. This runs after the step-2 checkpoint, so for checkpointed files the baseline equals the content at `pre_review_vcs_ref`; a file added to the scope at step 4 is baselined as it stands now. The baseline is written once and never updated, in both scope modes and across the tier promotion. It is the only record of the pre-review original that reviewers can see.
    - Snapshot the resolved-and-confirmed pool into `sessions/<id>/agents/` using namespace-prefixed filenames (`default__coherence.md`, `manual__custom-thing.md`, etc.). The snapshot reflects the locked pool.
    - Copy system agent files (triage, fixer, auditor, scribe) into `sessions/<id>/agents/` with their bare names (no namespace prefix; system agents have no source-namespace).
    - Create `review/accepted-risks.json` with initial content `[]`
    - Create `review/deferred-lows.json` with initial content `[]`. Schema: array of objects with fields `id` (string), `tier` (string: `"c"` or `"o"`), `iteration` (integer), `files` (array of strings), `description` (string), `reason` (string).
    - Write the `SCOPE.md` composed in step 1 to `review/SCOPE.md`.
    - Write the audit report from Stage A to `review/agent-audit.md`.
-   - Write `review/session-meta.json` with `pre_review_vcs_ref`, `vcs: git | jj | none`, and the resolved scope's pre-review file list (for scribe).
+   - Write `review/session-meta.json` with `pre_review_vcs_ref`, `vcs: git | jj | none`, `baseline_dir` (the absolute path of `review/baseline/`), and the resolved scope's pre-review file list (for scribe).
 
 ### Phase 2: The Review Loop
 
@@ -308,6 +314,9 @@ c-init/                     # cheap-tier-init triage output
 └── (no triage-output.json — tier-init has no findings yet)
 
 c-1/
+├── scope.txt                              scope list — written by PREVIOUS iter's triage (or tier-init); fixer may append
+├── baseline.diff                          baseline -> current diff — written by the orchestrator's script before reviewers run
+├── baseline-sizes.tsv                     per-file line and word counts, baseline vs current — same script
 ├── default__coherence-output.md           reviewer (path-passed input/output)
 ├── default__design-output.md
 ├── triage-output.json                     full findings (fixer reads; orchestrator never)
@@ -324,15 +333,17 @@ c-2/, c-3/ ...                             same shape
 o-init/, o-1/, o-2/ ...                    same shape, opus tier
 ```
 
-Convention: **dispatches live in the iteration where they're consumed**. Triage at `c-N` writes dispatches into `c-(N+1)/dispatches/` (creating that directory). Orchestrator's loop entry at `c-(N+1)` finds prompts already in place.
+Convention: **dispatches live in the iteration where they're consumed**. Triage at `c-N` writes dispatches into `c-(N+1)/dispatches/` (creating that directory) and writes `c-(N+1)/scope.txt` beside them. Orchestrator's loop entry at `c-(N+1)` finds prompts and scope list already in place.
 
-**Tier-init iteration.** Every tier starts with a tier-init triage call. The orchestrator dispatches triage with: scope, manifest, SCOPE.md, no reviewer outputs, prior triage history (empty for cheap-init; full cheap-tier history for opus-init), tier label, iteration=0. Triage cold-start-evaluates preconditions and emits `c-init/route.json` (or `o-init/route.json`) with `next_dispatches` for iteration 1. No `triage-output.json` is produced.
+**Baseline paths.** Every triage dispatch (tier-init, numbered iteration, and re-dispatch after a user response) also passes absolute paths (five, or four at tier-init): `baseline_dir` (`<session-dir>/review/baseline/`, the value written to `session-meta.json` in Phase 1; derive it, do not Read that file), the current iteration's `baseline-sizes.tsv` (absent in tier-init), and for the next iteration `next_baseline_diff_path`, `next_baseline_sizes_path`, and `next_scope_list_path`. The current `baseline-sizes.tsv` is under `<session-dir>/review/iterations/<tier>-<N>/`, beside `route.json`; the three `next_*` paths are under `<tier>-<N+1>/` (`<tier>-1/` at tier-init). Triage writes the scope list; the orchestrator's script writes the other two before reviewers are dispatched.
+
+**Tier-init iteration.** Every tier starts with a tier-init triage call. The orchestrator dispatches triage with: scope, manifest, SCOPE.md, no reviewer outputs, prior triage history (empty for cheap-init; full cheap-tier history for opus-init), tier label, iteration=0, and the baseline paths (see **Baseline paths**). Triage cold-start-evaluates preconditions, writes `c-1/scope.txt` (or `o-1/scope.txt`), and emits `c-init/route.json` (or `o-init/route.json`) with `next_dispatches` for iteration 1. No `triage-output.json` is produced.
 
 **Each numbered iteration:**
 
 0. **Read the current iteration's `route.json`.** It exists from the previous iteration's triage (or from tier-init for iteration 1). It tells you exactly what to do next.
 
-1. **If `surface.requires_response: true`:** echo `surface.breadcrumb` and `surface.path` to the user. Capture the user's typed response verbatim and write to `iterations/<tier>-<N>/user-response.md`. Re-dispatch triage with the updated history. Re-read the new `route.json`. (Triage will have updated `accepted-risks.json` or set `tier_max_increment` as appropriate, and emitted a new control decision.)
+1. **If `surface.requires_response: true`:** echo `surface.breadcrumb` and `surface.path` to the user. **Recommendation order (anti-bias):** read `route.json` with `surface.recommendation` excluded (e.g. `jq 'del(.surface.recommendation)'`), and give the user your own recommendation first, from procedural signals only (the breadcrumb, the trend of counts across iterations, the tier). Only after that text is written, read `surface.recommendation` alone (`jq -r '.surface.recommendation'`) and print it verbatim beneath yours, labeled as triage's. Never revise your recommendation after reading it in the same turn; if you now disagree with yourself, say so in one line rather than editing. Capture the user's typed response verbatim and write to `iterations/<tier>-<N>/user-response.md`. Re-dispatch triage with the updated history (including the five baseline paths). Re-read the new `route.json`. (Triage will have updated `accepted-risks.json` or set `tier_max_increment` as appropriate, and emitted a new control decision.)
 
 2. **If `tier_max_increment` is non-null:** add it to the current `tier_max`. Continue.
 
@@ -343,8 +354,11 @@ Convention: **dispatches live in the iteration where they're consumed**. Triage 
         - jj: `jj new -m "adversarial-review: iteration <tier>-<N> fixes"`
         - git: `git add <scope files> && git commit -m "adversarial-review: iteration <tier>-<N> fixes"`
      b. Increment iteration counter (or transition to next iteration's directory).
+     b2. **Baseline comparison.** Run one Bash command: `bash "<skill-directory>/scripts/baseline-compare.sh" <session-dir> <iteration-dir> >/dev/null 2>&1`, both arguments absolute, `<iteration-dir>` being the new iteration's directory. It writes `baseline.diff` and `baseline-sizes.tsv` there from `review/baseline/` and the iteration's `scope.txt`. Run it every numbered iteration, unconditionally; do not reason about which reviewers need it. Branch only on the exit status, never on output:
+        - Exit 0: continue to step c.
+        - Non-zero: dispatch no reviewer. Surface one line under Surfacing exclusivity case 3: "Baseline comparison failed for `<iteration-dir>`. Reply `retry` or `abort`." On `retry`, rerun the script (no triage dispatch, no `user-response.md`). On `abort`, dispatch the scribe with `termination_kind: aborted`. Any other reply re-surfaces the same line.
      c. For each entry in `next_dispatches`, dispatch the reviewer subagent in parallel using the dispatch-discipline wrapper. Wait for literal `ACK <output-path>` acknowledgments.
-     d. Dispatch triage as a subagent (using the dispatch-discipline wrapper) with paths to: this iteration's reviewer outputs, prior triage outputs, fixer changelogs, accepted-risks.json, deferred-lows.json, manifest.yml, SCOPE.md, all agent spec files. Triage authors `triage-output.json`, the next `route.json`, and (if blocked) the next iteration's dispatch prompts. Wait for the literal `ACK <route.json path>` acknowledgment.
+     d. Dispatch triage as a subagent (using the dispatch-discipline wrapper) with paths to: this iteration's reviewer outputs, prior triage outputs, fixer changelogs, accepted-risks.json, deferred-lows.json, manifest.yml, SCOPE.md, all agent spec files, and the five baseline paths (see **Baseline paths** above). Triage authors `triage-output.json`, the next `route.json`, the next iteration's `scope.txt`, and the next iteration's dispatch prompts. Wait for the literal `ACK <route.json path>` acknowledgment.
      e. Echo new `route.json`'s `surface.breadcrumb` and `surface.path`. Loop to step 0 of the new iteration.
 
    - **`exit_clean`**:

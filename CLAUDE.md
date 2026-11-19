@@ -10,7 +10,7 @@ claude-materia/
 │   ├── plugin.json          # claude-materia plugin manifest
 │   └── marketplace.json     # Marketplace definition — lists BOTH plugins
 ├── skills/                  # claude-materia plugin skills
-│   ├── adversarial-review/  # Multi-agent artifact review loop (agents/, defaults/reviewers/)
+│   ├── adversarial-review/  # Multi-agent artifact review loop (agents/, defaults/reviewers/, scripts/)
 │   ├── sidechat/            # Tmux-based session spawner
 │   ├── session-planner/     # Todo-to-tmux workspace launcher
 │   └── park-session/        # Session bookmarking
