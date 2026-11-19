@@ -23,7 +23,7 @@ All inputs are passed as paths. Read what you need; do not assume anything is sm
 5. **All `iterations/*/fixer-changelog.md` files** — what the fixer did per iteration, including `unable_to_resolve` entries.
 6. **`review/accepted-risks.json`** — findings the user explicitly accepted as risk.
 7. **`review/deferred-lows.json`** — low-severity findings deferred at gate-pass.
-8. **All `iterations/*/user-response.md`, `user-response.<k>.md` and `user-response.principal.<k>.md` files** (if present) — the interventions during the loop. Files beginning `source: principal` are the principal's; `user-response.principal.<k>.md` files are principal responses triage refused; the rest are the user's. These are part of the narrative.
+8. **All `iterations/*/user-response.md`, `user-response.<k>.md` and `user-response.principal.<k>.md` files** (if present) — the interventions during the loop. Files beginning `source: principal` are the principal's; `user-response.principal.<k>.md` files are principal responses not put into effect; the rest are the user's. These are part of the narrative.
 9. **Autonomy inputs** (only when your dispatch brief says `autonomy: true`) — `review/principal-brief.md`, which states what the user delegated, and the last iteration's `baseline-sizes.tsv`, whose `TOTAL` row gives the size change.
 10. **No-VCS sessions:** if your dispatch brief flags `vcs: none`, skip the diff step and synthesize from changelogs alone. Note this in the summary header.
 
@@ -89,7 +89,7 @@ Only when your dispatch brief says `autonomy: true`. The user was away for the w
 **Outcome:** Clean | Aborted | Limit-reached; add ", paused for the user N times", where N counts the `user-response.md` and `user-response.<k>.md` files lacking a `source:` first line (stops for baseline retries write none and are not counted), and omit it when N is 0
 
 ## Decisions made for you
-[One line per `user-response.md` or `user-response.<k>.md` whose first line is `source: principal`, and per `user-response.principal.<k>.md` (marked as refused by triage): the iteration, the response, its stated reason, and what it meant for the scope. "None: the principal recorded no decision" if there are none.]
+[One line per `user-response.md` or `user-response.<k>.md` whose first line is `source: principal`, and per `user-response.principal.<k>.md` (marked as not put into effect: refused by triage, deferred, or converted by a hard limit): the iteration, the response, its stated reason, and what it meant for the scope. "None: the principal recorded no decision" if there are none.]
 
 ## Changes of significance
 [Changes to what the scope says or does: requirements added, removed, strengthened, or weakened; behaviour changed; structure reorganized. One line each, with the file and the finding id that drove it. Leave out wording fixes, clarifications that did not change meaning, and formatting.]

@@ -39,7 +39,7 @@ During Phase 2, the orchestrator MUST NOT Read the following files:
 The orchestrator's only authorized Phase 2 reads are:
 
 - `iterations/<tier>-<N>/route.json` (small routing instruction)
-- In autonomy mode only: the principal's final two lines (`RESPONSE:` / `REASON:`), and the first two lines of this tier's principal-sourced `user-response.md` and `user-response.<k>.md` files
+- In autonomy mode only: the principal's final two lines (`RESPONSE:` / `REASON:`), the first line of each of this tier's `user-response.md` and `user-response.<k>.md` files, and the second line of those whose first line is `source: principal`
 
 The baseline comparison script's inputs (`scope.txt`, `review/baseline/`) are consumed by the shell, not read into orchestrator context; running the script is not a read.
 
@@ -82,7 +82,7 @@ For the auditor in Phase 1 (no triage exists yet), the orchestrator authors the 
 
 Subagents MUST end their turns with literal `ACK <output-path>` — no other text after that line, no preamble. The orchestrator MUST NOT read or summarize anything in the subagent's response beyond extracting the path token. Treat the response as an opaque parse for the path; ignore the rest.
 
-Two agents end differently, and only as their sections specify: the principal ends with a two-line `RESPONSE:` / `REASON:` decision in place of an ACK (see **Autonomy mode**), and the scribe may end with `WRITE-REFUSED` blocks when the harness refuses its writes (see Phase 4).
+Two agents end differently, and only as their sections specify: the principal replies with only a two-line `RESPONSE:` / `REASON:` decision in place of an ACK (see **Autonomy mode**), and the scribe may end with `WRITE-REFUSED` blocks when the harness refuses its writes (see Phase 4).
 
 If a subagent's response does not match the literal ack format, treat it as an agent-failed exception (the orchestrator surfaces under case 3 of the Surfacing exclusivity rule). Do not "salvage" substance from a malformed ack — that re-creates the leak the discipline prevents.
 
@@ -350,7 +350,7 @@ Convention: **dispatches live in the iteration where they're consumed**. Triage 
 
 0. **Read the current iteration's `route.json`.** It exists from the previous iteration's triage (or from tier-init for iteration 1). It tells you exactly what to do next.
 
-1. **If `surface.requires_response: true`:** echo `surface.breadcrumb` and `surface.path` to the user. Capture the user's typed response verbatim and write to `iterations/<tier>-<N>/user-response.md`. Re-dispatch triage with the updated history (including the five baseline paths). Re-read the new `route.json`. (Triage will have updated `accepted-risks.json` or set `tier_max_increment` as appropriate, and emitted a new control decision.)
+1. **If `surface.requires_response: true`:** echo `surface.breadcrumb` and `surface.path` to the user. Capture the user's typed response verbatim and write to `iterations/<tier>-<N>/user-response.md`. Re-dispatch triage with the updated history (including every `user-response.md`, `user-response.<k>.md` and `user-response.principal.<k>.md` in the session, and the five baseline paths). Re-read the new `route.json`. (Triage will have updated `accepted-risks.json` or set `tier_max_increment` as appropriate, and emitted a new control decision.)
 
 2. **If `tier_max_increment` is non-null:** add it to the current `tier_max`. Continue.
 
@@ -365,7 +365,7 @@ Convention: **dispatches live in the iteration where they're consumed**. Triage 
         - Exit 0: continue to step c.
         - Non-zero: dispatch no reviewer. Surface one line under Surfacing exclusivity case 3: "Baseline comparison failed for `<iteration-dir>`. Reply `retry` or `abort`." On `retry`, rerun the script (no triage dispatch, no `user-response.md`). On `abort`, dispatch the scribe with `termination_kind: aborted`. Any other reply re-surfaces the same line.
      c. For each entry in `next_dispatches`, dispatch the reviewer subagent in parallel using the dispatch-discipline wrapper. Wait for literal `ACK <output-path>` acknowledgments.
-     d. Dispatch triage as a subagent (using the dispatch-discipline wrapper) with paths to: this iteration's reviewer outputs, prior triage outputs, fixer changelogs, accepted-risks.json, deferred-lows.json, manifest.yml, SCOPE.md, all agent spec files, and the five baseline paths (see **Baseline paths** above). Triage authors `triage-output.json`, the next `route.json`, the next iteration's `scope.txt`, and the next iteration's dispatch prompts. Wait for the literal `ACK <route.json path>` acknowledgment.
+     d. Dispatch triage as a subagent (using the dispatch-discipline wrapper) with paths to: this iteration's reviewer outputs, prior triage outputs, fixer changelogs, every `user-response.md`, `user-response.<k>.md` and `user-response.principal.<k>.md` in the session, accepted-risks.json, deferred-lows.json, manifest.yml, SCOPE.md, all agent spec files, and the five baseline paths (see **Baseline paths** above). Triage authors `triage-output.json`, the next `route.json`, the next iteration's `scope.txt`, and the next iteration's dispatch prompts. Wait for the literal `ACK <route.json path>` acknowledgment.
      e. Echo new `route.json`'s `surface.breadcrumb` and `surface.path`. Loop to step 0 of the new iteration.
 
    - **`exit_clean`**:
@@ -459,7 +459,7 @@ Record the bump limit in `review/session-meta.json` as `principal_bump_limit`. S
 When `surface.requires_response` is true and `surface.human_only` is not true, do this in place of Phase 2 step 1's ask-the-user step:
 
 1. Echo `surface.breadcrumb` and `surface.path`, so the transcript shows the escalation.
-2. Write `iterations/<tier>-<N>/dispatches/principal.md` from this fixed template, paths only:
+2. Write `iterations/<tier>-<N>/dispatches/principal.md` from this fixed template, paths only, `<tier>-<N>` being the iteration directory holding the route.json that carries this escalation:
 
    ```markdown
    # Principal dispatch — iteration <tier>-<N>
@@ -467,7 +467,7 @@ When `surface.requires_response` is true and `surface.human_only` is not true, d
    - user-surface: <surface.path>
    - triage-output: <session-dir>/review/iterations/<tier>-<N>/triage-output.json
    - route.json: <session-dir>/review/iterations/<tier>-<N>/route.json
-   - earlier user responses: [paths to every user-response.md, user-response.<k>.md and user-response.principal.<k>.md in the session, by iteration; within one, user-response.<k>.md by k, then user-response.md, then user-response.principal.<k>.md; "none"]
+   - earlier user responses: [paths to every user-response.md, user-response.<k>.md and user-response.principal.<k>.md in the session, by iteration; within one, user-response.md is the latest in effect; "none"]
    - previous triage-output (same tier): <session-dir>/review/iterations/<tier>-<N-1>/triage-output.json, or "none" at iteration 1 of a tier
    ```
 
@@ -482,7 +482,7 @@ When `surface.requires_response` is true and `surface.human_only` is not true, d
 5. Apply the hard limits. Treat the reply as `defer-to-user` when any of these holds:
    - it does not end with a well-formed `RESPONSE:` / `REASON:` pair;
    - `RESPONSE` is `abort`, or anything other than the four forms above;
-   - `RESPONSE` is `bump <N>` and N plus the principal's earlier bumps in this tier exceeds `principal_bump_limit`. Count earlier bumps from this tier's `user-response.md` and `user-response.<k>.md` files whose first line is `source: principal` (never `user-response.principal.<k>.md`, which triage refused); these are files you wrote, and reading their first two lines is permitted.
+   - `RESPONSE` is `bump <N>` and N plus the principal's earlier bumps in this tier exceeds `principal_bump_limit`. Count earlier bumps from this tier's `user-response.md` and `user-response.<k>.md` files whose first line is `source: principal` (never `user-response.principal.<k>.md`), reading only what the Read-discipline rule authorizes.
 6. Otherwise write `iterations/<tier>-<N>/user-response.md` (if this iteration already holds one, first rename it to `user-response.<k>.md`, k the next free integer from 1) as exactly:
 
    ```
@@ -493,13 +493,13 @@ When `surface.requires_response` is true and `surface.human_only` is not true, d
 
    Then re-dispatch triage and continue exactly as after a human reply.
 
-**Pausing for the user.** On `defer-to-user` (from the principal or a hard limit), or when `surface.human_only` is true, surface to the user as Phase 2 step 1 does outside autonomy mode, preceded by one line: "Autonomy mode paused: this decision is outside what the principal may decide." In the `human_only` case, first rename the principal-written `user-response.md` that triage refused to `user-response.principal.<k>.md`, k the next free integer from 1. Wait. Write the user's typed reply to `user-response.md` with no `source:` line (renaming any existing one as in step 6), re-dispatch triage, and resume in autonomy mode.
+**Pausing for the user.** On `defer-to-user` (from the principal or a hard limit), or when `surface.human_only` is true, surface to the user as Phase 2 step 1 does outside autonomy mode, preceded by one line: "Autonomy mode paused: this decision is outside what the principal may decide." First record the principal response not put into effect as `user-response.principal.<k>.md`, k the next free integer from 1: in the `human_only` case, rename the principal-written `user-response.md` that triage refused; on `defer-to-user`, write the step-6 format with the RESPONSE value (or `malformed`) and, in `reason:`, the REASON value followed by the name of the hard limit that fired, if any. Wait. Write the user's typed reply to `user-response.md` with no `source:` line (renaming any existing one as in step 6), re-dispatch triage, and resume in autonomy mode.
 
 **Triage's guard.** Only triage sees severities. If a principal response accepts a finding it may not (high or critical severity, or type `baseline_unavailable` or `incomplete_check`), triage refuses it and emits a surface with `human_only: true`. You do not check severities yourself.
 
 **Baseline comparison failure** (step 3 b2, non-zero exit): rerun the script once without asking. If it fails again, surface the usual `retry` / `abort` line to the user and wait. Do not consult the principal; it cannot repair plumbing.
 
-**Triage contract violation** (step 4, iteration limit fail-safe): surface to the user, never the principal.
+**Triage contract violation** (step 4, iteration limit fail-safe): surface to the user, never the principal, and write the reply as **Pausing for the user** does, renaming any existing `user-response.md`.
 
 ### The end-of-run brief
 
@@ -519,7 +519,7 @@ review/principal-brief.md                      session-authored at setup; the pr
 review/autonomy-brief.md                       scribe-authored at the end; the session reads it once
 iterations/<tier>-<N>/dispatches/principal.md  orchestrator-authored, paths only (iff the principal was consulted)
 iterations/<tier>-<N>/user-response.<k>.md     an earlier response in an iteration that holds more than one (iff renamed by a later response)
-iterations/<tier>-<N>/user-response.principal.<k>.md  a principal response triage refused (iff triage set human_only)
+iterations/<tier>-<N>/user-response.principal.<k>.md  a principal response not put into effect (iff triage set human_only, or the principal or a hard limit deferred)
 ```
 
 ---
