@@ -446,13 +446,13 @@ A preference stated in an earlier, unrelated task does not count. When you infer
 [The defaults below, plus anything the user said they want to decide themselves.]
 ```
 
-Default limits, used unless the user said otherwise:
+Default limits. The `bump` and `accept-risk` limits apply unless the user said otherwise. The send-back items are fixed: the user can add to them, and no brief removes one.
 
 - `bump`: at most 3 extra iterations per tier in total, and only while the count of open high and medium findings is falling: lower than in the previous iteration of the same tier. With no previous iteration in the tier, the condition is met.
 - `accept-risk`: medium and low findings only, and only for a reason the brief lists. Default reasons: the finding contradicts a decision the user already made; it concerns behaviour outside what this review is for; its fix would remove meaning the user wants kept.
 - Send back: any high or critical finding that needs a decision; any `baseline_unavailable` or `incomplete_check` finding; any wish to abort; anything the brief does not cover.
 
-The bump limit is the `principal_bump_limit` written to `review/session-meta.json` at step 5. Show the user the brief's path and its "What you may decide" and "What you must send back" sections. Do not wait.
+At step 5, write to `principal_bump_limit` in `review/session-meta.json` the same number the brief states as its bump limit: 3 unless the user set another. Show the user the brief's path and its "What you may decide" and "What you must send back" sections. Do not wait.
 
 ### Answering an escalation
 
