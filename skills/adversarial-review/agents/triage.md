@@ -178,7 +178,7 @@ Encode coverage outcome via the `control` enum + `next_dispatches` content + `fi
 
 ### 5. Cross-iteration diagnosis (iteration 2+)
 
-Read the full iteration history (prior `triage-output.json` files + fixer changelogs + `user-response.md` files) and emit a diagnosis note in `triage-output.json`:
+Read the full iteration history (prior `triage-output.json` files + fixer changelogs + `user-response.md`, `user-response.<k>.md` and `user-response.principal.<k>.md` files) and emit a diagnosis note in `triage-output.json`:
 
 - **Oscillation**: Findings recurring across iterations. Name the specific findings and which iterations they appear in.
 - **Grinding**: Findings decreasing monotonically but slowly. Progress, but more iterations needed.

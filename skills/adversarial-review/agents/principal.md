@@ -17,7 +17,7 @@ All paths are in your dispatch prompt. Read in this order:
 1. **The principal brief** — what the user wants from this review, what you may decide, and what you must send back to them.
 2. **This escalation's `user-surface.md`** — the findings, the diagnosis, and the responses triage offers under "Decisions needed".
 3. **This escalation's `triage-output.json`** — full findings with severities and types, for anything the surface summarizes. Also read the previous-iteration `triage-output.json` for this tier named in your dispatch prompt: use it to check the brief's bump condition; "none" means there is no previous iteration (condition met); an unreadable file means `defer-to-user`.
-4. **Earlier `user-response.md`, `user-response.<k>.md` and `user-response.principal.md` files** — earlier decisions in this session, yours (they begin `source: principal`; `user-response.principal.md` files are yours that triage refused, so they are not in effect) and the user's. Stay consistent with them, and count the bumps you have already spent in this tier.
+4. **Earlier `user-response.md`, `user-response.<k>.md` and `user-response.principal.<k>.md` files** — earlier decisions in this session, yours (they begin `source: principal`; `user-response.principal.<k>.md` files are yours that triage refused, so they are not in effect) and the user's. Stay consistent with them, and count the bumps you have already spent in this tier.
 
 Form your decision from those. Only then read `surface.recommendation` in `route.json`. Triage's recommendation is one input. Follow the brief when the two disagree.
 

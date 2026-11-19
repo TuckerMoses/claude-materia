@@ -400,7 +400,7 @@ When opus exits clean (or any tier exits aborted/limit-reached):
    - Path to session-meta.json (for `pre_review_vcs_ref` and `vcs` flag)
    - Paths to all `iterations/*/triage-output.json`
    - Paths to all `iterations/*/fixer-changelog.md`
-   - Paths to all `iterations/*/user-response.md`, `iterations/*/user-response.<k>.md` and `iterations/*/user-response.principal.md` (if any)
+   - Paths to all `iterations/*/user-response.md`, `iterations/*/user-response.<k>.md` and `iterations/*/user-response.principal.<k>.md` (if any)
    - Path to accepted-risks.json
    - Path to deferred-lows.json
    - `termination_kind`: `clean | aborted | limit_reached`
@@ -467,7 +467,7 @@ When `surface.requires_response` is true and `surface.human_only` is not true, d
    - user-surface: <surface.path>
    - triage-output: <session-dir>/review/iterations/<tier>-<N>/triage-output.json
    - route.json: <session-dir>/review/iterations/<tier>-<N>/route.json
-   - earlier user responses: [paths to every user-response.md, user-response.<k>.md and user-response.principal.md in the session, oldest first; "none"]
+   - earlier user responses: [paths to every user-response.md, user-response.<k>.md and user-response.principal.<k>.md in the session, by iteration; within one, user-response.<k>.md by k, then user-response.md, then user-response.principal.<k>.md; "none"]
    - previous triage-output (same tier): <session-dir>/review/iterations/<tier>-<N-1>/triage-output.json, or "none" at iteration 1 of a tier
    ```
 
@@ -482,7 +482,7 @@ When `surface.requires_response` is true and `surface.human_only` is not true, d
 5. Apply the hard limits. Treat the reply as `defer-to-user` when any of these holds:
    - it does not end with a well-formed `RESPONSE:` / `REASON:` pair;
    - `RESPONSE` is `abort`, or anything other than the four forms above;
-   - `RESPONSE` is `bump <N>` and N plus the principal's earlier bumps in this tier exceeds `principal_bump_limit`. Count earlier bumps from this tier's `user-response.md` and `user-response.<k>.md` files whose first line is `source: principal` (never `user-response.principal.md`, which triage refused); these are files you wrote, and reading their first two lines is permitted.
+   - `RESPONSE` is `bump <N>` and N plus the principal's earlier bumps in this tier exceeds `principal_bump_limit`. Count earlier bumps from this tier's `user-response.md` and `user-response.<k>.md` files whose first line is `source: principal` (never `user-response.principal.<k>.md`, which triage refused); these are files you wrote, and reading their first two lines is permitted.
 6. Otherwise write `iterations/<tier>-<N>/user-response.md` (if this iteration already holds one, first rename it to `user-response.<k>.md`, k the next free integer from 1) as exactly:
 
    ```
@@ -493,7 +493,7 @@ When `surface.requires_response` is true and `surface.human_only` is not true, d
 
    Then re-dispatch triage and continue exactly as after a human reply.
 
-**Pausing for the user.** On `defer-to-user` (from the principal or a hard limit), and whenever `surface.human_only` is true, first, when `surface.human_only` is true (triage refused the principal-written `user-response.md`), rename that file to `user-response.principal.md`. Then surface to the user as Phase 2 step 1 does outside autonomy mode, preceded by one line: "Autonomy mode paused: this decision is outside what the principal may decide." Wait. Write the user's typed reply to `user-response.md` with no `source:` line (if this iteration already holds one, first rename it to `user-response.<k>.md`, k the next free integer from 1), re-dispatch triage, and resume in autonomy mode.
+**Pausing for the user.** On `defer-to-user` (from the principal or a hard limit), or when `surface.human_only` is true, surface to the user as Phase 2 step 1 does outside autonomy mode, preceded by one line: "Autonomy mode paused: this decision is outside what the principal may decide." In the `human_only` case, first rename the principal-written `user-response.md` that triage refused to `user-response.principal.<k>.md`, k the next free integer from 1. Wait. Write the user's typed reply to `user-response.md` with no `source:` line (renaming any existing one as in step 6), re-dispatch triage, and resume in autonomy mode.
 
 **Triage's guard.** Only triage sees severities. If a principal response accepts a finding it may not (high or critical severity, or type `baseline_unavailable` or `incomplete_check`), triage refuses it and emits a surface with `human_only: true`. You do not check severities yourself.
 
@@ -519,7 +519,7 @@ review/principal-brief.md                      session-authored at setup; the pr
 review/autonomy-brief.md                       scribe-authored at the end; the session reads it once
 iterations/<tier>-<N>/dispatches/principal.md  orchestrator-authored, paths only (iff the principal was consulted)
 iterations/<tier>-<N>/user-response.<k>.md     an earlier response in an iteration that holds more than one (iff renamed by a later response)
-iterations/<tier>-<N>/user-response.principal.md  a principal response triage refused (iff triage set human_only)
+iterations/<tier>-<N>/user-response.principal.<k>.md  a principal response triage refused (iff triage set human_only)
 ```
 
 ---
