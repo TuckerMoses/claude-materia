@@ -255,7 +255,7 @@ Write `iterations/<tier>-<N>/user-surface.md` every iteration. This is what the 
 [Per agent in pool: included/excluded with reason from precondition evaluation.]
 
 ## Decisions needed (if any)
-[Only present when `surface.requires_response: true`. Lists the structured options the user should respond with: "accept-risk <ids>", "abort", "bump <N>", etc. When an option here is one a stand-in may not choose (accepting a high or critical finding, or a `baseline_unavailable` or `incomplete_check` one), or you set `surface.human_only`, say here in one line why the decision would reach the user: for example, that a stand-in may not accept a high finding.]
+[Only present when `surface.requires_response: true`. Lists the structured options the user should respond with: "accept-risk <ids>", "abort", "bump <N>", etc. When an option here is one the §12 principal-response guard would refuse from a stand-in, or you set `surface.human_only`, say here in one line why the decision would reach the user: for example, that a stand-in may not accept a high finding.]
 ```
 
 Also emit a `breadcrumb` in `route.json` — a one-line render of the same content for the orchestrator to echo to the user without expanding the path. Example: `"iter c-4 / blocked / 3 high 2 medium / 1 cross-file"`.

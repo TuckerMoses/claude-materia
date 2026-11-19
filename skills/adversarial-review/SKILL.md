@@ -94,7 +94,7 @@ Practical impact: budget for ~3-10k tokens of orchestrator-context bleed per fix
 
 ### Iteration validity invariant
 
-An iteration is only valid if (a) each reviewer ran as an independent subagent — one Agent tool call per reviewer, never combined, (b) triage ran as its own subagent and produced a `route.json` file, and (c) the orchestrator's branching decisions reference only fields in `route.json`, never substance from any other file. One exception: the orchestrator also branches on the exit status of the baseline comparison script and on the user's `retry` / `abort` reply to its failure (Phase 2 step 3).
+An iteration is only valid if (a) each reviewer ran as an independent subagent — one Agent tool call per reviewer, never combined, (b) triage ran as its own subagent and produced a `route.json` file, and (c) the orchestrator's branching decisions reference only fields in `route.json`, never substance from any other file. Exceptions: the orchestrator also branches on the exit status of the baseline comparison script and on the user's `retry` / `abort` reply to its failure (Phase 2 step 3), and, in autonomy mode, on the reads the autonomy bullet of the Read-discipline rule authorizes (see Autonomy mode -> Answering an escalation).
 
 ## Subcommands
 
@@ -404,7 +404,7 @@ When opus exits clean (or any tier exits aborted/limit-reached):
    - Path to accepted-risks.json
    - Path to deferred-lows.json
    - `termination_kind`: `clean | aborted | limit_reached`
-   - In autonomy mode, also: `autonomy: true`, the path to `review/principal-brief.md`, and the path to the last numbered iteration's `baseline-sizes.tsv`. The scribe then writes `review/autonomy-brief.md` as well.
+   - In autonomy mode, also: `autonomy: true`, the path to `review/principal-brief.md`, and the path to the last numbered iteration's `baseline-sizes.tsv` (on an abort from a failed baseline comparison, that iteration's path all the same). The scribe then writes `review/autonomy-brief.md` as well.
 2. Wait for the literal `ACK <summary.md path>` acknowledgment. **Write fallback:** some harnesses refuse a subagent's write of a report file. The scribe then ends its turn with one block per refused file: a line `WRITE-REFUSED <path>` followed by that file's full content. Save each block's content verbatim to its path and continue; the blocks stand in for the ACK. This is the one case where the orchestrator handles a subagent's content; the loop is already over.
 3. Echo: "Review complete. Summary at `<session-path>/review/summary.md`."
 4. Terminate.
@@ -482,7 +482,7 @@ When `surface.requires_response` is true and `surface.human_only` is not true, d
 5. Apply the hard limits. Treat the reply as `defer-to-user` when any of these holds:
    - `malformed`: it does not end with a well-formed `RESPONSE:` / `REASON:` pair;
    - `abort`: `RESPONSE` is `abort`, or anything other than the four forms above;
-   - `over-budget`: `RESPONSE` is `bump <N>` and N plus the principal's earlier bumps in this tier exceeds `principal_bump_limit` (from `session-meta.json`). Count earlier bumps from this tier's `user-response.md` and `user-response.<k>.md` files whose first line is `source: principal` (never `user-response.principal.<k>.md`), reading only what the Read-discipline rule authorizes.
+   - `over-budget`: `RESPONSE` is `bump <N>` and N is not a positive integer, or N plus the principal's earlier bumps in this tier exceeds `principal_bump_limit` (from `session-meta.json`). Count earlier bumps from this tier's `user-response.md` and `user-response.<k>.md` files whose first line is `source: principal` (never `user-response.principal.<k>.md`), reading only what the Read-discipline rule authorizes.
 6. Otherwise write `iterations/<tier>-<N>/user-response.md` (if this iteration already holds one, first rename it to `user-response.<k>.md`, k the next free integer from 1) as exactly:
 
    ```

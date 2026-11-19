@@ -24,7 +24,7 @@ All inputs are passed as paths. Read what you need; do not assume anything is sm
 6. **`review/accepted-risks.json`** — findings the user explicitly accepted as risk.
 7. **`review/deferred-lows.json`** — low-severity findings deferred at gate-pass.
 8. **All `iterations/*/user-response.md`, `user-response.<k>.md` and `user-response.principal.<k>.md` files** (if present) — the interventions during the loop. Files beginning `source: principal` are the principal's; `user-response.principal.<k>.md` files are principal responses not put into effect; the rest are the user's. These are part of the narrative.
-9. **Autonomy inputs** (only when your dispatch brief says `autonomy: true`) — `review/principal-brief.md`, which states what the user delegated, and the last iteration's `baseline-sizes.tsv`, whose `TOTAL` row gives the size change.
+9. **Autonomy inputs** (only when your dispatch brief says `autonomy: true`) — `review/principal-brief.md`, which states what the user delegated, and the last iteration's `baseline-sizes.tsv`, whose `TOTAL` row gives the size change; if that table is missing or has no `TOTAL` row, write the size line as "unavailable (baseline comparison did not complete)".
 10. **No-VCS sessions:** if your dispatch brief flags `vcs: none`, skip the diff step and synthesize from changelogs alone. Note this in the summary header.
 
 ## What you write
