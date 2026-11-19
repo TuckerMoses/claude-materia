@@ -8,7 +8,7 @@ argument-hint: "[subcommand] [args] — create [corpus-path?], add-source [path]
 # vault
 
 Create and operate a **portable, env-agnostic** knowledge vault: a flat pool of atomic markdown notes
-(`notes/`) plus a separate `journal/`, organized by a label vocabulary (`_machine/labels.yml`) rather
+(`notes/`) plus a separate `journal/`, organized by a label vocabulary (named in `INSTRUCTION.md`) rather
 than folders, with a thin external integration handshake (`INSTRUCTION.md`).
 
 ## Identity & organizing principle
@@ -155,14 +155,14 @@ Operates on the vault named in `~/.claude/vault.local.md`. If that pointer is ab
 
 - `path` — the source location.
 - `track: vcs | destructive` — vcs = read commits since a watermark; destructive = drained residue.
-- `lens` — a **subset of `_machine/labels.yml`** (the label-lens for this source).
+- `lens` — a **subset of the vocabulary** (the label-lens for this source). It may never include an outbound label: one that routes to a non-`notes` artifact (`INSTRUCTION.md`, "Source registry").
 - `remote` / `branch` — **vcs only**.
 - `description` — optional, non-selector human note.
 
 ### Validate
 
 - `path` resolves; if it does not, fail loudly (do not register a source at an unresolvable path).
-- **Every lens label exists in `_machine/labels.yml`.** (This is why a freshly cold-started vault's
+- **Every lens label exists in the vocabulary, and none is outbound.** (This is why a freshly cold-started vault's
   lenses are limited to the action/seed vocabulary — see "Cold-start interaction".)
 - For `vcs`: the repo + `branch` resolve. Initialize the `last_read` baseline (current tip commit).
 - For `destructive`: store **no** `last_read` state — the residue is by definition unprocessed.

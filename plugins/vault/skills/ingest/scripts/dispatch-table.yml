@@ -1,0 +1,13 @@
+artifacts:
+  notes:
+    writer: file-notes
+    order: 1
+    supplies_id: true
+    takes_id: false
+    batch: true
+  backlog:
+    writer: backlog-append
+    order: 2
+    supplies_id: false
+    takes_id: true
+    batch: false

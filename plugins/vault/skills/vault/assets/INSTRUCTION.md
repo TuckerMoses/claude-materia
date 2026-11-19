@@ -9,8 +9,9 @@ bind to this vault without a hard dependency. Read **live** from the vault on ev
 ## Identity
 
 This is a knowledge vault at `{{VAULT_PATH}}`. Its label bank — the shared label vocabulary —
-is `_machine/labels.yml` (a machine-read-and-written YAML schema, the inter-skill label API).
-**Reference it; never restate the vocabulary here.**
+is `$AGENT_LIB/data/labels.yml` when a standard library exists, else `_machine/labels.yml` (a machine-read YAML file, the inter-skill label API; a binding may override the path).
+**Reference it; never restate the vocabulary here.** The vault is a sink: it holds thought, intent and
+outcome records, and acts on nothing.
 
 ## Note shape
 
@@ -19,16 +20,19 @@ Every note is a markdown file with this frontmatter contract:
 ```yaml
 ---
 title: "…"                         # derived label only — NEVER strips body content
-labels: [idea, ai-systems, todo]   # concept + action labels, one flat set; from _machine/labels.yml
-status:                            # ABSENT at creation; written later by a consumer or human.
-                                   # Read per label: absent ⇒ open (todos) / seedling (knowledge)
+labels: [idea, ai-systems, todo]   # concept + action labels, one flat set; from the vocabulary
 created: 2026-…
 captured: 2026-…                   # capture-unit date; split-siblings share it
 source: journal/YYYY-MM-DD         # or a compound `remote + path + commit` for external sources
-handled: []                        # consumer names; written by consumers (or human), never ingest
 related: ["[[…]]"]                 # Tier-1 factual (ingest) + confirmed associative (synthesizer / human)
+routed_to: [{container, artifact, name}]  # audit: targets whose writes succeeded; ingest only
+outcome: done                      # done | dropped; only for a note that had a backlog item; note-outcome only
+resolved: 2026-…                   # the date of that outcome; note-outcome only
 ---
 ```
+
+Older notes may carry `status` or `handled`. Both are retired: nothing new writes them. `status` is read by
+nothing, and `handled` only marks a note as closed.
 
 Iron rule: note **bodies preserve the full source verbatim**; `title` is a derived label only and
 never licenses dropping body content.
@@ -48,13 +52,14 @@ itself is the immutable source diary (permanent; never deleted or drained).
 
 ## Field ownership (no overlap, no gap)
 
-- **Ingest** writes content-derived fields: `title`, `labels`, `created` / `captured` / `source`.
-  Ingest writes **neither** `status` **nor** `handled`.
-- **Consumers** (and the human) write `status` and `handled` — **except pairwise consumers**
-  (e.g. the synthesizer), which use a seen-set watermark for idempotency and never write either
-  field. See "Consumer idempotency" below.
+- **Ingest** writes content-derived fields: `title`, `labels`, `created` / `captured` / `source`,
+  and `routed_to` (audit: the targets whose writes succeeded).
+- **`outcome` / `resolved`** are written only by the `note-outcome` script, when a backlog item with a
+  vault copy is done or dropped. Never read to select or schedule work. Their readers are ingest's re-run
+  guard (skip non-vault targets for a note carrying `outcome`), `ingest status` reconciliation, and
+  the legacy routing pass.
 - **`labels` after creation:** written only by the synthesizer's **confirmed** minting/resolve
-  passes or the human (ingest owns it at creation; no other consumer touches it).
+  passes, ingest's interactive gate, or the human (no other consumer touches it).
 - **`related:`** written by ingest at creation for Tier-1 factual links; written by the synthesizer
   on confirm for associative links; human may edit directly.
 
@@ -73,19 +78,20 @@ renders in-app), never a headless query path.
 
 ## Register a missing label
 
-Add an entry to the `labels:` map in `_machine/labels.yml`, following its schema — a key (the
-label name; **quote** any key containing a colon, e.g. `"workspace:astrophotography"`) mapping to
-`when_to_apply` (the classification description; use a YAML block scalar `>` for long ones) and
-`status` (default `active`):
+Call the standard library's `label-register`, the sole writer of the vocabulary:
 
-```yaml
-  <label>:
-    when_to_apply: "…when this label applies…"
-    status: active
+```sh
+"$AGENT_LIB/syscalls/label-register" --name <label> --when-to-apply "…when this label applies…"
 ```
 
-Manager skills register `workspace:` / `project:` container labels there. Retiring a label is a
-one-line `status: active` → `status: retired` edit on its entry.
+Manager skills register `workspace:` / `project:` container labels through `container-register`. Never edit
+the vocabulary by hand. Retiring a label is deferred: `label-retire` is not built.
+
+## Source registry
+
+`_machine/ingest_paths.yml` lists external ingest sources. **Loop guard:** any label appearing in a routing rule
+whose targets include a non-`notes` artifact is *outbound*, and a source's lens may never include one. `ingest status` flags a violation.
+A vault-minted id is a note's slug, its filename without `.md`. Skip a source line containing `[[<slug>]]` or `<container>/<slug>` for an existing note: that line came from this vault.
 
 ## Binding schema (the define-once home for the seam)
 
@@ -101,23 +107,18 @@ records:
 **Bootstrap (first use):** ask which vault → read this `INSTRUCTION.md` → write
 `~/.claude/<skill>.local.md`.
 
-**Every invocation:** read `~/.claude/<skill>.local.md` → read this `INSTRUCTION.md` +
-`_machine/labels.yml` live → query → act.
+**Every invocation:** read `~/.claude/<skill>.local.md` → read this `INSTRUCTION.md` + the
+vocabulary live → query → act.
 
 **Brittleness:** only the vault *path* can go stale. Fail **loudly** ("vault not found"); the fix is
 a one-line re-bootstrap.
 
-## Consumer idempotency (three archetypes)
+## Consumer idempotency
 
-- **One-shot consumer** (e.g. session-planner): queries `label == X AND self ∉ handled`, then appends
-  its own name to `handled` for **every note it evaluates** (seen, not just used) — so skipped notes
-  don't re-enter its context. Evaluates each note exactly once, ever.
-- **Lifecycle consumer** (e.g. a scheduler): queries `label AND status:open`, does **not** write
-  `handled`, and re-sees still-open items until they resolve (`status → done`).
-- **Pairwise consumer** (e.g. the synthesizer): judges *pairs/clusters* of notes, not single notes,
-  so neither mechanism above fits. It never writes `handled` (a note must re-enter consideration
-  when new neighbors arrive); its idempotency is a **seen-set watermark** in a `_machine/` state
-  file (incremental runs = unseen × neighborhoods), and confirmed outcomes are **effect-checked**
-  (a merged note is gone; a link sits in `related:`; a minted label sits in the bank).
+**Pairwise consumer** (e.g. the synthesizer): judges *pairs/clusters* of notes, not single notes. Its
+idempotency is a **seen-set watermark** in a `_machine/` state file (incremental runs = unseen ×
+neighborhoods), and confirmed outcomes are **effect-checked** (a merged note is gone; a link sits in
+`related:`; a minted label sits in the bank).
 
-Ingest never writes `handled`.
+A consumer that acts on pending work reads backlogs, not notes. A reader of note frontmatter reports a note
+that fails to parse as an anomaly and continues; none stops on it.

@@ -4,9 +4,11 @@
 Usage:
   commit-run VAULT REPORT_JSON ENTRY_MD RUN_ID MODE    # drain step 6
   commit-run --regen VAULT                             # re-render CHANGELOG.md only
+  commit-run --recover VAULT                           # a run's first action: land an interrupted run's writes
+  commit-run --landed VAULT RUN_ID                     # read-only: did RUN_ID's commit land? (the nightly asks)
 
 Contract:
-- Fileset = touched-path set (written+marked+moved, plus _machine/ingest_paths.yml when
+- Fileset = touched-path set (written+rewritten+marked+moved, plus _machine/ingest_paths.yml when
   `advanced` is non-empty) + skipped paths + run-log sublist (run.json, proposals.json,
   entry.md, report.json, + confirmed-manifest.json iff interactive). CHANGELOG.md never.
 - No-op guard: empty touched-path set -> exit 0, no commit, no regen.
@@ -16,10 +18,29 @@ Contract:
 - jj 0.43 tolerates absent fileset paths and can create an EMPTY commit (verified): every
   fileset path is pre-flighted, and a post-commit empty check abandons + rolls back.
 - Failure after commit points -> remove `ingested: true` from report's `marked` files, exit 1.
-- Success -> regenerate CHANGELOG.md from jj log (newest first; renderer owns separators).
+- Success -> regenerate CHANGELOG.md from jj log (newest first; renderer owns separators). A regen failure after the
+  commit landed is a warning on stderr, not a failure, on this path as on --recover's.
+- A non-empty `held` in the report -> commit as usual, then exit non-zero listing what is held. Partial work
+  always lands; the exit is the signal.
+- Completion: `completed: true` is written into report.json just before the commit (so the commit carries it) and on a
+  no-op; a rollback writes `completed: false`. The nightly wrapper's success check reads it (spec, Nightly job).
+- --recover (spec, Nightly job, recovery rule): a run killed after dispatch wrote its report but before its commit
+  landed leaves that report.json uncommitted. A run needs recovery iff its report.json is dirty, lists touched paths,
+  and is not `completed: false` (an explicit rollback, whose day-files are already unmarked). Each such run's own
+  paths (its report's written/rewritten/marked/moved/skipped, ingest_paths.yml if it advanced, its run dir) are
+  committed under its id, oldest first, and nothing else: an open day-file or a hand-edited note stays uncommitted.
+  Prints {"recovered": <newest run-id>}, or null. The caller records it in its own report.json.
+- --landed (F2): `completed: true` is written before the commit, so a kill between the two reads as success. Exits 0
+  when RUN_ID reports completed and its commit landed or it was a no-op; 1 when it does not report completed (rolled
+  back, or a finish that raised) or is one --recover would pick up (the same test); 2 when it cannot tell (bad run
+  id, missing or unreadable report, jj failure). Writes nothing.
+- Every jj call is bounded ($VAULT_INGEST_CALL_TIMEOUT, default 300 s); a timed-out commit is a failed commit.
 """
-import json, re, subprocess, sys
+import json, os, re, subprocess, sys
 from pathlib import Path
+
+TIMEOUT = int(os.environ.get('VAULT_INGEST_CALL_TIMEOUT', '300'))
+RUN_ID = re.compile(r'\d{4}-\d{2}-\d{2}-\d+')
 
 HEADER = """# Vault Changelog
 
@@ -31,8 +52,33 @@ then `commit-run --regen <vault>` to refresh this file (or wait for the next run
 SUBLIST = ['run.json', 'proposals.json', 'entry.md', 'report.json']
 
 
+def exit_if_held(report):
+    held = report.get('held') or []
+    if held:
+        names = ', '.join(h.get('day_file') or h.get('source', '?') for h in held)
+        sys.exit(f'held {len(held)} unit(s), each with a failed target: {names}; see report.json')
+
+
+def set_completed(report_path, report, done):
+    report = dict({k: v for k, v in report.items() if k != 'completed'}, completed=done)
+    report_path.write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
+
+
 def jj(vault, *args):
-    return subprocess.run(['jj', *args], cwd=vault, capture_output=True, text=True)
+    try:
+        # F11: no stdin and no pager, so nothing on the unattended path can wait on a terminal.
+        return subprocess.run(['jj', '--no-pager', *args], cwd=vault, stdin=subprocess.DEVNULL, capture_output=True,
+                              text=True, timeout=TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(['jj', *args], 124, '', f'jj {args[0]} timed out after {TIMEOUT}s')
+
+
+def touched_paths(report):
+    touched = [*report.get('written', []), *report.get('rewritten', []), *report.get('marked', []),
+               *report.get('moved', [])]
+    if report.get('advanced'):
+        touched.append('_machine/ingest_paths.yml')
+    return touched
 
 
 def regen(vault: Path):
@@ -68,7 +114,98 @@ def unmark(vault: Path, rels):
                      encoding='utf-8')
 
 
+PREFIX = '_machine/logs/ingest/'
+
+
+def dirty_paths(vault: Path, who):
+    r = jj(vault, 'diff', '--name-only', '-r', '@')
+    if r.returncode != 0:
+        sys.exit(f'{who}: jj diff failed\n{r.stderr}')
+    return {line for line in r.stdout.splitlines() if line}
+
+
+def pending(vault: Path, run, dirty):
+    """RUN's report if its commit has not landed (dirty report.json, touched paths, not rolled back), else None."""
+    if not RUN_ID.fullmatch(run) or f'{PREFIX}{run}/report.json' not in dirty:
+        return None
+    try:
+        report = json.loads((vault / PREFIX / run / 'report.json').read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(report, dict) or report.get('completed') is False or not touched_paths(report):
+        return None
+    return report
+
+
+def landed(vault: Path, run):
+    def cannot_tell(why):
+        print(f'cannot tell: {why}', file=sys.stderr)
+        sys.exit(2)
+    if not RUN_ID.fullmatch(run):
+        cannot_tell(f'not a run id: {run!r}')
+    try:
+        report = json.loads((vault / PREFIX / run / 'report.json').read_text(encoding='utf-8'))
+    except (OSError, ValueError) as e:
+        cannot_tell(f'no readable report.json for {run} ({type(e).__name__})')
+    if not isinstance(report, dict):
+        cannot_tell(f'report.json for {run} is not an object')
+    if report.get('completed') is not True:  # rolled back, or a finish that raised: never landed
+        print(f'not landed: {run} does not report completed', file=sys.stderr)
+        sys.exit(1)
+    r = jj(vault, 'diff', '--name-only', '-r', '@')
+    if r.returncode != 0:
+        print(f'cannot tell: jj diff failed\n{r.stderr}', file=sys.stderr)
+        sys.exit(2)
+    if pending(vault, run, {line for line in r.stdout.splitlines() if line}) is not None:
+        print(f'not landed: {run} wrote its report but its commit is not in the history', file=sys.stderr)
+        sys.exit(1)
+    print(json.dumps({'landed': run}))
+
+
+def recover(vault: Path):
+    dirty = dirty_paths(vault, 'recover')
+    prefix = PREFIX
+    runs = []
+    for run in {p[len(prefix):].split('/', 1)[0] for p in dirty if p.startswith(prefix)}:
+        report = pending(vault, run, dirty)
+        if report is not None:
+            runs.append((run, report))
+    if not runs:
+        print(json.dumps({'recovered': None}))
+        return
+    runs.sort(key=lambda rr: (rr[0][:10], int(rr[0][11:])))
+    files = 0
+    for run, report in runs:
+        own = [p for p in touched_paths(report) + list(report.get('skipped', [])) if p in dirty]
+        fileset = sorted(set(own)) + sorted(p for p in dirty if p.startswith(f'{prefix}{run}/'))
+        message = (f'ingest(recovered): {run} — interrupted before its commit; committed by the next run\n\n'
+                   f'## {run} · recovered\n\nThis run was stopped after it wrote and before its own commit landed. '
+                   f'The next run committed what it left: {len(own)} vault path(s) and its run log.\n')
+        c = jj(vault, 'commit', '-m', message, *fileset)
+        if c.returncode != 0:
+            sys.exit(f'recover: commit of {run} failed\n{c.stderr}')
+        files += len(fileset)
+    try:
+        regen(vault)
+    except (SystemExit, Exception) as e:  # the commits landed; a stale CHANGELOG.md must not stop the run
+        print(f'warning: {e}', file=sys.stderr)
+    print(json.dumps({'recovered': runs[-1][0], 'files': files}))
+
+
 def main():
+    if len(sys.argv) == 3 and sys.argv[1] == '--recover':
+        vault = Path(sys.argv[2]).expanduser().resolve()
+        if not (vault / '.jj').is_dir():
+            sys.exit(f'not a jj vault: {vault}')
+        recover(vault)
+        return
+    if len(sys.argv) == 4 and sys.argv[1] == '--landed':
+        vault = Path(sys.argv[2]).expanduser().resolve()
+        if not (vault / '.jj').is_dir():
+            print(f'cannot tell: not a jj vault: {vault}', file=sys.stderr)
+            sys.exit(2)
+        landed(vault, sys.argv[3])
+        return
     if len(sys.argv) == 3 and sys.argv[1] == '--regen':
         vault = Path(sys.argv[2]).expanduser().resolve()
         if not (vault / '.jj').is_dir():
@@ -78,7 +215,7 @@ def main():
         return
     if len(sys.argv) != 6:
         sys.exit('usage: commit-run VAULT REPORT_JSON ENTRY_MD RUN_ID MODE'
-                 '  |  commit-run --regen VAULT')
+                 '  |  commit-run --regen VAULT  |  commit-run --recover VAULT  |  commit-run --landed VAULT RUN_ID')
     vault = Path(sys.argv[1]).expanduser().resolve()
     report_path, entry_path = Path(sys.argv[2]), Path(sys.argv[3])
     run_id, mode = sys.argv[4], sys.argv[5]
@@ -90,18 +227,18 @@ def main():
         sys.exit(f'mode mismatch: --{mode} but confirmed-manifest.json '
                  f'{"present" if has_manifest else "absent"} in {run_dir}')
     report = json.loads(report_path.read_text(encoding='utf-8'))
-    touched = [*report.get('written', []), *report.get('marked', []),
-               *report.get('moved', [])]
-    if report.get('advanced'):
-        touched.append('_machine/ingest_paths.yml')
+    touched = touched_paths(report)
     if not touched:
         print('no-op: nothing touched; no commit, no changelog entry')
+        set_completed(report_path, report, True)
+        exit_if_held(report)
         return  # exit 0 - a no-op is the loop's most common healthy outcome
     try:
         counts = json.loads((run_dir / 'run.json').read_text(encoding='utf-8'))
     except (FileNotFoundError, json.JSONDecodeError) as e:
         marked = report.get('marked', [])
         unmark(vault, marked)
+        set_completed(report_path, report, False)  # after unmark: a kill between the two stays recoverable
         sys.exit(f'ABORT pre-commit: run.json unreadable ({e}); rolled back ingested markers on '
                  f'{len(marked)} day-file(s)')
     n, m, p = counts['filed'], counts['day_files'], counts['parked']
@@ -113,26 +250,36 @@ def main():
     if missing:  # jj silently tolerates absent paths -> empty commit; refuse instead
         marked = report.get('marked', [])
         unmark(vault, marked)
+        set_completed(report_path, report, False)  # after unmark: a kill between the two stays recoverable
         sys.exit(f'ABORT pre-commit: fileset paths missing on disk: {missing}; rolled back '
                  f'ingested markers on {len(marked)} day-file(s)')
     subject = f'ingest({mode}): {run_id} — {n} notes, {m} days, {p} parked'
     message = subject + '\n\n' + entry_path.read_text(encoding='utf-8')
-    r = jj(vault, 'commit', '-m', message, *fileset)
-    ok = r.returncode == 0
-    if ok:
-        e = jj(vault, 'log', '--no-graph', '-r', '@-',
-               '-T', 'if(empty, "EMPTY", "NONEMPTY")')
-        if e.stdout.strip() == 'EMPTY':
-            jj(vault, 'abandon', '@-')
-            ok = False
-            r.stderr += '\ncommit selected no changes (empty commit abandoned)'
+    set_completed(report_path, report, True)
+    try:
+        r = jj(vault, 'commit', '-m', message, *fileset)
+        ok = r.returncode == 0
+        if ok:
+            e = jj(vault, 'log', '--no-graph', '-r', '@-',
+                   '-T', 'if(empty, "EMPTY", "NONEMPTY")')
+            if e.stdout.strip() == 'EMPTY':
+                jj(vault, 'abandon', '@-')
+                ok = False
+                r.stderr += '\ncommit selected no changes (empty commit abandoned)'
+    except Exception as exc:  # never leave a report saying completed over a commit that did not land
+        r, ok = subprocess.CompletedProcess([], 1, '', f'{type(exc).__name__}: {exc}'), False
     if not ok:
         marked = report.get('marked', [])
         unmark(vault, marked)
+        set_completed(report_path, report, False)  # after unmark: a kill between the two stays recoverable
         sys.exit(f'commit-run failed; rolled back ingested markers on '
                  f'{len(marked)} day-file(s)\n{r.stderr}')
-    regen(vault)
+    try:
+        regen(vault)
+    except (SystemExit, Exception) as e:  # F8: the commit landed; a stale CHANGELOG.md must not fail the run (as in recover)
+        print(f'warning: {e}', file=sys.stderr)
     print(json.dumps({'committed': True, 'run': run_id, 'files': len(fileset)}))
+    exit_if_held(report)
 
 
 if __name__ == '__main__':

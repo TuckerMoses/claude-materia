@@ -1,0 +1,60 @@
+#!/usr/bin/env python3
+"""Write a note's outcome record. The only writer of outcome and resolved; called on the ritual's behalf.
+
+Usage: note-outcome VAULT SLUG done|dropped --resolved YYYY-MM-DD
+Frontmatter only, with the body's md5 checked. An identical existing outcome is a no-op; a conflicting one is an
+error; a missing note is an error. Never read to select or schedule work.
+"""
+import argparse
+import datetime
+import json
+import sys
+from pathlib import Path
+
+import _note_frontmatter as fm
+
+
+class Parser(argparse.ArgumentParser):
+    def error(self, message):
+        sys.exit(f'note-outcome: {message}')
+
+
+def die(reason):
+    sys.exit(' '.join(str(reason).split()))
+
+
+def main():
+    p = Parser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument('vault')
+    p.add_argument('slug')
+    p.add_argument('outcome', choices=['done', 'dropped'])
+    p.add_argument('--resolved', required=True)
+    args = p.parse_args()
+    try:
+        resolved = datetime.date.fromisoformat(args.resolved)
+    except ValueError:
+        die(f'not a YYYY-MM-DD date: {args.resolved}')
+    path = Path(args.vault).expanduser() / 'notes' / f'{args.slug}.md'
+    if path.name != f'{args.slug}.md' or '/' in args.slug:
+        die(f'not a note slug: {args.slug}')
+    if not path.is_file():
+        die(f'no note named {args.slug}')
+    try:
+        text, stamp = fm.read(path)
+        data = fm.parse(text)
+        existing = data.get('outcome')
+        if existing == args.outcome and data.get('resolved') == resolved:
+            print(json.dumps({'status': 'exists'}))
+            return
+        if existing is not None:
+            die(f'{args.slug} already has outcome {existing}, resolved {data.get("resolved")}')
+        data['outcome'] = args.outcome
+        data['resolved'] = resolved
+        fm.rewrite(path, text, stamp, data)
+    except (fm.NoteError, OSError, UnicodeDecodeError) as e:
+        die(f'{args.slug}: {e}')
+    print(json.dumps({'status': 'recorded', 'outcome': args.outcome}))
+
+
+if __name__ == '__main__':
+    main()
