@@ -2,14 +2,14 @@
 name: adversarial-review
 description: "Run an adversarial review loop on a scope (one file, many files, or a YAML manifest declaring both intent and locations). Dispatches reviewer agents to find issues, a triage agent to synthesize and route, a fixer to apply changes, and a scribe at the end to author the summary. Loops until clean, then promotes to opus for final verification. Use this skill whenever you need rigorous validation of a written artifact, when reviewing designs before implementation, when checking specs that AI agents will consume, or when the user asks to review, validate, stress-test, or audit something. Even if the user just says 'review this' or 'check this for issues', this skill applies."
 user-invocable: true
-argument-hint: "[subcommand] [args] — run <ref> [path], create-default (author mode), or just [path] for the full loop"
+argument-hint: "[subcommand] [args] — run <ref> [path], create-default (author mode), or just [path] for the full loop; add --autonomy to run hands off"
 ---
 
 # Adversarial Review
 
 An adversarial review loop that validates a review scope through multiple independent reviewer agents, synthesized by a triage agent, with fixes applied by a dedicated fixer agent and the final summary written by a scribe.
 
-The skill ships with three default reviewers (coherence, design, detail) and supports user-supplied reviewers via configuration or ad-hoc invocation. Reviewer agents declare what they check and how they report; the loop's contract is enforced on the consumer side through a semantic audit step before pool composition.
+The skill ships with five default reviewers (coherence, design, detail, lost-items, bloat) and supports user-supplied reviewers via configuration or ad-hoc invocation. Reviewer agents declare what they check and how they report; the loop's contract is enforced on the consumer side through a semantic audit step before pool composition.
 
 ## Glossary
 
@@ -32,10 +32,16 @@ During Phase 2, the orchestrator MUST NOT Read the following files:
 - `iterations/<tier>-<N>/<reviewer>-output.md` (raw reviewer output)
 - `iterations/<tier>-<N>/fixer-changelog.md` (fixer's audit trail)
 - `iterations/<tier>-<N>/user-surface.md` (triage-authored; orchestrator echoes the path, never reads it)
+- `iterations/<tier>-<N>/scope.txt` (triage-authored, fixer-appended scope list; the baseline comparison script consumes it)
+- `iterations/<tier>-<N>/baseline.diff` and `iterations/<tier>-<N>/baseline-sizes.tsv` (script output; reviewers and triage read them)
+- anything under `review/baseline/` (the pre-review copies of the scope files)
 
 The orchestrator's only authorized Phase 2 reads are:
 
 - `iterations/<tier>-<N>/route.json` (small routing instruction)
+- The `autonomy` field of `review/session-meta.json` and, in autonomy mode only, its `principal_bump_limit` field, the principal's final two lines (`RESPONSE:` / `REASON:`), the first line of each of this tier's `user-response.md` and `user-response.<k>.md` files, and the second line of those whose first line is `source: principal`
+
+The baseline comparison script's inputs (`scope.txt`, `review/baseline/`) are consumed by the shell, not read into orchestrator context; running the script is not a read.
 
 Substance never lands in orchestrator context. The temptation to verify, summarize, or "just check" is the failure mode this rule prevents — every read of a substance file recreates the bug.
 
@@ -45,15 +51,15 @@ Substance never lands in orchestrator context. The temptation to verify, summari
 
 Inside Phase 2, **triage owns all surfacing of substance**. The orchestrator surfaces directly only:
 
-1. In Phase 1 setup (manifest confirmation, pool confirmation)
+1. In Phase 1 setup (manifest confirmation, pool confirmation, baseline snapshot failure)
 2. On tier-transition announcements (cheap → opus promotion)
-3. On triage-itself-failed exceptions (malformed `route.json`, missing JSON, schema mismatch)
+3. On triage-itself-failed exceptions (malformed `route.json`, missing JSON, schema mismatch), when the orchestrator-run baseline comparison fails (non-zero exit; see Phase 2 step 3), and, in autonomy mode, the fixed pause line that precedes a surface the principal may not answer
 
 All three are procedural, not substantive — bounded one-liners.
 
 ### Dispatch-discipline rule
 
-When dispatching a subagent (reviewer, triage, fixer, scribe, auditor), the orchestrator MUST use this exact wrapper template — verbatim — and add no other content:
+When dispatching a subagent (reviewer, triage, fixer, scribe, auditor, principal — whose last line Autonomy mode replaces), the orchestrator MUST use this exact wrapper template — verbatim — and add no other content:
 
 ```
 You are <agent-bare-name>. Adopt the role at <session-dir>/agents/<agent_filename>.
@@ -76,6 +82,8 @@ For the auditor in Phase 1 (no triage exists yet), the orchestrator authors the 
 
 Subagents MUST end their turns with literal `ACK <output-path>` — no other text after that line, no preamble. The orchestrator MUST NOT read or summarize anything in the subagent's response beyond extracting the path token. Treat the response as an opaque parse for the path; ignore the rest.
 
+Two agents end differently, and only as their sections specify: the principal replies with only a two-line `RESPONSE:` / `REASON:` decision in place of an ACK (see **Autonomy mode**), and the scribe may end with `WRITE-REFUSED` blocks when the harness refuses its writes (see Phase 4).
+
 If a subagent's response does not match the literal ack format, treat it as an agent-failed exception (the orchestrator surfaces under case 3 of the Surfacing exclusivity rule). Do not "salvage" substance from a malformed ack — that re-creates the leak the discipline prevents.
 
 ### Known platform leak: file-modification reminders
@@ -86,11 +94,11 @@ Practical impact: budget for ~3-10k tokens of orchestrator-context bleed per fix
 
 ### Iteration validity invariant
 
-An iteration is only valid if (a) each reviewer ran as an independent subagent — one Agent tool call per reviewer, never combined, (b) triage ran as its own subagent and produced a `route.json` file, and (c) the orchestrator's branching decisions reference only fields in `route.json`, never substance from any other file.
+An iteration is only valid if (a) each reviewer ran as an independent subagent — one Agent tool call per reviewer, never combined, (b) triage ran as its own subagent and produced a `route.json` file, and (c) the orchestrator's branching decisions reference only fields in `route.json`, never substance from any other file. Exceptions: the orchestrator also branches on the exit status of the baseline comparison script and on the user's `retry` / `abort` reply to its failure (Phase 2 step 3), and, in autonomy mode, on the reads the autonomy bullet of the Read-discipline rule authorizes (see Autonomy mode -> Answering an escalation).
 
 ## Subcommands
 
-- `/adversarial-review [path]` — Run the full review loop. `path` may be (a) a YAML manifest, (b) a single file, or (c) omitted (infer the artifact from conversation context — if context insufficient, ask). For (b) and (c), Phase 1 builds a manifest interactively.
+- `/adversarial-review [path]` — Run the full review loop. `path` may be (a) a YAML manifest, (b) a single file, or (c) omitted (infer the artifact from conversation context — if context insufficient, ask). For (b) and (c), Phase 1 builds a manifest interactively. Add `--autonomy` to run the loop hands off, with a principal agent answering escalations (see **Autonomy mode**).
 - `/adversarial-review run <ref> <path>` — Single-pass: dispatch one reviewer agent against the scope. No loop, no triage, no fixer, no scribe. Useful for rapid iteration during artifact development.
 - `/adversarial-review create-default` — Author-mode subcommand for skill authors only. Walks the author through guided creation of a new default reviewer. Available only when cwd is a claude-materia source checkout.
 
@@ -150,7 +158,7 @@ Scaffolded single-reviewer dispatch for rapid iteration during artifact developm
    - Otherwise, build an ephemeral manifest with `locations: [<path>]` and `intent: "(single-pass review)"`.
 3. Resolve scope from manifest's `locations` (and `exclude` if present). Build `SCOPE.md` (see Phase 1 step 1).
 4. Run the audit pipeline against the resolved candidate (Step 1 + Step 2 of the audit pipeline; cache-hits avoid re-dispatch).
-5. Construct a minimal dispatch prompt for the reviewer with: scope file list, the manifest, `SCOPE.md`. No prior-iteration context.
+5. Construct a minimal dispatch prompt for the reviewer with: scope file list, the manifest, `SCOPE.md`. No prior-iteration context and no `## Session inputs` section: a single pass has no baseline, so a baseline-dependent reviewer (lost-items, bloat) reports "no baseline provided" and emits no findings.
 6. Dispatch the reviewer as a subagent. Present its raw output to the user. No triage, no fixer, no scribe.
 
 Distinct from raw `Task` dispatch in that `run` performs the same scope resolution and `SCOPE.md` composition the full loop does.
@@ -160,6 +168,8 @@ Distinct from raw `Task` dispatch in that `run` performs the same scope resoluti
 ## Full Review Loop
 
 ### Phase 1: Session Setup
+
+In autonomy mode, steps 1, 4 and 5 change as described under **Autonomy mode → Setup**. Decide whether the mode is on before step 1.
 
 1. **Build or load the manifest, then compose `SCOPE.md`.**
 
@@ -284,16 +294,19 @@ Distinct from raw `Task` dispatch in that `run` performs the same scope resoluti
 
 5. **Create the session directory.**
    - Path: `<plugin-data-dir>/sessions/<timestamp>-<intent-slug>/`. Already created in step 1 for `manifest.yml`; now populate the rest.
-   - Create subdirectories: `agents/`, `review/`, `review/iterations/`
+   - Create subdirectories: `agents/`, `review/`, `review/iterations/`, `review/baseline/`
+   - **Snapshot the baseline.** Copy every file in the resolved scope into `review/baseline/`, mirroring each file's absolute path with the leading `/` removed (`/a/b/c.md` → `review/baseline/a/b/c.md`). Use Bash `cp` (creating parent directories), and if any copy exits non-zero, stop setup and surface one line under Surfacing exclusivity case 1, "Baseline snapshot failed for `<session-dir>/review/baseline/`. Reply `retry` or `abort`."; `retry` reruns the copy, `abort` ends the session without dispatching the scribe, and any other reply re-surfaces the same line; never Read the files. This runs after the step-2 checkpoint, so for checkpointed files the baseline equals the content at `pre_review_vcs_ref`; a file added to the scope at step 4 is baselined as it stands now. The baseline is written once and never updated, in both scope modes and across the tier promotion. It is the only record of the pre-review original that reviewers can see.
    - Snapshot the resolved-and-confirmed pool into `sessions/<id>/agents/` using namespace-prefixed filenames (`default__coherence.md`, `manual__custom-thing.md`, etc.). The snapshot reflects the locked pool.
    - Copy system agent files (triage, fixer, auditor, scribe) into `sessions/<id>/agents/` with their bare names (no namespace prefix; system agents have no source-namespace).
    - Create `review/accepted-risks.json` with initial content `[]`
    - Create `review/deferred-lows.json` with initial content `[]`. Schema: array of objects with fields `id` (string), `tier` (string: `"c"` or `"o"`), `iteration` (integer), `files` (array of strings), `description` (string), `reason` (string).
    - Write the `SCOPE.md` composed in step 1 to `review/SCOPE.md`.
    - Write the audit report from Stage A to `review/agent-audit.md`.
-   - Write `review/session-meta.json` with `pre_review_vcs_ref`, `vcs: git | jj | none`, and the resolved scope's pre-review file list (for scribe).
+   - Write `review/session-meta.json` with `pre_review_vcs_ref`, `vcs: git | jj | none`, `baseline_dir` (the absolute path of `review/baseline/`), the resolved scope's pre-review file list (for scribe), `autonomy: true | false`, and, in autonomy mode, `principal_bump_limit`.
 
 ### Phase 2: The Review Loop
+
+In autonomy mode, step 1, the failure branch of step 3 (b2), and step 4 change as described under **Autonomy mode**.
 
 **Configuration:**
 - `sonnet_max`: Maximum iterations for the cheap tier (default: 5, overridable via `--sonnet-max`)
@@ -308,12 +321,15 @@ c-init/                     # cheap-tier-init triage output
 └── (no triage-output.json — tier-init has no findings yet)
 
 c-1/
+├── scope.txt                              scope list — written by PREVIOUS iter's triage (or tier-init); fixer may append
+├── baseline.diff                          baseline -> current diff — written by the orchestrator's script before reviewers run
+├── baseline-sizes.tsv                     per-file line and word counts, baseline vs current — same script
 ├── default__coherence-output.md           reviewer (path-passed input/output)
 ├── default__design-output.md
 ├── triage-output.json                     full findings (fixer reads; orchestrator never)
 ├── route.json                             tiny routing instruction (orchestrator reads)
 ├── user-surface.md                        triage-authored; orchestrator echoes path
-├── user-response.md                       iff requires_response: true and user responded
+├── user-response.md                       iff requires_response: true and the user or principal responded
 ├── fixer-changelog.md                     iff gate was blocked
 └── dispatches/                            consumed in THIS iter
     ├── default__coherence.md              reviewer prompt — written by PREVIOUS iter's triage (or tier-init)
@@ -324,15 +340,17 @@ c-2/, c-3/ ...                             same shape
 o-init/, o-1/, o-2/ ...                    same shape, opus tier
 ```
 
-Convention: **dispatches live in the iteration where they're consumed**. Triage at `c-N` writes dispatches into `c-(N+1)/dispatches/` (creating that directory). Orchestrator's loop entry at `c-(N+1)` finds prompts already in place.
+Convention: **dispatches live in the iteration where they're consumed**. Triage at `c-N` writes dispatches into `c-(N+1)/dispatches/` (creating that directory) and writes `c-(N+1)/scope.txt` beside them. Orchestrator's loop entry at `c-(N+1)` finds prompts and scope list already in place.
 
-**Tier-init iteration.** Every tier starts with a tier-init triage call. The orchestrator dispatches triage with: scope, manifest, SCOPE.md, no reviewer outputs, prior triage history (empty for cheap-init; full cheap-tier history for opus-init), tier label, iteration=0. Triage cold-start-evaluates preconditions and emits `c-init/route.json` (or `o-init/route.json`) with `next_dispatches` for iteration 1. No `triage-output.json` is produced.
+**Baseline paths.** Every triage dispatch (tier-init, numbered iteration, and re-dispatch after a user response) also passes absolute paths (five, or four at tier-init): `baseline_dir` (`<session-dir>/review/baseline/`, the value written to `session-meta.json` in Phase 1; derive it, do not Read that file for it), the current iteration's `baseline-sizes.tsv` (absent in tier-init), and for the next iteration `next_baseline_diff_path`, `next_baseline_sizes_path`, and `next_scope_list_path`. The current `baseline-sizes.tsv` is under `<session-dir>/review/iterations/<tier>-<N>/`, beside `route.json`; the three `next_*` paths are under `<tier>-<N+1>/` (`<tier>-1/` at tier-init). Triage writes the scope list; the orchestrator's script writes the other two before reviewers are dispatched.
+
+**Tier-init iteration.** Every tier starts with a tier-init triage call. The orchestrator dispatches triage with: scope, manifest, SCOPE.md, no reviewer outputs, prior triage history (empty for cheap-init; full cheap-tier history for opus-init), tier label, iteration=0, and the baseline paths (see **Baseline paths**). Triage cold-start-evaluates preconditions, writes `c-1/scope.txt` (or `o-1/scope.txt`), and emits `c-init/route.json` (or `o-init/route.json`) with `next_dispatches` for iteration 1. No `triage-output.json` is produced.
 
 **Each numbered iteration:**
 
 0. **Read the current iteration's `route.json`.** It exists from the previous iteration's triage (or from tier-init for iteration 1). It tells you exactly what to do next.
 
-1. **If `surface.requires_response: true`:** echo `surface.breadcrumb` and `surface.path` to the user. **Recommendation order (anti-bias):** read `route.json` with `surface.recommendation` excluded (e.g. `jq 'del(.surface.recommendation)'`), and give the user your own recommendation first, from procedural signals only (the breadcrumb, the trend of counts across iterations, the tier). Only after that text is written, read `surface.recommendation` alone (`jq -r '.surface.recommendation'`) and print it verbatim beneath yours, labeled as triage's. Never revise your recommendation after reading it in the same turn; if you now disagree with yourself, say so in one line rather than editing. Capture the user's typed response verbatim and write to `iterations/<tier>-<N>/user-response.md`. Re-dispatch triage with the updated history. Re-read the new `route.json`. (Triage will have updated `accepted-risks.json` or set `tier_max_increment` as appropriate, and emitted a new control decision.)
+1. **If `surface.requires_response: true`:** echo `surface.breadcrumb` and `surface.path` to the user. **Recommendation order (anti-bias):** read `route.json` with `surface.recommendation` excluded (e.g. `jq 'del(.surface.recommendation)'`), and give the user your own recommendation first, from procedural signals only (the breadcrumb, the trend of counts across iterations, the tier). Only after that text is written, read `surface.recommendation` alone (`jq -r '.surface.recommendation'`) and print it verbatim beneath yours, labeled as triage's. Never revise your recommendation after reading it in the same turn; if you now disagree with yourself, say so in one line rather than editing. Capture the user's typed response verbatim and write to `iterations/<tier>-<N>/user-response.md`. Re-dispatch triage with the updated history (including every `user-response.md`, `user-response.<k>.md` and `user-response.principal.<k>.md` in the session, and the five baseline paths). Re-read the new `route.json`. (Triage will have updated `accepted-risks.json` or set `tier_max_increment` as appropriate, and emitted a new control decision.)
 
 2. **If `tier_max_increment` is non-null:** add it to the current `tier_max`. Continue.
 
@@ -343,8 +361,11 @@ Convention: **dispatches live in the iteration where they're consumed**. Triage 
         - jj: `jj new -m "adversarial-review: iteration <tier>-<N> fixes"`
         - git: `git add <scope files> && git commit -m "adversarial-review: iteration <tier>-<N> fixes"`
      b. Increment iteration counter (or transition to next iteration's directory).
+     b2. **Baseline comparison.** Run one Bash command: `bash "<skill-directory>/scripts/baseline-compare.sh" <session-dir> <iteration-dir> >/dev/null 2>&1`, both arguments absolute, `<iteration-dir>` being the new iteration's directory. It writes `baseline.diff` and `baseline-sizes.tsv` there from `review/baseline/` and the iteration's `scope.txt`. Run it every numbered iteration, unconditionally; do not reason about which reviewers need it. Branch only on the exit status, never on output:
+        - Exit 0: continue to step c.
+        - Non-zero: dispatch no reviewer. Surface one line under Surfacing exclusivity case 3: "Baseline comparison failed for `<iteration-dir>`. Reply `retry` or `abort`." On `retry`, rerun the script (no triage dispatch, no `user-response.md`). On `abort`, dispatch the scribe with `termination_kind: aborted`. Any other reply re-surfaces the same line.
      c. For each entry in `next_dispatches`, dispatch the reviewer subagent in parallel using the dispatch-discipline wrapper. Wait for literal `ACK <output-path>` acknowledgments.
-     d. Dispatch triage as a subagent (using the dispatch-discipline wrapper) with paths to: this iteration's reviewer outputs, prior triage outputs, fixer changelogs, accepted-risks.json, deferred-lows.json, manifest.yml, SCOPE.md, all agent spec files. Triage authors `triage-output.json`, the next `route.json`, and (if blocked) the next iteration's dispatch prompts. Wait for the literal `ACK <route.json path>` acknowledgment.
+     d. Dispatch triage as a subagent (using the dispatch-discipline wrapper) with paths to: this iteration's reviewer outputs, prior triage outputs, fixer changelogs, every `user-response.md`, `user-response.<k>.md` and `user-response.principal.<k>.md` in the session, accepted-risks.json, deferred-lows.json, manifest.yml, SCOPE.md, all agent spec files, and the five baseline paths (see **Baseline paths** above). Triage authors `triage-output.json`, the next `route.json`, the next iteration's `scope.txt`, and the next iteration's dispatch prompts. Wait for the literal `ACK <route.json path>` acknowledgment.
      e. Echo new `route.json`'s `surface.breadcrumb` and `surface.path`. Loop to step 0 of the new iteration.
 
    - **`exit_clean`**:
@@ -379,15 +400,127 @@ When opus exits clean (or any tier exits aborted/limit-reached):
    - Path to session-meta.json (for `pre_review_vcs_ref` and `vcs` flag)
    - Paths to all `iterations/*/triage-output.json`
    - Paths to all `iterations/*/fixer-changelog.md`
-   - Paths to all `iterations/*/user-response.md` (if any)
+   - Paths to all `iterations/*/user-response.md`, `iterations/*/user-response.<k>.md` and `iterations/*/user-response.principal.<k>.md` (if any)
    - Path to accepted-risks.json
    - Path to deferred-lows.json
    - `termination_kind`: `clean | aborted | limit_reached`
-2. Wait for the literal `ACK <summary.md path>` acknowledgment.
-3. Echo: "Review complete. Summary at `<session-path>/review/summary.md`."
+   - In autonomy mode, also: `autonomy: true`, the path to `review/principal-brief.md`, and the path to the last numbered iteration's `baseline-sizes.tsv` (on an abort from a failed baseline comparison, that iteration's path all the same). The scribe then writes `review/autonomy-brief.md` as well.
+2. Wait for the literal `ACK <review-summary.md path>` acknowledgment. **Write fallback:** some harnesses refuse a subagent's write of a report file. The scribe then ends its turn with one block per refused file: a line `WRITE-REFUSED <path>` followed by that file's full content. Save each block's content verbatim to its path, which must be `review/review-summary.md` or, in autonomy mode, `review/autonomy-brief.md` (any other path is an agent-failed exception, case 3), and continue; the blocks stand in for the ACK. This is the one case where the orchestrator handles a subagent's content; the loop is already over.
+3. Echo: "Review complete. Summary at `<session-path>/review/review-summary.md`." In autonomy mode, instead do the end-of-run brief step (see **Autonomy mode → The end-of-run brief**), which names both files.
 4. Terminate.
 
-The orchestrator never reads any session-state file at terminate time. The scribe's acknowledgment is the only signal.
+The orchestrator never reads any session-state file at terminate time, with one exception: in autonomy mode it reads `review/autonomy-brief.md` (see **Autonomy mode → The end-of-run brief**). Otherwise the scribe's acknowledgment is the only signal.
+
+## Autonomy mode
+
+In autonomy mode the review runs without the user answering. A **principal** agent answers escalations in the user's place, from a brief the session writes at setup. The principal is a subagent, so finding substance stays out of orchestrator context; the brief is how the user's intent reaches it. Triage is unchanged in role: it still normalizes, routes, and authors every surface. The principal replaces only the person who answers.
+
+### Trigger
+
+Autonomy mode is on when either holds:
+
+- the invocation carries `--autonomy`; or
+- the user has said, in the conversation that invokes the skill, that they want to be hands off for this review (for example "run it without me", "I'll be away", "don't stop to ask me").
+
+A preference stated in an earlier, unrelated task does not count. When you infer the mode from conversation, say so in one line at setup ("Running in autonomy mode because you said …") so the user can correct it. The mode is fixed at setup; it is the `autonomy` field of `review/session-meta.json` written at Phase 1 step 5.
+
+### Setup
+
+- **Step 1 (manifest).** Build the manifest from the conversation without asking. If `intent`, or the artifact when no path was given, cannot be derived from the conversation, ask for it once, as outside autonomy mode; everything else proceeds unasked.
+- **Step 2 (version control).** Unchanged. The no-VCS "Continue?" still waits for the user.
+- **Step 4 (confirmation).** Show the manifest summary and the proposed pool, then proceed without waiting.
+- **Step 5 (session directory).** Also copy `principal.md` into `agents/` with the other system agents, and write `review/principal-brief.md`.
+
+**The principal brief.** Write it from the conversation before any reviewer runs. This is the only point where your knowledge of the user's intent enters the loop. State only what the conversation supports, and quote the user where you can.
+
+```markdown
+# Principal brief
+
+## What the user wants from this review
+[What they said the review is for, what they care about most, what they would rather not see.]
+
+## What you may decide
+[The default `bump` and `accept-risk` limits below, changed only where the user said so, quoting what they said. Never extend `accept-risk` to a high or critical finding, or to a `baseline_unavailable` or `incomplete_check` finding, whatever the user said: those are send-back items. State the bump limit as a number.]
+
+## What you must send back
+[The defaults below, plus anything the user said they want to decide themselves.]
+```
+
+Default limits. The `bump` and `accept-risk` limits apply unless the user said otherwise. The send-back items are fixed: the user can add to them, and no brief removes one.
+
+- `bump`: at most 3 extra iterations per tier in total, and only while the count of open high and medium findings is falling: lower than in the previous iteration of the same tier. With no previous iteration in the tier, the condition is met.
+- `accept-risk`: medium and low findings only, and only for a reason the brief lists. Default reasons: the finding contradicts a decision the user already made; it concerns behaviour outside what this review is for; its fix would remove meaning the user wants kept.
+- Send back: any high or critical finding that needs a decision; any `baseline_unavailable` or `incomplete_check` finding; any wish to abort; anything the brief does not cover.
+
+At step 5, write to `principal_bump_limit` in `review/session-meta.json` the same number the brief states as its bump limit: 3 unless the user set another. Show the user the brief's path and its "What you may decide" and "What you must send back" sections. Do not wait.
+
+### Answering an escalation
+
+When `surface.requires_response` is true and `surface.human_only` is not true, do this in place of Phase 2 step 1's ask-the-user step:
+
+1. Echo `surface.breadcrumb` and `surface.path`, so the transcript shows the escalation.
+2. Write `iterations/<tier>-<N>/dispatches/principal.md` from this fixed template, paths only, `<tier>-<N>` being the iteration directory holding the route.json that carries this escalation:
+
+   ```markdown
+   # Principal dispatch — iteration <tier>-<N>
+   - brief: <session-dir>/review/principal-brief.md
+   - user-surface: <surface.path>
+   - triage-output: <session-dir>/review/iterations/<tier>-<N>/triage-output.json
+   - route.json: <session-dir>/review/iterations/<tier>-<N>/route.json
+   - earlier user responses: [paths to every user-response.md, user-response.<k>.md and user-response.principal.<k>.md in the session, by iteration; within one, user-response.md is the latest in effect; "none"]
+   - previous triage-output (same tier): <session-dir>/review/iterations/<tier>-<N-1>/triage-output.json, or "none" at iteration 1 of a tier
+   ```
+
+3. Dispatch the principal on the most capable model with the dispatch-discipline wrapper, its last line replaced by: `End your turn with the two-line RESPONSE / REASON decision your role file specifies and nothing else.`
+4. Read the last two lines of its reply, and nothing else in it:
+
+   ```
+   RESPONSE: <bump N | accept-risk <ids> | continue | defer-to-user>
+   REASON: <one sentence; findings named by id and severity only>
+   ```
+
+5. Apply the hard limits. Treat the reply as `defer-to-user` when any of these holds:
+   - `malformed`: it does not end with a well-formed `RESPONSE:` / `REASON:` pair;
+   - `abort`: `RESPONSE` is `abort`, or anything other than the four forms above;
+   - `over-budget`: `RESPONSE` is `bump <N>` and N is not a positive integer, or N plus the principal's earlier bumps in this tier exceeds `principal_bump_limit` (from `session-meta.json`). Count earlier bumps from this tier's `user-response.md` and `user-response.<k>.md` files whose first line is `source: principal` (never `user-response.principal.<k>.md`), reading only what the Read-discipline rule authorizes.
+6. Otherwise write `iterations/<tier>-<N>/user-response.md` (if this iteration already holds one, first rename it to `user-response.<k>.md`, k the next free integer from 1) as exactly:
+
+   ```
+   source: principal
+   <the RESPONSE value>
+   reason: <the REASON value>
+   ```
+
+   Then re-dispatch triage and continue exactly as after a human reply.
+
+**Pausing for the user.** On `defer-to-user` (from the principal or a hard limit), or when `surface.human_only` is true, surface to the user as Phase 2 step 1 does outside autonomy mode, preceded by one line: "Autonomy mode paused: this decision is outside what the principal may decide." First record the principal response not put into effect as `user-response.principal.<k>.md`, k the next free integer from 1: in the `human_only` case, rename the principal-written `user-response.md` that triage refused; on `defer-to-user`, write the step-6 format with the RESPONSE value (or `malformed`) and, in `reason:`, the REASON value (or `none`) followed by the name of the hard limit that fired, if any. Wait. Write the user's typed reply to `user-response.md` with no `source:` line (renaming any existing one as in step 6), re-dispatch triage, and resume in autonomy mode.
+
+**Triage's guard.** Only triage sees severities and the options it offered. It refuses a principal response its §12 guard does not allow and emits a surface with `human_only: true`. You do not check this yourself.
+
+**Baseline comparison failure** (step 3 b2, non-zero exit): rerun the script once without asking. If it fails again, surface the usual `retry` / `abort` line to the user and wait. Do not consult the principal; it cannot repair plumbing.
+
+**Triage contract violation** (step 4, iteration limit fail-safe): surface to the user, never the principal; write the reply to `user-response.md` with no `source:` line, first renaming any existing one as in step 6.
+
+### The end-of-run brief
+
+In autonomy mode the scribe writes `review/autonomy-brief.md` alongside the summary: the decisions the principal made, the changes of significance, what is still open, and the size change. It is what a user who was away should read first.
+
+After the scribe returns (Phase 4 step 2), Read `review/autonomy-brief.md` and only that file. This read is authorized: the loop is over, and the Read-discipline rule governs Phase 2. Then tell the user, in a few lines:
+
+- the outcome and where the brief and the summary are;
+- which items in the brief they are likely to mind, given what they said in the conversation, and why; or, plainly, that nothing stands out.
+
+Do not restate the brief. Do not soften an item because the review ended clean.
+
+### Files this mode adds to a session
+
+```
+review/principal-brief.md                      session-authored at setup; the principal reads it
+review/autonomy-brief.md                       scribe-authored at the end; the session reads it once
+iterations/<tier>-<N>/dispatches/principal.md  orchestrator-authored, paths only (iff the principal was consulted)
+iterations/<tier>-<N>/user-response.<k>.md     an earlier response in an iteration that holds more than one (iff renamed by a later response)
+iterations/<tier>-<N>/user-response.principal.<k>.md  a principal response not put into effect (iff triage set human_only, or the principal or a hard limit deferred)
+```
 
 ---
 

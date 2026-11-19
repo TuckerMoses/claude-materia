@@ -53,7 +53,7 @@ For each, emit `fired` (with reasoning) or `not fired`.
 
 3. **Interactive** — Agent requires mid-execution user input. Can't run as a one-shot subagent in the loop.
 
-4. **External-state-dependent** — Agent needs other files, network access, or persistent state to function. Can't review from artifact alone.
+4. **External-state-dependent** — Agent needs other files, network access, or persistent state to function. Can't review from artifact alone. Inputs the session supplies through the dispatch prompt are not external state: the scope files, `SCOPE.md`, the manifest, triage history, the pre-review baseline, the baseline diff and size table, the scope list, and fixer changelogs.
 
 5. **Orchestration-focused** — Agent's purpose is to manage other agents or processes, not to read-and-report. Conductor, not reviewer.
 

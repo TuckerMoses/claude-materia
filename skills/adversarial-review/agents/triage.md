@@ -21,6 +21,7 @@ Triage writes multiple outputs per iteration. The orchestrator reads only the sm
 | `iterations/<tier>-<N>/user-surface.md` | Pre-rendered user-facing surface (findings summary, diagnosis prose, decision options if any) | User (orchestrator echoes the path) |
 | `iterations/<tier>-<N+1>/dispatches/<agent_filename>` | Per-agent dispatch prompt for next iteration's reviewer (one per agent in `next_dispatches`) | Next iteration's reviewer subagent |
 | `iterations/<tier>-<N>/dispatches/fixer.md` | Fixer's brief for this iteration (when gate is blocked) | Fixer subagent |
+| `iterations/<tier>-<N+1>/scope.txt` | Next iteration's scope list, one absolute path per line (see **Glob resolution**) | Orchestrator's baseline comparison script; next iteration's reviewers; fixer (appends) |
 | `review/accepted-risks.json` (updates) | User-accepted-risk findings | Fixer (filters out); future iterations' history |
 | `review/deferred-lows.json` (updates) | Low-severity findings deferred at gate-pass | Scribe (final summary) |
 
@@ -66,6 +67,8 @@ Reviewer agents may emit free-form output — prose paragraphs, structured lists
 - Populate `files` from the reviewer's location references. If the reviewer specified line ranges or section names but not file paths, use the iteration's resolved scope (see **Glob resolution**) to disambiguate. If a finding is genuinely cross-file, list every file involved.
 - Populate `interpretation_note` when your trace-shape choice or extraction logic isn't obvious from the reviewer output alone.
 
+**Conflict rule (cut vs. keep).** When, in one iteration, one finding asks to cut or shorten a passage and another asks to restore or keep the same meaning, merge them into one finding: highest source severity, `synthesis` trace, suggestion "state this meaning once, in the fewest words that carry it". Preserving meaning takes precedence over brevity. Apply this by what the findings say, whichever reviewers raised them.
+
 ### 2. Severity assessment
 
 Assign each finding a final severity: **critical**, **high**, **medium**, or **low**.
@@ -97,6 +100,8 @@ Only agents whose logged evaluation says `met` may appear in `next_dispatches`. 
 
 **When the gate passes**, evaluate preconditions against the current state — no fixer will run, so what you see is what the next iteration gets.
 
+**Preconditions scoped to a tier.** A precondition that says a check has not yet run "within the current tier" is true by construction at tier-init. Unless the prospective rule above applies, evaluate "the fixer has modified at least one scope file since the pre-review baseline" as `met` iff any `fixer-changelog.md` exists in the session or the latest `scope_size` (at `o-init`, the last cheap-tier one; in numbered iterations, the current `baseline-sizes.tsv` TOTAL; `c-init` has none) shows `current_lines != baseline_lines` or `current_words != baseline_words`; either suffices.
+
 **Dispatch prompt authoring.** For each agent in `next_dispatches`, write `iterations/<tier>-<N+1>/dispatches/<agent_filename>` containing:
 
 ```markdown
@@ -115,12 +120,22 @@ Only agents whose logged evaluation says `met` may appear in `next_dispatches`. 
 ## Prior triage history (relevant subset)
 [Summary or paths to the most recent triage outputs. Reviewer can drill into the JSON for specifics if needed.]
 
+## Session inputs
+- Baseline (pre-review original): <baseline_dir>
+- Baseline diff for this iteration: <next_baseline_diff_path>
+- Size table for this iteration: <next_baseline_sizes_path>
+- Scope list for this iteration: <next_scope_list_path> (authoritative; supersedes the Scope section above; a listed path absent from disk was deleted or renamed and is not an error)
+- Fixer changelogs: [every changelog in the session, both tiers, oldest first, including this iteration's `fixer-changelog.md` whenever you emit `fixer_brief_path`, since the fixer runs before these reviewers are dispatched; "none" if no fixer has run]
+- Triage outputs: [every `triage-output.json` in the session, both tiers, oldest first, including the one you are writing now]
+
 ## Your task
 Run your review per your agent spec on the listed scope. Emit findings to `iterations/<tier>-<N+1>/<agent_filename-without-md>-output.md`.
 
 ## Acknowledgment
 End your turn with the literal text `ACK <path-to-output-file>` and nothing else. No summary, no preamble, no closing prose. The orchestrator extracts only the path; anything else you write is wasted context that bleeds into the orchestrator's session.
 ```
+
+Write the Session inputs section identically for every reviewer; never tailor it to a reviewer by name. Reviewers that do not need these inputs ignore them. The diff and size table do not exist yet when you write the prompt: the orchestrator's script creates them, after the fixer runs and before the reviewer is dispatched. You write the scope list yourself (see **Glob resolution**).
 
 The reviewer subagent reads its own agent file (for role) plus this dispatch prompt (for task) and produces output. **You author this prompt; the orchestrator never reads it.**
 
@@ -134,6 +149,10 @@ Read `iterations/<tier>-<N>/triage-output.json`. Act on `findings[]` where `stat
 
 ## Scope
 [List of resolved file paths. The artifact files you may modify.]
+
+## Baseline
+- baseline_dir: <baseline_dir> (read-only; the pre-review original, for restoring lost content)
+- next_scope_list_path: <next_scope_list_path> (append the absolute path of any scope file you create or rename)
 
 ## Manifest
 - intent: [from manifest.yml]
@@ -159,20 +178,25 @@ Encode coverage outcome via the `control` enum + `next_dispatches` content + `fi
 
 ### 5. Cross-iteration diagnosis (iteration 2+)
 
-Read the full iteration history (prior `triage-output.json` files + fixer changelogs + `user-response.md` files) and emit a diagnosis note in `triage-output.json`:
+Read the full iteration history (prior `triage-output.json` files + fixer changelogs + `user-response.md`, `user-response.<k>.md` and `user-response.principal.<k>.md` files) and emit a diagnosis note in `triage-output.json`:
 
 - **Oscillation**: Findings recurring across iterations. Name the specific findings and which iterations they appear in.
 - **Grinding**: Findings decreasing monotonically but slowly. Progress, but more iterations needed.
 - **Drift**: New findings appearing each iteration that weren't present before. The fixer may be introducing new issues.
 - **Convergence**: Findings decreasing and not recurring. System is working as intended.
+- **Growth**: Total scope size in words rising three points in a row (current total > previous iteration's total > the total before that, counting across tiers). Fewer than three data points means no Growth diagnosis. Read the current total from the `TOTAL` row of this iteration's `baseline-sizes.tsv` and earlier totals from the `scope_size` field of prior `triage-output.json` files. Record this iteration's totals in `triage-output.json` as `scope_size: {baseline_lines, current_lines, baseline_words, current_words}` every numbered iteration, and name the trend in `user-surface.md`. Growth informs the user; it never blocks the gate by itself.
+
+A finding you deferred under the Sequential cycle rule (section 13) does not count as recurring for Oscillation or for section 12.
 
 When user interventions exist in the history, factor them in. Don't re-raise patterns the user has already acknowledged unless the situation has materially changed.
 
 ### 6. Accepted-risk filtering and maintenance
 
-Two responsibilities:
+Three responsibilities:
 
 **Filtering**: Findings marked as accepted risk in `accepted-risks.json` are excluded from the gate's severity calculation. They remain visible for the record but do not block progress.
+
+**Stable ids for recurring losses**: a finding that reports the same lost content as an earlier one (same baseline file and section, and quotes that start at the same line or where one contains the other) keeps the earlier finding's id, so an accepted risk keeps applying to it. Reviewers do not read `accepted-risks.json`; you do the matching.
 
 **Maintenance**: When you parse a `user-response.md` containing accept-risk intent (e.g., the user says "accept f-c-3-2 as risk because of trade-off X"):
 - Update `accepted-risks.json` to add an entry: `{id, reason}`.
@@ -208,6 +232,8 @@ The manifest's `locations` field contains globs. When `scope_mode: live` (defaul
 
 When `scope_mode: pinned`, read the resolved scope from `sessions/<id>/scope-pinned.json` (written once at Phase 1 setup) instead of re-resolving.
 
+**Scope list.** You are the only scope resolver during the loop; the orchestrator resolves nothing and reads no scope source. Alongside the next iteration's dispatch prompts, write `next_scope_list_path` (`iterations/<tier>-<N+1>/scope.txt`): one absolute path per line, the de-duplicated union of the freshly resolved scope and the current iteration's `scope.txt` (which includes any paths the fixer appended). Never drop a path in this union; a deleted file stays listed and the baseline side covers it. In tier-init, write the freshly resolved scope; for `o-1`, take its union with the last cheap-tier `scope.txt`. Write this file every time you emit `next_dispatches`, whatever the gate result.
+
 If the resolved scope changes materially from the previous iteration (more than ~10% file count delta, or any file deletion that has open findings against it), surface this in `user-surface.md` as a notable observation — and consider it for diagnosis ("scope expanded by N files this iteration").
 
 For findings against deleted files: mark `status: obsolete`, exclude from gate, note in diagnosis.
@@ -229,7 +255,7 @@ Write `iterations/<tier>-<N>/user-surface.md` every iteration. This is what the 
 [Per agent in pool: included/excluded with reason from precondition evaluation.]
 
 ## Decisions needed (if any)
-[Only present when `surface.requires_response: true`. Lists the structured options the user should respond with: "accept-risk <ids>", "abort", "bump <N>", etc.]
+[Only present when `surface.requires_response: true`. Lists the structured options the user should respond with: "accept-risk <ids>", "abort", "bump <N>", etc. When an option here is one the §12 principal-response guard would refuse from a stand-in, or you set `surface.human_only`, say here in one line why the decision would reach the user: for example, that a stand-in may not accept a high finding.]
 ```
 
 Also emit a `breadcrumb` in `route.json` — a one-line render of the same content for the orchestrator to echo to the user without expanding the path. Example: `"iter c-4 / blocked / 3 high 2 medium / 1 cross-file"`. The breadcrumb carries state only, **never a recommendation**: the orchestrator reads it before forming its own recommendation, and a recommendation there biases it.
@@ -274,6 +300,7 @@ Field semantics:
 - **`surface.breadcrumb`**: one-line render of state. Always present. Never contains a recommendation.
 - **`surface.recommendation`**: your recommended response string plus one sentence of reason (section 9). Present iff `requires_response` is true.
 - **`surface.requires_response`**: `true` only when control is `escalate` or you need user input for a continue decision.
+- **`surface.human_only`**: optional boolean; absent means false. Set it to `true` only when refusing a principal response (section 12). It tells the orchestrator to put this decision to the user even when a principal is answering escalations.
 - **`next_dispatches`**: array of `{agent_filename, prompt_path}` for the next iteration's reviewers. Empty array on `exit_clean` / `exit_aborted`.
 - **`fixer_brief_path`**: path to fixer's brief. Present iff gate is blocked. Absent on coverage-only iterations and on exits.
 - **`tier_max_increment`**: optional integer. When you parse a `user-response.md` containing "bump N", set this to N; orchestrator increases its tier_max accordingly. Otherwise null.
@@ -292,10 +319,10 @@ State combinations the orchestrator branches on:
 
 The orchestrator dispatches you in **tier-init mode** at the start of each tier (cheap-tier session start, and again on promotion to opus). In tier-init:
 
-- You receive: scope (resolved), manifest, no reviewer outputs, prior triage history (empty for cheap-tier-init; full cheap-tier history for opus-tier-init).
+- You receive: scope (resolved), manifest, no reviewer outputs, prior triage history (empty for cheap-tier-init; full cheap-tier history for opus-tier-init), `baseline_dir`, and the three `next_*` paths.
 - You produce: a `route.json` with `control: continue`, no `fixer_brief_path`, and `next_dispatches` populated by cold-start precondition evaluation.
 - You do not produce a `triage-output.json` (no findings to record yet).
-- You author the iteration-1 dispatch prompts in `iterations/<tier>-1/dispatches/`.
+- You author the iteration-1 dispatch prompts in `iterations/<tier>-1/dispatches/` and the iteration-1 scope list at `next_scope_list_path`.
 - The output directory is `iterations/<tier>-init/`.
 
 This pulls precondition evaluation entirely out of the orchestrator and gives every tier a uniform entry point.
@@ -310,12 +337,19 @@ You raise `control: escalate` (with `surface.requires_response: true`) in these 
 - **Material scope change** (live globs): when scope expands by more than ~25% file count, surface for confirmation before dispatching reviewers against the expanded scope.
 
 When a user response arrives at `iterations/<tier>-<N>/user-response.md`:
+- **Principal responses.** If the file's first line is `source: principal`, a principal agent answered in the user's place: the second line is the response and the third its reason. Treat it as the user's response, with one guard. If it accepts a finding whose severity is high or critical, or whose type is `baseline_unavailable` or `incomplete_check`, or it is not one of the options you offered (an accept-risk must name exactly the ids you offered it for), refuse the whole response: leave `accepted-risks.json` unchanged and emit `control: escalate` with `surface.requires_response: true` and `surface.human_only: true`, offering the same options again. A file without that first line is the user's own reply and has no guard.
 - Parse intent: `accept-risk <ids>`, `abort`, `bump <N>`, `continue`, or free-form prose.
 - Update `accepted-risks.json` if appropriate.
 - Set `tier_max_increment` if appropriate.
 - Emit a new `route.json` reflecting the user's decision (typically `control: continue` or `exit_aborted`).
 
 The orchestrator captures user input verbatim and re-dispatches you. You parse and decide. The orchestrator never parses substance.
+
+### 13. Baseline-aware rules
+
+**Sequential cycle (cut what was just restored).** A fixer changelog's `Restores` field records the full text it restored and where. When a finding (a) gives surplus wording as its reason (restatement, padding, patch-on-patch, unmotivated addition) and (b) suggests cutting or shortening a passage that overlaps a `Restores` entry's recorded text at that entry's current location, and that text still appears there verbatim, downgrade the finding to low with `status: deferred`, so the fixer skips it. Never reopen a finding deferred this way while the `Restores` text still appears verbatim. A finding that says the text is wrong, contradictory, or harmful is judged normally, as is every other finding. The downgrade carries across the cheap-to-opus boundary; you receive the cheap-tier history at `o-init`.
+
+**Baseline plumbing failures.** Do not route a `baseline_unavailable` or `incomplete_check` finding to the fixer; the fixer cannot repair session plumbing. Emit `control: escalate` in the same iteration with options `accept-risk <id>` and `abort`. Acceptance is per finding id: the reviewer keeps running and its other findings gate normally. Give every later finding of the same type from that reviewer the id accepted for that type; the other type, if it appears, is a new finding. Say this in `user-surface.md`.
 
 ## Context you receive
 
@@ -329,7 +363,10 @@ Your dispatch context contains paths only:
 - Path to `accepted-risks.json`
 - Path to `deferred-lows.json`
 - Paths to all reviewer agent spec files in the session pool (for precondition evaluation and `severity_guidance` lookup)
-- Path to `iterations/<tier>-<N>/user-response.md` if the orchestrator captured a user response
+- Paths to every `user-response.md`, `user-response.<k>.md` and `user-response.principal.<k>.md` in the session (the `.principal.<k>` files are principal responses not put into effect; history only); the current iteration's `user-response.md`, when present, is the response to act on
+- `baseline_dir`: the pre-review copies of the scope files
+- Path to the current iteration's `baseline-sizes.tsv` (absent in tier-init); you are not handed earlier tables
+- `next_baseline_diff_path`, `next_baseline_sizes_path`, `next_scope_list_path`: next-iteration paths to write into dispatch prompts. You write only the scope list.
 - Output paths to write to:
   - `triage_output_json: iterations/<tier>-<N>/triage-output.json`
   - `route_json: iterations/<tier>-<N>/route.json`
