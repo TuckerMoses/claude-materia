@@ -302,7 +302,7 @@ In autonomy mode, steps 1, 4 and 5 change as described under **Autonomy mode →
    - Create `review/deferred-lows.json` with initial content `[]`. Schema: array of objects with fields `id` (string), `tier` (string: `"c"` or `"o"`), `iteration` (integer), `files` (array of strings), `description` (string), `reason` (string).
    - Write the `SCOPE.md` composed in step 1 to `review/SCOPE.md`.
    - Write the audit report from Stage A to `review/agent-audit.md`.
-   - Write `review/session-meta.json` with `pre_review_vcs_ref`, `vcs: git | jj | none`, `baseline_dir` (the absolute path of `review/baseline/`), and the resolved scope's pre-review file list (for scribe).
+   - Write `review/session-meta.json` with `pre_review_vcs_ref`, `vcs: git | jj | none`, `baseline_dir` (the absolute path of `review/baseline/`), the resolved scope's pre-review file list (for scribe), `autonomy: true | false`, and, in autonomy mode, `principal_bump_limit`.
 
 ### Phase 2: The Review Loop
 
@@ -405,8 +405,8 @@ When opus exits clean (or any tier exits aborted/limit-reached):
    - Path to deferred-lows.json
    - `termination_kind`: `clean | aborted | limit_reached`
    - In autonomy mode, also: `autonomy: true`, the path to `review/principal-brief.md`, and the path to the last numbered iteration's `baseline-sizes.tsv` (on an abort from a failed baseline comparison, that iteration's path all the same). The scribe then writes `review/autonomy-brief.md` as well.
-2. Wait for the literal `ACK <summary.md path>` acknowledgment. **Write fallback:** some harnesses refuse a subagent's write of a report file. The scribe then ends its turn with one block per refused file: a line `WRITE-REFUSED <path>` followed by that file's full content. Save each block's content verbatim to its path and continue; the blocks stand in for the ACK. This is the one case where the orchestrator handles a subagent's content; the loop is already over.
-3. Echo: "Review complete. Summary at `<session-path>/review/summary.md`."
+2. Wait for the literal `ACK <summary.md path>` acknowledgment. **Write fallback:** some harnesses refuse a subagent's write of a report file. The scribe then ends its turn with one block per refused file: a line `WRITE-REFUSED <path>` followed by that file's full content. Save each block's content verbatim to its path, which must be `review/summary.md` or, in autonomy mode, `review/autonomy-brief.md` (any other path is an agent-failed exception, case 3), and continue; the blocks stand in for the ACK. This is the one case where the orchestrator handles a subagent's content; the loop is already over.
+3. Echo: "Review complete. Summary at `<session-path>/review/summary.md`." In autonomy mode, instead do the end-of-run brief step (see **Autonomy mode → The end-of-run brief**), which names both files.
 4. Terminate.
 
 The orchestrator never reads any session-state file at terminate time, with one exception: in autonomy mode it reads `review/autonomy-brief.md` (see **Autonomy mode → The end-of-run brief**). Otherwise the scribe's acknowledgment is the only signal.
@@ -422,7 +422,7 @@ Autonomy mode is on when either holds:
 - the invocation carries `--autonomy`; or
 - the user has said, in the conversation that invokes the skill, that they want to be hands off for this review (for example "run it without me", "I'll be away", "don't stop to ask me").
 
-A preference stated in an earlier, unrelated task does not count. When you infer the mode from conversation, say so in one line at setup ("Running in autonomy mode because you said …") so the user can correct it. The mode is fixed at setup and recorded in `review/session-meta.json` as `autonomy: true | false`.
+A preference stated in an earlier, unrelated task does not count. When you infer the mode from conversation, say so in one line at setup ("Running in autonomy mode because you said …") so the user can correct it. The mode is fixed at setup; it is the `autonomy` field of `review/session-meta.json` written at Phase 1 step 5.
 
 ### Setup
 
@@ -452,7 +452,7 @@ Default limits, used unless the user said otherwise:
 - `accept-risk`: medium and low findings only, and only for a reason the brief lists. Default reasons: the finding contradicts a decision the user already made; it concerns behaviour outside what this review is for; its fix would remove meaning the user wants kept.
 - Send back: any high or critical finding that needs a decision; any `baseline_unavailable` or `incomplete_check` finding; any wish to abort; anything the brief does not cover.
 
-Record the bump limit in `review/session-meta.json` as `principal_bump_limit`. Show the user the brief's path and its "What you may decide" and "What you must send back" sections. Do not wait.
+The bump limit is the `principal_bump_limit` written to `review/session-meta.json` at step 5. Show the user the brief's path and its "What you may decide" and "What you must send back" sections. Do not wait.
 
 ### Answering an escalation
 
@@ -495,7 +495,7 @@ When `surface.requires_response` is true and `surface.human_only` is not true, d
 
 **Pausing for the user.** On `defer-to-user` (from the principal or a hard limit), or when `surface.human_only` is true, surface to the user as Phase 2 step 1 does outside autonomy mode, preceded by one line: "Autonomy mode paused: this decision is outside what the principal may decide." First record the principal response not put into effect as `user-response.principal.<k>.md`, k the next free integer from 1: in the `human_only` case, rename the principal-written `user-response.md` that triage refused; on `defer-to-user`, write the step-6 format with the RESPONSE value (or `malformed`) and, in `reason:`, the REASON value (or `none`) followed by the name of the hard limit that fired, if any. Wait. Write the user's typed reply to `user-response.md` with no `source:` line (renaming any existing one as in step 6), re-dispatch triage, and resume in autonomy mode.
 
-**Triage's guard.** Only triage sees severities. If a principal response accepts a finding it may not (high or critical severity, or type `baseline_unavailable` or `incomplete_check`), triage refuses it and emits a surface with `human_only: true`. You do not check severities yourself.
+**Triage's guard.** Only triage sees severities and the options it offered. It refuses a principal response its §12 guard does not allow and emits a surface with `human_only: true`. You do not check this yourself.
 
 **Baseline comparison failure** (step 3 b2, non-zero exit): rerun the script once without asking. If it fails again, surface the usual `retry` / `abort` line to the user and wait. Do not consult the principal; it cannot repair plumbing.
 
