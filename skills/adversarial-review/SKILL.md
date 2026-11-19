@@ -440,7 +440,7 @@ A preference stated in an earlier, unrelated task does not count. When you infer
 [What they said the review is for, what they care about most, what they would rather not see.]
 
 ## What you may decide
-[The default limits below, widened or narrowed only where the user said so, quoting what they said. State the bump limit as a number.]
+[The default `bump` and `accept-risk` limits below, changed only where the user said so, quoting what they said. Never extend `accept-risk` to a high or critical finding, or to a `baseline_unavailable` or `incomplete_check` finding, whatever the user said: those are send-back items. State the bump limit as a number.]
 
 ## What you must send back
 [The defaults below, plus anything the user said they want to decide themselves.]
