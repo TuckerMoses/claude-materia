@@ -39,7 +39,7 @@ During Phase 2, the orchestrator MUST NOT Read the following files:
 The orchestrator's only authorized Phase 2 reads are:
 
 - `iterations/<tier>-<N>/route.json` (small routing instruction)
-- In autonomy mode only: the principal's final two lines (`RESPONSE:` / `REASON:`), the first line of each of this tier's `user-response.md` and `user-response.<k>.md` files, and the second line of those whose first line is `source: principal`
+- The `autonomy` field of `review/session-meta.json` and, in autonomy mode only, its `principal_bump_limit` field, the principal's final two lines (`RESPONSE:` / `REASON:`), the first line of each of this tier's `user-response.md` and `user-response.<k>.md` files, and the second line of those whose first line is `source: principal`
 
 The baseline comparison script's inputs (`scope.txt`, `review/baseline/`) are consumed by the shell, not read into orchestrator context; running the script is not a read.
 
@@ -306,7 +306,7 @@ In autonomy mode, steps 1, 4 and 5 change as described under **Autonomy mode →
 
 ### Phase 2: The Review Loop
 
-In autonomy mode, step 1 and the failure branch of step 3 (b2) change as described under **Autonomy mode → Answering an escalation**.
+In autonomy mode, step 1, the failure branch of step 3 (b2), and step 4 change as described under **Autonomy mode**.
 
 **Configuration:**
 - `sonnet_max`: Maximum iterations for the cheap tier (default: 5, overridable via `--sonnet-max`)
@@ -342,7 +342,7 @@ o-init/, o-1/, o-2/ ...                    same shape, opus tier
 
 Convention: **dispatches live in the iteration where they're consumed**. Triage at `c-N` writes dispatches into `c-(N+1)/dispatches/` (creating that directory) and writes `c-(N+1)/scope.txt` beside them. Orchestrator's loop entry at `c-(N+1)` finds prompts and scope list already in place.
 
-**Baseline paths.** Every triage dispatch (tier-init, numbered iteration, and re-dispatch after a user response) also passes absolute paths (five, or four at tier-init): `baseline_dir` (`<session-dir>/review/baseline/`, the value written to `session-meta.json` in Phase 1; derive it, do not Read that file), the current iteration's `baseline-sizes.tsv` (absent in tier-init), and for the next iteration `next_baseline_diff_path`, `next_baseline_sizes_path`, and `next_scope_list_path`. The current `baseline-sizes.tsv` is under `<session-dir>/review/iterations/<tier>-<N>/`, beside `route.json`; the three `next_*` paths are under `<tier>-<N+1>/` (`<tier>-1/` at tier-init). Triage writes the scope list; the orchestrator's script writes the other two before reviewers are dispatched.
+**Baseline paths.** Every triage dispatch (tier-init, numbered iteration, and re-dispatch after a user response) also passes absolute paths (five, or four at tier-init): `baseline_dir` (`<session-dir>/review/baseline/`, the value written to `session-meta.json` in Phase 1; derive it, do not Read that file for it), the current iteration's `baseline-sizes.tsv` (absent in tier-init), and for the next iteration `next_baseline_diff_path`, `next_baseline_sizes_path`, and `next_scope_list_path`. The current `baseline-sizes.tsv` is under `<session-dir>/review/iterations/<tier>-<N>/`, beside `route.json`; the three `next_*` paths are under `<tier>-<N+1>/` (`<tier>-1/` at tier-init). Triage writes the scope list; the orchestrator's script writes the other two before reviewers are dispatched.
 
 **Tier-init iteration.** Every tier starts with a tier-init triage call. The orchestrator dispatches triage with: scope, manifest, SCOPE.md, no reviewer outputs, prior triage history (empty for cheap-init; full cheap-tier history for opus-init), tier label, iteration=0, and the baseline paths (see **Baseline paths**). Triage cold-start-evaluates preconditions, writes `c-1/scope.txt` (or `o-1/scope.txt`), and emits `c-init/route.json` (or `o-init/route.json`) with `next_dispatches` for iteration 1. No `triage-output.json` is produced.
 
@@ -480,9 +480,9 @@ When `surface.requires_response` is true and `surface.human_only` is not true, d
    ```
 
 5. Apply the hard limits. Treat the reply as `defer-to-user` when any of these holds:
-   - it does not end with a well-formed `RESPONSE:` / `REASON:` pair;
-   - `RESPONSE` is `abort`, or anything other than the four forms above;
-   - `RESPONSE` is `bump <N>` and N plus the principal's earlier bumps in this tier exceeds `principal_bump_limit`. Count earlier bumps from this tier's `user-response.md` and `user-response.<k>.md` files whose first line is `source: principal` (never `user-response.principal.<k>.md`), reading only what the Read-discipline rule authorizes.
+   - `malformed`: it does not end with a well-formed `RESPONSE:` / `REASON:` pair;
+   - `abort`: `RESPONSE` is `abort`, or anything other than the four forms above;
+   - `over-budget`: `RESPONSE` is `bump <N>` and N plus the principal's earlier bumps in this tier exceeds `principal_bump_limit` (from `session-meta.json`). Count earlier bumps from this tier's `user-response.md` and `user-response.<k>.md` files whose first line is `source: principal` (never `user-response.principal.<k>.md`), reading only what the Read-discipline rule authorizes.
 6. Otherwise write `iterations/<tier>-<N>/user-response.md` (if this iteration already holds one, first rename it to `user-response.<k>.md`, k the next free integer from 1) as exactly:
 
    ```
@@ -493,13 +493,13 @@ When `surface.requires_response` is true and `surface.human_only` is not true, d
 
    Then re-dispatch triage and continue exactly as after a human reply.
 
-**Pausing for the user.** On `defer-to-user` (from the principal or a hard limit), or when `surface.human_only` is true, surface to the user as Phase 2 step 1 does outside autonomy mode, preceded by one line: "Autonomy mode paused: this decision is outside what the principal may decide." First record the principal response not put into effect as `user-response.principal.<k>.md`, k the next free integer from 1: in the `human_only` case, rename the principal-written `user-response.md` that triage refused; on `defer-to-user`, write the step-6 format with the RESPONSE value (or `malformed`) and, in `reason:`, the REASON value followed by the name of the hard limit that fired, if any. Wait. Write the user's typed reply to `user-response.md` with no `source:` line (renaming any existing one as in step 6), re-dispatch triage, and resume in autonomy mode.
+**Pausing for the user.** On `defer-to-user` (from the principal or a hard limit), or when `surface.human_only` is true, surface to the user as Phase 2 step 1 does outside autonomy mode, preceded by one line: "Autonomy mode paused: this decision is outside what the principal may decide." First record the principal response not put into effect as `user-response.principal.<k>.md`, k the next free integer from 1: in the `human_only` case, rename the principal-written `user-response.md` that triage refused; on `defer-to-user`, write the step-6 format with the RESPONSE value (or `malformed`) and, in `reason:`, the REASON value (or `none`) followed by the name of the hard limit that fired, if any. Wait. Write the user's typed reply to `user-response.md` with no `source:` line (renaming any existing one as in step 6), re-dispatch triage, and resume in autonomy mode.
 
 **Triage's guard.** Only triage sees severities. If a principal response accepts a finding it may not (high or critical severity, or type `baseline_unavailable` or `incomplete_check`), triage refuses it and emits a surface with `human_only: true`. You do not check severities yourself.
 
 **Baseline comparison failure** (step 3 b2, non-zero exit): rerun the script once without asking. If it fails again, surface the usual `retry` / `abort` line to the user and wait. Do not consult the principal; it cannot repair plumbing.
 
-**Triage contract violation** (step 4, iteration limit fail-safe): surface to the user, never the principal, and write the reply as **Pausing for the user** does, renaming any existing `user-response.md`.
+**Triage contract violation** (step 4, iteration limit fail-safe): surface to the user, never the principal; write the reply to `user-response.md` with no `source:` line, first renaming any existing one as in step 6.
 
 ### The end-of-run brief
 
