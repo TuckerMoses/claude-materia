@@ -171,6 +171,10 @@ The principal was piloted on the review of the bloat/lost-items implementation, 
 - **The reasons stayed free of substance** without extra prompting: ids, severities, and which clause of the brief applied.
 - **"While the count is falling" needed a definition.** Writing test A showed the brief did not say what to compare against. §2 now reads: falling means lower than the previous iteration in the same tier; with no previous iteration in the tier, the condition is met.
 - **The session wanted a progress number and reached for a file it must not read** (the size table's TOTAL row). The end-of-run brief carries the size (§6) so the session never needs to.
+- **The escalation path ran end to end twice, in the review of this implementation.** At c-4 and at o-4 triage escalated at the round limit, the principal read the brief and returned `defer-to-user`, the run paused, the user answered (`bump 2`, then `bump 1`), and the loop resumed in autonomy mode. Both deferrals had the same cause: the open medium count was flat (2 then 2; 1 then 1), so the bump condition failed, and no accept-risk reason applied.
+- **The bump condition is strict about a flat count.** A count that stays at 1 because one finding was fixed and a different one appeared is progress the rule cannot see, and it cost two pauses in one review. Loosening it widens what the principal may decide, so it is left strict here and recorded as a follow-up for the user to decide.
+- **`surface.recommendation` is not on this branch's base.** The principal is told to weigh it, but the field arrives with a separate, unmerged change. An absent field read as "nothing to weigh" in both live escalations.
+- **The scribe's write of `summary.md` was refused again; its write of `autonomy-brief.md` was not.** The refusal appears tied to the file's name. The `WRITE-REFUSED` fallback (§7) worked, at the cost of the orchestrator handling the summary text once, after the loop.
 - **Setup confirmations were skipped by necessity in both pilot runs** with no ill effect; §2 makes that the rule in this mode.
 
 ## Calls made without asking
