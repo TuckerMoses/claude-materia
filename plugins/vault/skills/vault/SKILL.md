@@ -19,7 +19,8 @@ of any particular vault's content or vocabulary.
 - **Invariant-across-vaults → here.** Create the structure; register an ingest source. These don't
   depend on a vault's content, so they live here, once.
 - **Consumers and processors that read the vocabulary live → their own portable skills.** The
-  synthesizer (`vault:synthesizer`) and ongoing ingest (`vault:ingest`) are
+  synthesizer (`vault:synthesizer`), the surgeon (`vault:surgeon`, which changes labels that
+  already exist) and ongoing ingest (`vault:ingest`) are
   invariant logic — they classify, relate, and propose labels against the vault's label bank, proposal bank and `INSTRUCTION.md` read
   live at runtime. The content-dependence is in the *data*, not the *skill*. Nothing vault-local
   remains.

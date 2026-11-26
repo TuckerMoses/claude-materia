@@ -1,7 +1,7 @@
 # The vault system
 
-A portable personal knowledge system built on a plain-markdown vault — three linked materia
-(**vault**, **ingest**, **synthesizer**) plus any consumer skill that queries it.
+A portable personal knowledge system built on a plain-markdown vault — four linked materia
+(**vault**, **ingest**, **synthesizer**, **surgeon**) plus any consumer skill that queries it.
 
 The vault itself is deliberately simple: a flat pool of atomic notes organized by a controlled
 label vocabulary instead of folders, a `journal/` of daily notes that doubles as the capture
@@ -10,13 +10,14 @@ bank, the label proposals, the routing rules and the source registry. The vault 
 depends on nothing outside itself and this plugin. Everything an external skill needs to integrate lives in the vault's
 own `INSTRUCTION.md` (read live, never copied) — which is why every skill here stays portable.
 
-## The three materia
+## The four materia
 
 | Materia | Role | Subcommands |
 |---------|------|-------------|
 | **vault** (the anchor skill) | Creation & registration | `create` (stamp a born-correct vault from the `assets/` templates — corpus-seeded or cold), `add-source` (register an external ingest source), `discuss` (architecture meta) |
 | **ingest** | Intake | `[source?] [--today] [--silent]` (drain closed journal day-files + registered sources: split → label → route → file through one confirm gate), `status` (read-only health, including undelivered actionables) |
 | **synthesizer** | Pool coherence & vocabulary growth | `scan [scope?] [--full]` (propose merges and links; open label proposals for emergent themes), `resolve` (the label review sitting: accept, reject, revise, rename or merge each proposal, then sweep accepted labels onto pending and earlier notes) |
+| **surgeon** | Vocabulary changes | `rename A B`, `merge A into B`, `retire A`, `split A`, `redefine A` — each a dry run then one confirm; imported and protected labels refused; writes only through `label-bank` and `relabel-notes` |
 
 Consumers — session-planner today, any future puller — query notes by label on their own cadence.
 The vault stays inert: it triggers nothing and knows nothing about who reads it.
@@ -78,7 +79,8 @@ without approval:
    labeled atomic notes. `--today` includes the open day so same-day actionables aren't blocked.
 4. **`/synthesizer scan`** / **`/synthesizer resolve`** — periodically: merge near-duplicates,
    link related notes, and review the label proposals ingest and scan opened.
-5. **Consume** — skills pull by label (`session-seed`, `todo AND status:open`, …) and act.
+5. **`/surgeon`** — when a label needs to change: rename, merge, retire, split or redefine it, with every carrying note, routing rule and source lens kept consistent.
+6. **Consume** — skills pull by label (`session-seed`, `todo AND status:open`, …) and act.
 
 ## Contracts (defined once, in the vault)
 
