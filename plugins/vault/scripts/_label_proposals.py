@@ -117,11 +117,13 @@ def evidence(source, quote, note=None, added=None):
 
 
 def _same(a, b):
-    return a['source'] == b['source'] and a['quote'] == b['quote']
+    """One evidence record is one (source, quote, note): two thoughts in one day-file may quote the same words."""
+    return a['source'] == b['source'] and a['quote'] == b['quote'] and a.get('note') == b.get('note')
 
 
 def _add_evidence(proposal, records):
-    """PROPOSAL with RECORDS appended, skipping any with the same source and quote. Returns how many were new."""
+    """PROPOSAL with RECORDS appended, skipping any with the same source, quote and note. Returns how many were
+    new."""
     added = 0
     for r in records:
         if not any(_same(r, e) for e in proposal['evidence']):
@@ -316,6 +318,16 @@ def counts(data):
             'two_or_more': sum(1 for p in props if len(p['evidence']) >= 2),
             'waiting': sum(1 for p in props if p['origin'] == 'implicit' and len(p['evidence']) < 2),
             'rejected_remembered': len(data['rejected'])}
+
+
+def refuse_open(vault, name):
+    """For the bank's writer: NAME must not shadow an open proposal, which would strand it (accept refuses a name
+    already in the bank) and leave its evidence notes on needs-label. A vault with no proposal bank has none."""
+    if not (Path(vault) / PROPOSALS).is_file():
+        return
+    if name in Proposals(vault).open:
+        raise ProposalError(f'{name} is an open label proposal; accept it with `label-proposals accept <vault> --name '
+                            f'{name} [--when-to-apply TEXT]` (the bank entry in and the proposal out, one commit)')
 
 
 def evidence_notes(data):

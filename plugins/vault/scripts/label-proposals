@@ -4,7 +4,8 @@
   label-proposals open VAULT --name N --when-to-apply T [--explicit] [EVIDENCE]
       a new proposal, implicit unless --explicit. Refused for an open proposal, a name in the bank, an invalid name,
       and a rejected name unless --explicit, which reopens it carrying the old rejection.
-  label-proposals attach VAULT --name N EVIDENCE        more evidence; records already there are skipped
+  label-proposals attach VAULT --name N EVIDENCE        more evidence; a record already there (same source,
+                                                        quote and note) is skipped
       EVIDENCE is --source S --quote Q [--note SLUG] for one record, or --evidence FILE: a JSON list of
       {source, quote, note?} (a scan theme's member notes, in one commit).
   label-proposals revise VAULT --name N --when-to-apply T                    rewrite the draft definition

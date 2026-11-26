@@ -91,7 +91,8 @@ One commit: the bank entry changes its name in place (same text, same status, sa
 every note carrying A carries B instead, and every exact reference to A in routing rule matches and
 source lenses becomes B. No old entry remains, retired or otherwise. Wildcards such as `project:*`
 are not exact references and are left alone. Refused when B already exists — if the human wants
-the two to become one, that is `merge`.
+the two to become one, that is `merge` — and when B is an open label proposal (renaming onto it
+would strand the proposal; that is a `resolve` decision in the synthesizer).
 
 ## merge
 
@@ -123,7 +124,10 @@ A has grown too broad and should become two or more narrower labels.
    `when_to_apply`. Check each name against the bank first: an existing active label may already
    be one of the pieces (use it as is). Draft definitions from what A's notes are about, never from
    a note's prose about how labels should work. Then run `label-bank add <vault> --name N
-   --when-to-apply TEXT` for each new one (one commit each).
+   --when-to-apply TEXT` for each new one (one commit each). A piece whose name is an open label
+   proposal is refused there: accept that proposal instead (`label-proposals accept <vault> --name
+   N [--when-to-apply TEXT]`, the same plugin-level `scripts/` directory), which enters the bank
+   and closes the proposal in one commit, so its evidence notes are not stranded.
 2. **Ask the end state of A** before classifying, because it changes the manifest: **retire** (A
    stays on its notes as history; the manifest only adds) or **remove** (A comes off every note and
    its entry is deleted). Remove is refused while a routing rule or source lens names A (`show`

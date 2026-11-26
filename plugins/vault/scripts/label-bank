@@ -14,7 +14,8 @@ Every mutating subcommand takes --dry-run: the same checks and refusals, nothing
 routing rule and source lens before and after. retire and update dry runs also list the notes carrying the label and
 the reference files naming it, which they leave alone.
 
-Imported labels (origin: imported) are read-only to every subcommand. Protected labels refuse retire, rename,
+add and rename --to refuse the name of an open label proposal (label-proposals accept is how a proposal enters
+the bank). Imported labels (origin: imported) are read-only to every subcommand. Protected labels refuse retire, rename,
 merge (as the absorbed label) and remove; their text may be updated. merge also refuses an imported or inactive
 target and a label merged into itself. Every mutation validates against labels.schema.json, refuses when a file it would
 write has uncommitted changes, and lands as exactly one path-scoped jj commit, or changes nothing. A mutation that
@@ -27,6 +28,7 @@ import sys
 from pathlib import Path
 
 import _label_bank as lb
+import _label_proposals as lp
 import _vault_tx as tx
 
 
@@ -71,6 +73,7 @@ def swap(old, new):
 def add(bank, a):
     if a.name in bank.labels:
         die(f'{a.name} already exists (status {bank.labels[a.name]["status"]})')
+    lp.refuse_open(VAULT, a.name)
     labels = dict(bank.labels)
     labels[a.name] = {'when_to_apply': a.when_to_apply, 'status': 'active'}
     committed('add', [bank.change(labels)], f'label-bank(add): {a.name}', name=a.name)
@@ -102,6 +105,7 @@ def rename(bank, a):
     lb.refuse_unless_owned(old, entry, 'rename')
     if new in bank.labels:
         die(f'{new} already exists (status {bank.labels[new]["status"]})')
+    lp.refuse_open(VAULT, new)
     labels = {(new if k == old else k): v for k, v in bank.labels.items()}  # same place, same text and status
     notes = lb.carriers(VAULT, old)
     changes = [bank.change(labels)]
@@ -184,7 +188,7 @@ def main():
     try:
         tx.require_vault(VAULT)
         a.fn(lb.Bank(VAULT), a)
-    except (lb.BankError, tx.TxError) as e:
+    except (lb.BankError, lp.ProposalError, tx.TxError) as e:
         die(e)
 
 

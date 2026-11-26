@@ -151,7 +151,8 @@ class AttachReviseRename(Base):
         self.assertEqual(out['evidence'], 2)
         self.one_commit(n, ['_machine/label-proposals.yml'], 'label-proposals(attach): plans <- journal/2026-11-22')
         before = self.state()
-        self.assertEqual(self.ok(self.props('attach', '--name', 'plans', '--source', E1['source'], '--quote', E1['quote'])),
+        self.assertEqual(self.ok(self.props('attach', '--name', 'plans', '--source', E1['source'], '--quote', E1['quote'],
+                                               '--note', E1['note'])),
                          {'status': 'unchanged'})
         self.assertEqual(self.state(), before)
         self.assert_refused(self.props('attach', '--name', 'nope', '--source', 's', '--quote', 'q'), 'no open proposal', *before)
@@ -160,7 +161,7 @@ class AttachReviseRename(Base):
     def test_attach_many_from_a_file_is_one_commit(self):
         m = self.tmp / 'evidence.json'
         m.write_text(json.dumps([{'source': 'journal/2026-11-22', 'quote': 'One.', 'note': 'one'},
-                                 {'source': E1['source'], 'quote': E1['quote']},
+                                 {'source': E1['source'], 'quote': E1['quote'], 'note': E1['note']},
                                  {'source': 'journal/2026-11-23', 'quote': 'Two.'}]))
         n = self.commits()
         out = self.ok(self.props('attach', '--name', 'plans', '--evidence', m))
@@ -311,9 +312,7 @@ class Reject(Base):
         self.assert_refused(self.props('reject', '--name', 'x'), 'required', *before)
 
 
-class Apply(Base):
-    """Ingest's batch: idempotent, never commits, never accepts."""
-
+class ApplyBase(Base):
     def setUp(self):
         super().setUp()
         self.seed({'plans': proposal()}, [{'name': 'nix-stuff', 'reason': 'too broad', 'date': '2026-12-03'}])
@@ -333,6 +332,10 @@ class Apply(Base):
 
     def results(self, out):
         return [(r['name'], r['result']) for r in out['results']]
+
+
+class Apply(ApplyBase):
+    """Ingest's batch: idempotent, never commits, never accepts."""
 
     def test_the_table(self):
         out = self.apply([self.req('fresh', 'explicit'), self.req('plans', 'explicit', op='attach'),
@@ -376,6 +379,63 @@ class Apply(Base):
     def test_nothing_to_change_writes_nothing(self):
         out = self.apply([self.req('roadmap')])
         self.assertEqual((out['changed'], out['dirty']), (False, False))
+
+
+class EvidenceIdentity(ApplyBase):
+    """An evidence record is (source, quote, note): two thoughts in one day-file with the same quote are two records."""
+
+    def test_two_notes_with_the_same_quote_are_two_records_and_a_retry_adds_none(self):
+        reqs = [self.req('fresh', quote='label:: roadmap', note='first-thought', ref='r1'),
+                self.req('fresh', quote='label:: roadmap', note='second-thought', ref='r2')]
+        out = self.apply(reqs)
+        self.assertEqual(self.results(out), [('fresh', 'opened'), ('fresh', 'attached')])
+        notes = [e['note'] for e in self.data()['proposals']['fresh']['evidence']]
+        self.assertEqual(notes, ['first-thought', 'second-thought'])
+        self.assertEqual(lp.evidence_notes(lp.Proposals(self.vault).data), {E1['note'], 'first-thought', 'second-thought'})
+        out = self.apply(reqs)
+        self.assertEqual(self.results(out), [('fresh', 'unchanged'), ('fresh', 'unchanged')])
+        self.assertEqual(len(self.data()['proposals']['fresh']['evidence']), 2)
+
+    def test_attach_from_a_file_keeps_both_notes(self):
+        ev = self.tmp / 'ev.json'
+        ev.write_text(json.dumps([dict(E1, note='other-note')]))
+        out = self.ok(self.props('attach', '--name', 'plans', '--evidence', ev))
+        self.assertEqual(out['added'], 1)
+        self.assertEqual([e['note'] for e in self.data()['proposals']['plans']['evidence']],
+                         [E1['note'], 'other-note'])
+
+
+class BankShadow(Base):
+    """label-bank add and rename --to refuse an open proposal's name; label-proposals accept is the way in."""
+
+    def setUp(self):
+        super().setUp()
+        self.seed({'plans': proposal()})
+        self.init()
+
+    def test_add_refuses_an_open_proposal(self):
+        before = self.state()
+        r = self.bank('add', '--name', 'plans', '--when-to-apply', 'x')
+        self.assert_refused(r, 'label-proposals accept', *before)
+        self.assertIn('open label proposal', r.stderr)
+        r = self.bank('add', '--name', 'plans', '--when-to-apply', 'x', '--dry-run')
+        self.assert_refused(r, 'label-proposals accept', *before)
+
+    def test_rename_to_an_open_proposal_is_refused(self):
+        before = self.state()
+        r = self.bank('rename', '--from', 'roadmap', '--to', 'plans')
+        self.assert_refused(r, 'label-proposals accept', *before)
+
+    def test_accept_still_works(self):
+        n = self.commits()
+        self.ok(self.props('accept', '--name', 'plans'))
+        self.one_commit(n, ['_machine/label-proposals.yml', '_machine/labels.yml'], 'label-proposals(accept): plans (proposal)')
+        self.assertEqual(self.labels()['plans']['status'], 'active')
+
+    def test_a_vault_without_a_proposal_bank_still_adds(self):
+        self.props_path.unlink()
+        self.init()
+        self.assertEqual(self.bank('add', '--name', 'plans', '--when-to-apply', 'x').returncode, 0)
 
 
 class Stats(Base):
