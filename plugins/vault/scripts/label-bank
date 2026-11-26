@@ -6,9 +6,17 @@
   label-bank retire VAULT --name N                     status to retired; notes keep it
   label-bank rename VAULT --from A --to B              entry, every note, routing rules and source lenses
   label-bank remove VAULT --name N                     delete the entry
+  label-bank merge VAULT --from A --into B             every note and reference A -> B, then A's entry removed
+  label-bank show VAULT --name N                       read-only: the entry, the notes carrying it, the files naming it
 
-Imported labels (origin: imported) are read-only to every subcommand. Protected labels refuse retire, rename and
-remove; their text may be updated. Every mutation validates against labels.schema.json, refuses when a file it would
+Every mutating subcommand takes --dry-run: the same checks and refusals, nothing written, and it prints
+{"status": "planned", ...} with the files it would write, the notes it would change and, for rename and merge, each
+routing rule and source lens before and after. retire and update dry runs also list the notes carrying the label and
+the reference files naming it, which they leave alone.
+
+Imported labels (origin: imported) are read-only to every subcommand. Protected labels refuse retire, rename,
+merge (as the absorbed label) and remove; their text may be updated. merge also refuses an imported or inactive
+target and a label merged into itself. Every mutation validates against labels.schema.json, refuses when a file it would
 write has uncommitted changes, and lands as exactly one path-scoped jj commit, or changes nothing. A mutation that
 would change nothing prints {"status": "unchanged"} and commits nothing. Prints JSON on success; exits 1 with a
 reason on refusal.
@@ -32,8 +40,32 @@ def die(reason):
 
 
 def committed(op, changes, message, **extra):
+    if DRY_RUN:
+        held = sorted({c.rel for c in changes} & tx.dirty(VAULT))
+        if held:
+            die(f'uncommitted changes in {", ".join(held)}; commit or restore them first')
+        extra.setdefault('reference_edits', lb.reference_edits(changes))
+        print(json.dumps(dict({'status': 'planned', 'op': op, 'files': [c.rel for c in changes]}, **extra)))
+        return
     tx.apply(VAULT, changes, message)
     print(json.dumps(dict({'status': 'committed', 'op': op, 'files': [c.rel for c in changes]}, **extra)))
+
+
+def context(name):
+    """What a retire or update leaves alone but the human should see first. Dry runs only: it scans every note."""
+    return {'notes': lb.carriers(VAULT, name), 'references': lb.referenced_by(VAULT, name)} if DRY_RUN else {}
+
+
+def swap(old, new):
+    """A note relabel replacing OLD with NEW in place, never repeating NEW."""
+    def fn(current):
+        out = []
+        for x in current:
+            x = new if x == old else x
+            if x not in out:
+                out.append(x)
+        return out
+    return fn
 
 
 def add(bank, a):
@@ -51,7 +83,7 @@ def update(bank, a):
         print(json.dumps({'status': 'unchanged'}))
         return
     labels = dict(bank.labels, **{a.name: dict(entry, when_to_apply=a.when_to_apply)})
-    committed('update', [bank.change(labels)], f'label-bank(update): {a.name}', name=a.name)
+    committed('update', [bank.change(labels)], f'label-bank(update): {a.name}', name=a.name, **context(a.name))
 
 
 def retire(bank, a):
@@ -61,7 +93,7 @@ def retire(bank, a):
         print(json.dumps({'status': 'unchanged'}))
         return
     labels = dict(bank.labels, **{a.name: dict(entry, status='retired')})
-    committed('retire', [bank.change(labels)], f'label-bank(retire): {a.name}', name=a.name)
+    committed('retire', [bank.change(labels)], f'label-bank(retire): {a.name}', name=a.name, **context(a.name))
 
 
 def rename(bank, a):
@@ -71,17 +103,9 @@ def rename(bank, a):
     if new in bank.labels:
         die(f'{new} already exists (status {bank.labels[new]["status"]})')
     labels = {(new if k == old else k): v for k, v in bank.labels.items()}  # same place, same text and status
-
-    def swap(current):
-        out = []
-        for x in current:
-            x = new if x == old else x
-            if x not in out:
-                out.append(x)
-        return out
     notes = lb.carriers(VAULT, old)
     changes = [bank.change(labels)]
-    changes += [c for c in (lb.note_change(VAULT, slug, swap) for slug in notes) if c]
+    changes += [c for c in (lb.note_change(VAULT, slug, swap(old, new)) for slug in notes) if c]
     refs = lb.reference_changes(VAULT, old, new)
     changes += refs
     lines = [c.rel for c in changes[1:]]
@@ -105,23 +129,58 @@ def remove(bank, a):
     committed('remove', [bank.change(labels)], f'label-bank(remove): {a.name}', name=a.name)
 
 
+def merge(bank, a):
+    old, new = a.from_, a.into
+    if old == new:
+        die(f'cannot merge {old} into itself')
+    entry, target = bank.entry(old), bank.entry(new)
+    lb.refuse_unless_owned(old, entry, 'merge')
+    if target.get('origin') == 'imported':
+        die(f'{new} is imported; the vault does not merge into it')
+    if target['status'] != 'active':
+        die(f'{new} is {target["status"]}; merge only into an active label')
+    labels = {k: v for k, v in bank.labels.items() if k != old}
+    notes = lb.carriers(VAULT, old)
+    changes = [bank.change(labels)]
+    changes += [c for c in (lb.note_change(VAULT, slug, swap(old, new)) for slug in notes) if c]
+    refs = lb.merge_reference_changes(VAULT, old, new)
+    changes += refs
+    lines = [c.rel for c in changes[1:]]
+    message = (f'label-bank(merge): {old} -> {new} — {len(notes)} notes, {len(refs)} reference files\n\n'
+               + ''.join(f'- {rel}\n' for rel in lines))
+    committed('merge', changes, message, **{'from': old, 'into': new, 'notes': notes,
+                                            'references': [c.rel for c in refs]})
+
+
+def show(bank, a):
+    print(json.dumps({'name': a.name, 'entry': bank.entry(a.name), 'notes': lb.carriers(VAULT, a.name),
+                      'references': lb.referenced_by(VAULT, a.name)}))
+
+
 def main():
-    global VAULT
+    global VAULT, DRY_RUN
     p = Parser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest='op', required=True, parser_class=Parser)
-    for op, fn in (('add', add), ('update', update), ('retire', retire), ('rename', rename), ('remove', remove)):
+    for op, fn in (('add', add), ('update', update), ('retire', retire), ('rename', rename), ('remove', remove),
+                   ('merge', merge), ('show', show)):
         s = sub.add_parser(op)
         s.add_argument('vault')
         s.set_defaults(fn=fn)
+        if op != 'show':
+            s.add_argument('--dry-run', action='store_true')
         if op == 'rename':
             s.add_argument('--from', dest='from_', required=True)
             s.add_argument('--to', required=True)
+        elif op == 'merge':
+            s.add_argument('--from', dest='from_', required=True)
+            s.add_argument('--into', required=True)
         else:
             s.add_argument('--name', required=True)
         if op in ('add', 'update'):
             s.add_argument('--when-to-apply', required=True)
     a = p.parse_args()
     VAULT = Path(a.vault).expanduser().resolve()
+    DRY_RUN = getattr(a, 'dry_run', False)
     try:
         tx.require_vault(VAULT)
         a.fn(lb.Bank(VAULT), a)
@@ -130,6 +189,7 @@ def main():
 
 
 VAULT = None
+DRY_RUN = False
 
 if __name__ == '__main__':
     main()

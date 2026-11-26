@@ -232,3 +232,67 @@ def referenced_by(vault, name):
     """Which of routing.yml and ingest_paths.yml name NAME exactly."""
     sentinel = 'NOT A LABEL'
     return [c.rel for c in reference_changes(vault, name, sentinel)]
+
+
+# --- merge and dry runs ----------------------------------------------------------------------------------------
+
+def _dedupe(node, label):
+    """NODE with repeats of LABEL dropped from every list. A merge can turn `{any: [A, B]}` into `{any: [B, B]}`;
+    every list in a match or a lens is a set, so the repeat says nothing."""
+    if isinstance(node, list):
+        out, seen = [], False
+        for x in node:
+            if x == label:
+                if seen:
+                    continue
+                seen = True
+            out.append(_dedupe(x, label))
+        return out
+    if isinstance(node, dict):
+        return {k: _dedupe(v, label) for k, v in node.items()}
+    return node
+
+
+_FIELDS = {ROUTING: ('rules', 'match'), SOURCES: ('sources', 'lens')}
+
+
+def merge_reference_changes(vault, old, new):
+    """reference_changes(OLD -> NEW) with NEW deduplicated in each rewritten match and lens, for a merge, where
+    NEW may already sit beside OLD."""
+    out = []
+    for c in reference_changes(vault, old, new):
+        data = yaml.safe_load(c.new)
+        key, field = _FIELDS[c.rel]
+        for item in data.get(key) or []:
+            if isinstance(item, dict) and field in item:
+                item[field] = _dedupe(item[field], new)
+        text = header(c.old) + dump(data)
+        if yaml.safe_load(text) != data:
+            raise BankError(f'{c.rel} does not survive a round trip; nothing written')
+        out.append(tx.Change(c.rel, c.old, c.stamp, text))
+    return out
+
+
+def reference_edits(changes):
+    """Per routing rule and per source that CHANGES alter: where it sits and its match or lens before and after.
+    What a dry run shows the human."""
+    edits = []
+    for c in changes:
+        if c.rel not in _FIELDS:
+            continue
+        key, field = _FIELDS[c.rel]
+        before = (yaml.safe_load(c.old) or {}).get(key) or []
+        after = (yaml.safe_load(c.new) or {}).get(key) or []
+        for i, (b, a) in enumerate(zip(before, after)):
+            if b != a and isinstance(b, dict) and isinstance(a, dict):
+                edit = {'file': c.rel, 'index': i, 'field': field, 'before': b.get(field), 'after': a.get(field)}
+                if 'path' in b:
+                    edit['path'] = b['path']
+                edits.append(edit)
+    return edits
+
+
+def note_labels_change(change):
+    """(before, after) labels of a note Change."""
+    slug = Path(change.rel).stem
+    return labels_of(fm.parse(change.old), slug), labels_of(fm.parse(change.new), slug)
