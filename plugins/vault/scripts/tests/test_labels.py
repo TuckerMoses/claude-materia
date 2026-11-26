@@ -85,7 +85,7 @@ class Base(unittest.TestCase):
         return len(self.jj('log', '--no-graph', '-r', '::@-', '-T', 'commit_id ++ "\\n"').split())
 
     def last_files(self):
-        return sorted(self.jj('diff', '--name-only', '-r', '@-').split())
+        return sorted(self.jj('diff', '--name-only', '-r', '@-').splitlines())
 
     def last_description(self):
         return self.jj('log', '--no-graph', '-r', '@-', '-T', 'description')
