@@ -14,7 +14,8 @@ field ownership, the query surface, and the per-install binding seam, **read `IN
   are permanent (the durable chronological diary). Ingest processes closed past day-files; the
   `ingested` frontmatter marker records which ones have been processed.
 - `_machine/` — machine state, owned by this vault. `labels.yml` is the label bank (the vocabulary),
-  `routing.yml` the routing rules, `ingest_paths.yml` the input-side source registry.
+  `label-proposals.yml` the labels asked for and their evidence, `routing.yml` the routing rules,
+  `ingest_paths.yml` the input-side source registry.
   Logs/indexes live here too.
 - `_archive/` — cold storage. Excluded from version control and sync.
 - `CHANGELOG.md` — derived render of ingest run history (each run's commit description,
@@ -35,7 +36,8 @@ Open actionables are a live view over the notes (`ingest status`), never a store
 **Ingest** processes **past, closed, un-`ingested` day-files** only (never today's). For each:
 
 1. **Existing label → extract + label** the thought as an atomic note into `notes/`.
-2. **Knowledge-worthy, no label fits → extract + `needs-label`** (parked, never dropped).
+2. **Knowledge-worthy, no label fits → extract + `needs-label`** (parked, never dropped). `needs-label`
+   also marks a note that is evidence for an open label proposal; it coexists with real labels.
 3. **Trivial narrative → diary-only** (not extracted).
 
 Routing rules (`_machine/routing.yml`) then send each labeled thought to its targets, which always include
@@ -43,9 +45,11 @@ this vault's notes. After every target has succeeded, ingest marks the day-file
 `ingested` in its frontmatter; a day-file with a failed target is held and retried. Day-files are permanent;
 the extracted atomic note and the frozen day-file coexist (the day-file is the immutable source).
 
-**Vocabulary growth lives in the synthesizer, never ingest.** Ingest applies existing labels or parks
-under `needs-label`; it never mints new vocabulary. The synthesizer's `resolve` pass scans all
-`needs-label` notes, proposes coherent new labels in batch, and clears the holding label on confirm.
+**Ingest proposes, review accepts.** Ingest applies existing labels, parks under `needs-label`, and
+writes label *proposals* (from a `label:: <name>` line in the journal, or when nothing fits), never
+active labels. The synthesizer's `resolve` sitting reviews the proposals with you: accept puts a label
+in the bank, reject remembers the name, and the accepted labels are then swept onto pending and earlier
+notes. The one exception: at ingest's interactive gate you may accept an explicit request on the spot.
 
 ## Content-preservation (iron rule)
 
@@ -58,8 +62,8 @@ risk silent loss. This is the single rule that most protects the corpus.
 
 The vault's label bank, `_machine/labels.yml`, is authoritative — the shared inter-skill API. Apply only
 labels that exist there (`status: active`). To add one, follow the procedure documented in
-`INSTRUCTION.md` ("Register a missing label"). Never invent ad-hoc labels in note frontmatter, and never
-hand-edit the bank.
+`INSTRUCTION.md` ("Asking for a label"). Never invent ad-hoc labels in note frontmatter, and never
+hand-edit the bank or the proposal bank.
 
 ## External contract
 

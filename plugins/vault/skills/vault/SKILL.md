@@ -20,7 +20,7 @@ of any particular vault's content or vocabulary.
   depend on a vault's content, so they live here, once.
 - **Consumers and processors that read the vocabulary live → their own portable skills.** The
   synthesizer (`vault:synthesizer`) and ongoing ingest (`vault:ingest`) are
-  invariant logic — they classify, relate, and mint against `labels.yml`/`INSTRUCTION.md` read
+  invariant logic — they classify, relate, and propose labels against the vault's label bank, proposal bank and `INSTRUCTION.md` read
   live at runtime. The content-dependence is in the *data*, not the *skill*. Nothing vault-local
   remains.
 
@@ -112,7 +112,8 @@ the spec; this phase only stamps them (plus the locked vocabulary). Steps:
    through the bank's sole writer. Container labels (`workspace:<name>`, `project:<name>`) the vault does
    not own arrive later as `origin: imported` entries; a vault without them works.
 6. Stamp `assets/ingest_paths.yml → _machine/ingest_paths.yml` (empty registry),
-   `assets/routing.yml → _machine/routing.yml` (the notes target only).
+   `assets/routing.yml → _machine/routing.yml` (the notes target only), and
+   `assets/label-proposals.yml → _machine/label-proposals.yml` (no proposals, nothing rejected).
 7. Stamp `assets/INSTRUCTION.md → INSTRUCTION.md`, replacing `{{VAULT_PATH}}` with the absolute vault
    path.
 8. Stamp `assets/CLAUDE.md → CLAUDE.md` (the vault's internal OS-contract; verbatim, no params).
@@ -187,9 +188,10 @@ here and in `INSTRUCTION.md`; do not fork it.
 
 ### Cold-start interaction
 
-A lens can only reference labels that already exist in `labels.yml`, so on a freshly cold-started vault
-(action/seed labels only) `add-source` lenses are limited to that vocabulary. Richer lenses become
-available as the bank grows via the ingest skill. Surface this to the user rather than silently dropping
+A lens can only reference labels that already exist in `_machine/labels.yml` (active), so on a freshly
+cold-started vault (action/seed labels only) `add-source` lenses are limited to that vocabulary. Richer
+lenses become available as the bank grows (ingest proposes, the synthesizer's `resolve` accepts); a
+proposed name is not a label and cannot be a lens. Surface this to the user rather than silently dropping
 an unknown lens label — an unknown label is a hard validation failure, not a warning.
 
 ## discuss
@@ -212,8 +214,8 @@ question, hand it to `kind-bootstrapper discuss` rather than answering it inline
 - **Content-preservation iron rule** — Phase D of `create` is body-verbatim + hash-verified,
   abort-on-mismatch (see "Iron rule" under create). The exact step that nearly lost the corpus before.
 - **Born-correct** — `create` produces the final architecture directly (flat `notes/`, separate
-  `journal/`, `labels[]`, **no `status`** in new notes, `_machine/labels.yml`, `_machine/routing.yml` and
-  `INSTRUCTION.md` present), so a fresh vault never needs migrating.
+  `journal/`, `labels[]`, **no `status`** in new notes, `_machine/labels.yml`, `_machine/routing.yml`,
+  `_machine/label-proposals.yml` and `INSTRUCTION.md` present), so a fresh vault never needs migrating.
 - **Templates-as-spec** — `assets/` is the single source of truth; Scaffold only instantiates it. This
   is what carries cross-environment consistency.
 - **Env-agnostic** — no hardcoded env-directory paths anywhere in this skill. Any env reachability is

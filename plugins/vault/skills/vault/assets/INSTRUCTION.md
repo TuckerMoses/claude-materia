@@ -61,8 +61,10 @@ itself is the immutable source diary (permanent; never deleted or drained).
   actionable note done or dropped. Never read to select or schedule work. Their readers are ingest's
   re-run guard (skip targets other than notes for a note carrying `outcome`) and `ingest status`'s
   undelivered-actionables view.
-- **`labels` after creation:** written only by the synthesizer's **confirmed** minting/resolve
-  passes, ingest's interactive gate, or the human (no other consumer touches it).
+- **`labels` after creation:** written only through the plugin's `relabel-notes` on a **confirmed**
+  pass (the synthesizer's `resolve` sweeps after acceptance, the surgeon's operations), by
+  `label-bank rename`, at ingest's interactive gate, or by the human (no other consumer touches it). A
+  proposed label's name is never written to a note before it is accepted.
 - **`related:`** written by ingest at creation for Tier-1 factual links; written by the synthesizer
   on confirm for associative links; human may edit directly.
 
@@ -77,18 +79,31 @@ Per-machine specifics live in the consumer's `.local.md`; this is the abstract o
 3. Never a full-vault read.
 
 A stored `label → paths` index is **forbidden** — derive, don't store. Dataview is human-only (it
-renders in-app), never a headless query path.
+renders in-app), never a headless query path. **One sanctioned exception:** the proposal bank,
+`_machine/label-proposals.yml`, stores each open proposal's evidence (source, verbatim quote, and the
+note's slug). It is transient: an entry is deleted when its proposal is accepted or rejected.
 
-## Register a missing label
+## Asking for a label
 
-The vault plugin's `label-bank` script is the sole writer of `_machine/labels.yml`:
+**Ingest proposes, review accepts.** A missing label is *proposed*, never registered directly:
 
-```sh
-label-bank add <vault> --name <label> --when-to-apply "…when this label applies…"
-```
+- **In the journal:** write `label:: <name>` on its own line inside the thought (Dataview's inline-field
+  syntax; prose containing "label:" never triggers it). Ingest applies `<name>` if it is an active label;
+  otherwise it opens (or adds evidence to) a proposal and parks the note under `needs-label`. A name
+  previously rejected is reopened by an explicit request, carrying the old reason.
+- **Implicitly:** ingest opens a proposal when no subject label fits a thought, and attaches thoughts that
+  fit an open proposal's draft.
+- **By hand or from a skill:** the vault plugin's `label-proposals open <vault> --name <label>
+  --when-to-apply "…" [--explicit]`.
 
-It also has `update`, `retire`, `rename` and `remove`. Labels marked `origin: imported` (the container
-labels `workspace:*` / `project:*`) are a read-only snapshot. Never edit the vocabulary by hand.
+Proposals live in `_machine/label-proposals.yml`, written only by `label-proposals`. The synthesizer's
+`resolve` sitting reviews them; `label-proposals accept` puts the label in the bank and deletes the
+proposal in one commit; `reject` records the name and reason so ingest does not reopen it. Proposals
+never expire. At ingest's interactive gate the human may accept an explicit request on the spot.
+
+The bank itself, `_machine/labels.yml`, is written only by the plugin's `label-bank` (`add`, `update`,
+`retire`, `rename`, `remove`; acceptance calls its `add`). Labels marked `origin: imported` (the container
+labels `workspace:*` / `project:*`) are a read-only snapshot. Never edit either file by hand.
 
 ## Source registry
 
@@ -129,6 +144,6 @@ a one-line re-bootstrap.
 **Pairwise consumer** (e.g. the synthesizer): judges *pairs/clusters* of notes, not single notes. Its
 idempotency is a **seen-set watermark** in a `_machine/` state file (incremental runs = unseen ×
 neighborhoods), and confirmed outcomes are **effect-checked** (a merged note is gone; a link sits in
-`related:`; a minted label sits in the bank).
+`related:`; an accepted label sits in the bank and its proposal is gone).
 
 A reader of note frontmatter reports a note that fails to parse as an anomaly and continues; none stops on it.
