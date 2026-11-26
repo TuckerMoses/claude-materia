@@ -177,9 +177,11 @@ read and approved in full is neither.
 
 ## Vocabulary growth — proposals in, review out
 
-The plugin's scripts are the only writers: `scripts/label-proposals` for the proposal bank (`open`,
-`attach`, `revise`, `rename`, `merge`, `accept`, `reject`, `stats`), `scripts/relabel-notes` for note
-`labels`, `scripts/label-bank` for the bank (acceptance goes through `label-proposals accept`, which
+The plugin's scripts are the only writers, all three in the plugin-level `${CLAUDE_PLUGIN_ROOT}/scripts/`
+directory (every bare `label-proposals`, `relabel-notes` or `label-bank` below means that path):
+`${CLAUDE_PLUGIN_ROOT}/scripts/label-proposals` for the proposal bank (`open`, `attach`, `revise`, `rename`,
+`merge`, `accept`, `reject`, `stats`), `${CLAUDE_PLUGIN_ROOT}/scripts/relabel-notes` for note `labels`,
+`${CLAUDE_PLUGIN_ROOT}/scripts/label-bank` for the bank (acceptance goes through `label-proposals accept`, which
 adds the bank entry and deletes the proposal in one commit). Never hand-edit any of the three files.
 
 Proposals come from three places, and all of them wait for `resolve`:
@@ -233,8 +235,8 @@ Proposals come from three places, and all of them wait for `resolve`:
    proposal bank; the swept notes carry it; each rejected name is in `rejected`.
 
 **Field ownership refinement:** `labels` is written by ingest **at creation**; thereafter only by
-`relabel-notes` on this skill's (or the surgeon's) **confirmed** passes, by `label-bank rename`,
-ingest's interactive gate, or the human.
+`relabel-notes` on this skill's (or the surgeon's) **confirmed** passes, by `label-bank rename` or
+`label-bank merge`, ingest's interactive gate, or the human.
 
 ## Which notes this skill skips
 

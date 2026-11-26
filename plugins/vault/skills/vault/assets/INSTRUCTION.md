@@ -63,7 +63,7 @@ itself is the immutable source diary (permanent; never deleted or drained).
   undelivered-actionables view.
 - **`labels` after creation:** written only through the plugin's `relabel-notes` on a **confirmed**
   pass (the synthesizer's `resolve` sweeps after acceptance, the surgeon's operations), by
-  `label-bank rename`, at ingest's interactive gate, or by the human (no other consumer touches it). A
+  `label-bank rename` or `label-bank merge`, at ingest's interactive gate, or by the human (no other consumer touches it). A
   proposed label's name is never written to a note before it is accepted.
 - **`related:`** written by ingest at creation for Tier-1 factual links; written by the synthesizer
   on confirm for associative links; human may edit directly.

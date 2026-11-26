@@ -25,7 +25,8 @@ bank's `when_to_apply` descriptions read **live**, file per the note contract) d
 any vault's content. The vocabulary is data, not skill body.
 
 **Deterministic shell, semantic core.** Mechanical work is never freehanded by the model. The
-`scripts/` directory owns windows, deltas, dedup, verification, and commit points; the model owns
+`scripts/` directory (in this file, a bare `scripts/` is always this skill's own `skills/ingest/scripts/`;
+the plugin-level label scripts are written out as `${CLAUDE_PLUGIN_ROOT}/scripts/`) owns windows, deltas, dedup, verification, and commit points; the model owns
 split boundaries, three-way disposition, labeling, title generation, and the gate conversation.
 Every script takes the vault path as an argument — no script knows where any vault lives.
 
@@ -71,7 +72,9 @@ from the sections below rather than executing them.
 0. **Recover (scripted; first action of every drain).** Run `scripts/commit-run --recover <vault>`. It
    commits what an interrupted earlier run wrote but never committed, and prints
    `{"recovered": <run-id>}`, or `null` when there was nothing to recover. Pass a non-null id to step 5 as
-   `--recovered <run-id>`. A non-zero exit: report it and stop.
+   `--recovered <run-id>`. It also commits a proposal bank a run killed after `label-proposals apply` left
+   uncommitted with no report (`"proposal_bank": true` in its output; mention it in the digest), so the
+   gate's `accept` is not refused as dirty. A non-zero exit: report it and stop.
 1. **Window** — run `scripts/journal-candidates <vault> [--today]` and
    `scripts/source-delta <vault>`: the eligible closed day-files, the open day (if `--today`),
    and each vcs source's changed files + hunks / each destructive source's current contents.
@@ -112,8 +115,8 @@ from the sections below rather than executing them.
    `_machine/logs/ingest/<run>/report.json` itself; never write or edit that file. Surface what it
    prints, including `held` and `open_day_failed`. A non-zero exit means nothing was
    marked: report it and stop. Never call `file-notes` or an adapter directly.
-   The same command applies the thoughts' `label_proposals` (through the plugin's
-   `scripts/label-proposals apply`, which writes the proposal bank without a commit) once their notes
+   The same command applies the thoughts' `label_proposals` (through
+   `${CLAUDE_PLUGIN_ROOT}/scripts/label-proposals apply`, which writes the proposal bank without a commit) once their notes
    have landed, so each evidence record carries its note's slug. A thought whose new or gate-changed
    labels include one not active in the bank fails its notes target and holds its unit: a proposed
    name never reaches a note. Surface `report.json`'s `proposals` results in the digest.
@@ -243,8 +246,8 @@ thought's unit; the note itself stays filed. The proposed name never goes in the
 
 **At the interactive gate** show each thought's requests with its labels. The human may edit a
 drafted `when_to_apply`, drop a request, or **accept an explicit request on the spot**:
-`scripts/label-proposals accept <vault> --name <name> --explicit --when-to-apply "…"` (the plugin's
-script; it also accepts an existing open proposal by `--name` alone). That is one commit of its own,
+`${CLAUDE_PLUGIN_ROOT}/scripts/label-proposals accept <vault> --name <name> --explicit --when-to-apply "…"`
+(the plugin-level script, not this skill's; it also accepts an existing open proposal by `--name` alone). That is one commit of its own,
 the bank entry in and the proposal (if any) out, made **before** step 5. Then put `<name>` in the
 thought's labels, take its request out of `label_proposals`, and drop `needs-label` unless something
 else still waits. Older evidence notes of an accepted proposal keep `needs-label` until `resolve`'s
@@ -252,8 +255,8 @@ Sweep A. **`--silent` never accepts.**
 
 ## Routing
 
-Routing is the vault's own data, in `_machine/routing.yml` (schema: the plugin's
-`scripts/routing.schema.json`):
+Routing is the vault's own data, in `_machine/routing.yml` (schema:
+`${CLAUDE_PLUGIN_ROOT}/scripts/routing.schema.json`):
 
 ```yaml
 targets:

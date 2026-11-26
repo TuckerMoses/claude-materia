@@ -121,7 +121,7 @@ the spec; this phase only stamps them (plus the locked vocabulary). Steps:
 9. **Write `~/.claude/vault.local.md`** — the canonical environment-vault pointer (path +
    `INSTRUCTION.md` location). See "Per-install binding".
 10. **Commit the scaffold** (`jj commit -m "vault: scaffold"`), then add each locked label from Phase B
-    with the plugin's `scripts/label-bank add <vault> --name <label> --when-to-apply "…"`. It validates
+    with `${CLAUDE_PLUGIN_ROOT}/scripts/label-bank add <vault> --name <label> --when-to-apply "…"`. It validates
     every entry against the bank schema and commits each one; never append to the bank by hand.
 
 ### D · File  *(corpus-seeded only; cold start → skip)*

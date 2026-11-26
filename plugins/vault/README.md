@@ -91,7 +91,7 @@ Highlights:
 
 - **Field ownership:** ingest writes `title`/`labels`/dates/`source`/`routed_to`; `note-outcome`
   writes `outcome`/`resolved`; `labels` after creation change only through `relabel-notes` on a
-  confirmed pass, `label-bank rename`, ingest's interactive gate, or the human. A proposed name is
+  confirmed pass, `label-bank rename` or `label-bank merge`, ingest's interactive gate, or the human. A proposed name is
   never written to a note before acceptance.
 - **Consumer archetypes:** one-shot (`handled` mark-all-seen), lifecycle (`status` filter),
   pairwise (seen-set watermark — the synthesizer).
