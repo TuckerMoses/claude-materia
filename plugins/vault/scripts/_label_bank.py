@@ -128,8 +128,9 @@ def labels_of(data, slug):
 
 
 def note_change(vault, slug, relabel):
-    """A Change setting a note's labels to relabel(current), or None if that changes nothing. Frontmatter only:
-    the body's md5 is checked when the text is rendered and again on the text read back after the write."""
+    """A Change setting a note's labels to relabel(current), or None if that changes nothing. The labels line only
+    (fm.relabel); the body's md5 is checked when the text is rendered and again on the text read back after the
+    write."""
     path = note_path(vault, slug)
     if not path.is_file():
         raise BankError(f'no note named {slug}')
@@ -140,8 +141,7 @@ def note_change(vault, slug, relabel):
         new_labels = relabel(list(current))
         if new_labels == current:
             return None
-        data['labels'] = new_labels
-        new = fm.render(text, data)
+        new = fm.relabel(text, new_labels)
     except (fm.NoteError, OSError, UnicodeDecodeError) as e:
         raise BankError(f'{slug}: {e}')
     before = _ingest_keys.body_md5(fm.body_of(text))
@@ -155,13 +155,20 @@ def note_change(vault, slug, relabel):
 
 def carriers(vault, name):
     """Slugs of every note in notes/ whose labels include NAME. A note that cannot be read and mentions NAME at all
-    is an error: it might carry it, and a rename or remove must not guess."""
+    is an error: it might carry it, and a rename or remove must not guess. One that does not mention it (an
+    undecodable note included, judged on its bytes) cannot carry it and blocks nothing."""
     found, unreadable = [], []
     for p in sorted((Path(vault) / 'notes').glob('*.md')):
         try:
-            text = fm.read_text(p)
-        except (OSError, UnicodeDecodeError):
+            raw = p.read_bytes()
+        except OSError:
             unreadable.append(p.stem)
+            continue
+        try:
+            text = raw.decode('utf-8')
+        except UnicodeDecodeError:
+            if name.encode('utf-8') in raw:
+                unreadable.append(p.stem)
             continue
         try:
             if name in labels_of(fm.parse(text), p.stem):
