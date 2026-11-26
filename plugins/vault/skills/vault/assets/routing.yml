@@ -1,0 +1,22 @@
+# Routing — where a labelled thought goes. Owned by this vault; read by ingest's dispatch-targets
+# and ingest-status. Schema: the vault plugin's scripts/routing.schema.json.
+#
+# targets: each destination, the adapter that delivers to it, and the adapter's params.
+#   An adapter is an executable the vault plugin ships (ingest's scripts/adapters/<name>). This vault
+#   ships with one: `notes`, the vault copy. Its result (the note's slug) is the thought's id, which
+#   every other target receives. Delivery anywhere else is off until an adapter for it exists.
+# rules: a set, not a sequence. Every rule whose match holds delivers to every target in its `to`.
+#   A match is a list of terms that must all hold: a label, a glob on labels (`project:*`; a bare
+#   `*` holds for every thought), {any: [...]} or {none: [...]}.
+#
+# Label names in `match` are renamed with the label (label-bank rename). Edit targets and rules by
+# hand, then commit. A lens label that a rule sends to a non-notes target is outbound; ingest status
+# flags it.
+
+targets:
+  notes:
+    adapter: notes
+
+rules:
+  - match: ['*']
+    to: [notes]

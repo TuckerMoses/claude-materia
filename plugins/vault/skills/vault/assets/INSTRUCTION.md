@@ -8,10 +8,12 @@ bind to this vault without a hard dependency. Read **live** from the vault on ev
 
 ## Identity
 
-This is a knowledge vault at `{{VAULT_PATH}}`. Its label bank — the shared label vocabulary —
-is `$AGENT_LIB/data/labels.yml` when a standard library exists, else `_machine/labels.yml` (a machine-read YAML file, the inter-skill label API; a binding may override the path).
-**Reference it; never restate the vocabulary here.** The vault is a sink: it holds thought, intent and
-outcome records, and acts on nothing.
+This is a knowledge vault at `{{VAULT_PATH}}`. Its label bank — the shared label vocabulary, the
+inter-skill label API — is `_machine/labels.yml`, a machine-read YAML file owned by this vault (schema:
+the vault plugin's `scripts/labels.schema.json`). Its routing is `_machine/routing.yml`, also owned here.
+The vault depends on nothing outside itself and the vault plugin.
+**Reference the bank; never restate the vocabulary here.** The vault is a sink: it holds thought, intent
+and outcome records, and acts on nothing.
 
 ## Note shape
 
@@ -25,14 +27,15 @@ created: 2026-…
 captured: 2026-…                   # capture-unit date; split-siblings share it
 source: journal/YYYY-MM-DD         # or a compound `remote + path + commit` for external sources
 related: ["[[…]]"]                 # Tier-1 factual (ingest) + confirmed associative (synthesizer / human)
-routed_to: [{container, artifact, name}]  # audit: targets whose writes succeeded; ingest only
-outcome: done                      # done | dropped; only for a note that had a backlog item; note-outcome only
+routed_to: [{target, adapter}]     # audit: routing targets that delivered; ingest only
+outcome: done                      # done | dropped; closes an actionable note; note-outcome only
 resolved: 2026-…                   # the date of that outcome; note-outcome only
 ---
 ```
 
 Older notes may carry `status` or `handled`. Both are retired: nothing new writes them. `status` is read by
-nothing, and `handled` only marks a note as closed.
+nothing, and `handled` only marks a note as closed. Older `routed_to` entries have the shape
+`{container, artifact, name}`; they stay as written and are read alongside the new shape.
 
 Iron rule: note **bodies preserve the full source verbatim**; `title` is a derived label only and
 never licenses dropping body content.
@@ -53,11 +56,11 @@ itself is the immutable source diary (permanent; never deleted or drained).
 ## Field ownership (no overlap, no gap)
 
 - **Ingest** writes content-derived fields: `title`, `labels`, `created` / `captured` / `source`,
-  and `routed_to` (audit: the targets whose writes succeeded).
-- **`outcome` / `resolved`** are written only by the `note-outcome` script, when a backlog item with a
-  vault copy is done or dropped. Never read to select or schedule work. Their readers are ingest's re-run
-  guard (skip non-vault targets for a note carrying `outcome`), `ingest status` reconciliation, and
-  the legacy routing pass.
+  and `routed_to` (audit: the routing targets that delivered).
+- **`outcome` / `resolved`** are written only by the `note-outcome` script, the direct way to mark an
+  actionable note done or dropped. Never read to select or schedule work. Their readers are ingest's
+  re-run guard (skip targets other than notes for a note carrying `outcome`) and `ingest status`'s
+  undelivered-actionables view.
 - **`labels` after creation:** written only by the synthesizer's **confirmed** minting/resolve
   passes, ingest's interactive gate, or the human (no other consumer touches it).
 - **`related:`** written by ingest at creation for Tier-1 factual links; written by the synthesizer
@@ -78,20 +81,28 @@ renders in-app), never a headless query path.
 
 ## Register a missing label
 
-Call the standard library's `label-register`, the sole writer of the vocabulary:
+The vault plugin's `label-bank` script is the sole writer of `_machine/labels.yml`:
 
 ```sh
-"$AGENT_LIB/syscalls/label-register" --name <label> --when-to-apply "…when this label applies…"
+label-bank add <vault> --name <label> --when-to-apply "…when this label applies…"
 ```
 
-Manager skills register `workspace:` / `project:` container labels through `container-register`. Never edit
-the vocabulary by hand. Retiring a label is deferred: `label-retire` is not built.
+It also has `update`, `retire`, `rename` and `remove`. Labels marked `origin: imported` (the container
+labels `workspace:*` / `project:*`) are a read-only snapshot. Never edit the vocabulary by hand.
 
 ## Source registry
 
-`_machine/ingest_paths.yml` lists external ingest sources. **Loop guard:** any label appearing in a routing rule
-whose targets include a non-`notes` artifact is *outbound*, and a source's lens may never include one. `ingest status` flags a violation.
-A vault-minted id is a note's slug, its filename without `.md`. Skip a source line containing `[[<slug>]]` or `<container>/<slug>` for an existing note: that line came from this vault.
+`_machine/ingest_paths.yml` lists external ingest sources. **Loop guard:** any label appearing in a rule of
+`_machine/routing.yml` whose targets include one delivered by an adapter other than `notes` is *outbound*, and a
+source's lens may never include one. `ingest status` flags a violation.
+A vault-minted id is a note's slug, its filename without `.md`. Skip a source line containing `[[<slug>]]` or `<target>/<slug>` for an existing note: that line came from this vault.
+
+## Routing
+
+`_machine/routing.yml` declares `targets` (each naming the adapter that delivers to it, and its `params`) and
+`rules` (a label match → target names; a set, every matching rule delivers). The vault ships with one target,
+`notes`, the vault copy. Delivery anywhere else stays off until the plugin ships an adapter for it. Open
+actionables are a live view over the notes (`ingest status`), never a stored list.
 
 ## Binding schema (the define-once home for the seam)
 
@@ -120,5 +131,4 @@ idempotency is a **seen-set watermark** in a `_machine/` state file (incremental
 neighborhoods), and confirmed outcomes are **effect-checked** (a merged note is gone; a link sits in
 `related:`; a minted label sits in the bank).
 
-A consumer that acts on pending work reads backlogs, not notes. A reader of note frontmatter reports a note
-that fails to parse as an anomaly and continues; none stops on it.
+A reader of note frontmatter reports a note that fails to parse as an anomaly and continues; none stops on it.

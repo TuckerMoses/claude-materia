@@ -6,20 +6,41 @@ A portable personal knowledge system built on a plain-markdown vault — three l
 The vault itself is deliberately simple: a flat pool of atomic notes organized by a controlled
 label vocabulary instead of folders, a `journal/` of daily notes that doubles as the capture
 surface and the permanent ingest source, and a thin machine layer (`_machine/`) holding the label
-bank and source registry. Everything an external skill needs to integrate lives in the vault's own
-`INSTRUCTION.md` (read live, never copied) — which is why every skill here stays portable.
+bank, the routing rules and the source registry. The vault owns all three and depends on nothing
+outside itself and this plugin. Everything an external skill needs to integrate lives in the vault's
+own `INSTRUCTION.md` (read live, never copied) — which is why every skill here stays portable.
 
 ## The three materia
 
 | Materia | Role | Subcommands |
 |---------|------|-------------|
 | **vault** (the anchor skill) | Creation & registration | `create` (stamp a born-correct vault from the `assets/` templates — corpus-seeded or cold), `add-source` (register an external ingest source), `discuss` (architecture meta) |
-| **ingest** | Intake | `[source?] [--today]` (drain closed journal day-files + registered sources: split → label → file through one confirm gate), `status` (read-only health) |
+| **ingest** | Intake | `[source?] [--today] [--silent]` (drain closed journal day-files + registered sources: split → label → route → file through one confirm gate), `status` (read-only health, including undelivered actionables) |
 | **synthesizer** | Pool coherence & vocabulary growth | `scan [scope?] [--full]` (propose merges, links, and labels for emergent themes), `resolve` (drain the `needs-label` backlog into coherent new labels) |
 
-Consumers — session-planner today, any future puller — query notes by label on their own cadence
-and write `status`/`handled`. The vault stays inert: it triggers nothing and knows nothing about
-who reads it.
+Consumers — session-planner today, any future puller — query notes by label on their own cadence.
+The vault stays inert: it triggers nothing and knows nothing about who reads it.
+
+## Routing and adapters
+
+`_machine/routing.yml` maps label matches to named targets; each target names the adapter that
+delivers to it. An adapter is an executable shipped in `skills/ingest/scripts/adapters/` that takes
+one labelled thought as JSON and answers `{status: delivered, landed}` or `{status: failed, reason}`.
+The plugin ships one, `notes` (the vault copy, whose slug is every thought's id). Delivery to any
+other system stays off until an adapter for it ships; meanwhile `ingest status` lists undelivered
+actionables (an action label, no `outcome`) and `note-outcome` closes one.
+
+## Shared scripts
+
+`scripts/` holds the vault-level code every skill shares: `label-bank` (the bank's sole writer),
+`relabel-notes` (bulk `labels` rewrites, body-md5 checked, one commit), the bank and routing
+schemas, and the frontmatter and transaction modules. Tests:
+
+```sh
+python3 -m unittest discover plugins/vault/scripts/tests
+python3 -m unittest discover plugins/vault/skills/ingest/scripts/tests
+for t in plugins/vault/skills/ingest/scripts/tests/test-*.sh; do bash "$t"; done
+```
 
 ## Architecture
 
@@ -54,9 +75,9 @@ The authoritative integration contract is the stamped `INSTRUCTION.md` — see
 every vault is born with.
 Highlights:
 
-- **Field ownership:** ingest writes `title`/`labels`/dates/`source`; consumers (and the human)
-  write `status`/`handled`; `labels` after creation change only via the synthesizer's confirmed
-  minting or the human.
+- **Field ownership:** ingest writes `title`/`labels`/dates/`source`/`routed_to`; `note-outcome`
+  writes `outcome`/`resolved`; `labels` after creation change only via the synthesizer's confirmed
+  passes, ingest's interactive gate, or the human.
 - **Consumer archetypes:** one-shot (`handled` mark-all-seen), lifecycle (`status` filter),
   pairwise (seen-set watermark — the synthesizer).
 - **Query surface:** ripgrep over frontmatter is the required floor; never a full-vault read.

@@ -87,8 +87,9 @@ labels), this-vault shape rules, per-note dispositions (live / archive / ignore)
 multi-thought policy (how a multi-thought file splits into siblings). **Nothing scaffolds until the
 structure is locked.**
 
-*(Cold start → instead of deriving, confirm a minimal seed vocabulary with the user — the four action
-labels plus any obvious starters — and lock that.)*
+*(Cold start → instead of deriving, confirm a minimal seed vocabulary with the user — the seed bank's
+protected labels (`todo`, `session-seed`, `delegated`, `needs-label`) plus any obvious starters — and
+lock that.)*
 
 ### C · Scaffold  *(deterministic, from `assets/` templates)*
 
@@ -106,16 +107,20 @@ the spec; this phase only stamps them (plus the locked vocabulary). Steps:
    on startup" toggle; suppresses empty root-note creation on app launch).
 4. Create `notes/` (flat pool), `journal/` (daily-notes capture surface and permanent ingest source),
    `_archive/`, `_machine/`.
-5. Stamp `assets/labels.yml → _machine/labels.yml`, then **append the locked domain/topic vocabulary**
-   from Phase B, each entry conforming to the bank schema (`label → {when_to_apply, status: active}`).
-   The four action labels are already present from the template; the container schemes stay as
-   comments (no concrete `<name>` entries — those are registered later by the manager skills).
-6. Stamp `assets/ingest_paths.yml → _machine/ingest_paths.yml` (empty registry).
+5. Stamp `assets/labels.yml → _machine/labels.yml` (the seed bank: the protected action and holding
+   labels, plus `idea` and `observation`). The locked domain/topic vocabulary is added in step 10,
+   through the bank's sole writer. Container labels (`workspace:<name>`, `project:<name>`) the vault does
+   not own arrive later as `origin: imported` entries; a vault without them works.
+6. Stamp `assets/ingest_paths.yml → _machine/ingest_paths.yml` (empty registry),
+   `assets/routing.yml → _machine/routing.yml` (the notes target only).
 7. Stamp `assets/INSTRUCTION.md → INSTRUCTION.md`, replacing `{{VAULT_PATH}}` with the absolute vault
    path.
 8. Stamp `assets/CLAUDE.md → CLAUDE.md` (the vault's internal OS-contract; verbatim, no params).
 9. **Write `~/.claude/vault.local.md`** — the canonical environment-vault pointer (path +
    `INSTRUCTION.md` location). See "Per-install binding".
+10. **Commit the scaffold** (`jj commit -m "vault: scaffold"`), then add each locked label from Phase B
+    with the plugin's `scripts/label-bank add <vault> --name <label> --when-to-apply "…"`. It validates
+    every entry against the bank schema and commits each one; never append to the bank by hand.
 
 ### D · File  *(corpus-seeded only; cold start → skip)*
 
@@ -155,7 +160,7 @@ Operates on the vault named in `~/.claude/vault.local.md`. If that pointer is ab
 
 - `path` — the source location.
 - `track: vcs | destructive` — vcs = read commits since a watermark; destructive = drained residue.
-- `lens` — a **subset of the vocabulary** (the label-lens for this source). It may never include an outbound label: one that routes to a non-`notes` artifact (`INSTRUCTION.md`, "Source registry").
+- `lens` — a **subset of the vocabulary** (the label-lens for this source). It may never include an outbound label: one that `_machine/routing.yml` sends to a target other than notes (`INSTRUCTION.md`, "Source registry").
 - `remote` / `branch` — **vcs only**.
 - `description` — optional, non-selector human note.
 
@@ -177,7 +182,7 @@ deliberate accepted-read-exposure registration (additive-surface model — every
 
 `add-source` writes **new entries** (invariant registration). The ingest skill (`vault:ingest`)
 writes **`last_read` watermarks** (runtime state) on **vcs** entries only — destructive entries have no
-watermark. Same pattern as `labels.yml` (managers register, ingest reads). The schema is defined once,
+watermark. The schema is defined once,
 here and in `INSTRUCTION.md`; do not fork it.
 
 ### Cold-start interaction
@@ -207,8 +212,8 @@ question, hand it to `kind-bootstrapper discuss` rather than answering it inline
 - **Content-preservation iron rule** — Phase D of `create` is body-verbatim + hash-verified,
   abort-on-mismatch (see "Iron rule" under create). The exact step that nearly lost the corpus before.
 - **Born-correct** — `create` produces the final architecture directly (flat `notes/`, separate
-  `journal/`, `labels[]`, **no `status`** in new notes, `labels.yml` + `INSTRUCTION.md` present), so a
-  fresh vault never needs migrating.
+  `journal/`, `labels[]`, **no `status`** in new notes, `_machine/labels.yml`, `_machine/routing.yml` and
+  `INSTRUCTION.md` present), so a fresh vault never needs migrating.
 - **Templates-as-spec** — `assets/` is the single source of truth; Scaffold only instantiates it. This
   is what carries cross-environment consistency.
 - **Env-agnostic** — no hardcoded env-directory paths anywhere in this skill. Any env reachability is

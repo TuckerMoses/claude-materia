@@ -208,9 +208,10 @@ this skill's **confirmed** minting/resolve passes or the human.
 
 ## Which notes this skill skips
 
-- **Routed actionables:** skip a note whose `routed_to` includes an `artifact: backlog` target. That is the
-  working queue's copy; merging or linking it would act on a live item. Accepted residual: a note whose backlog
-  write failed has no such entry, so it may get a proposal before the retry; the propose-confirm gate catches it.
+- **Delivered actionables:** skip a note whose `routed_to` includes a target other than notes (an entry whose
+  `adapter`, or in an older entry `artifact`, is not `notes`). Another system holds a live copy of it; merging
+  or linking it would act on a live item. Accepted residual: a note whose delivery failed has no such entry, so
+  it may get a proposal before the retry; the propose-confirm gate catches it.
 - **Unparseable notes:** report a note whose frontmatter fails to parse as an anomaly and continue. Never stop on one.
 
 ## Invariants (cross-cutting, hard)

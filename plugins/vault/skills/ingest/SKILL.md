@@ -10,10 +10,11 @@ argument-hint: "[source?] [--today] [--silent] | status"
 Drain captured thoughts into a **populated vault** as labeled atomic notes. The intake half of the
 vault's pull architecture: the journal (permanent capture surface) and registered external sources
 in, labeled notes out, consumers downstream. Job **frozen** at split → label → route → write:
-every thought gets a vault copy, and routing rules in the standard library send actionable ones to
-container backlogs as well. Ingest writes no `status`, writes no `handled`, knows no label and no
-item field, and never mints vocabulary. New capability = a new routing rule or a new consumer skill;
-ingest is never edited to add one.
+every thought gets a vault copy, and the vault's own routing file (`_machine/routing.yml`) may send
+it to further targets, each delivered by an adapter. The plugin ships one adapter, `notes`; delivery
+anywhere else is off until an adapter for it exists. Ingest writes no `status`, writes no `handled`,
+knows no label and no item field, and never mints vocabulary. New capability = a new routing rule,
+a new adapter, or a new consumer skill; ingest's procedure is never edited to add one.
 
 ## Identity & role
 
@@ -43,8 +44,8 @@ This skill is portable. It names **no** environment paths in its body. Binding r
 3. **Neither exists → fail loudly** ("no vault registered — run `vault create` first, or write
    `~/.claude/ingest.local.md` pointing at a vault"). Never guess a path.
 
-**Every invocation:** resolve the vault → read its `INSTRUCTION.md`, which names the vocabulary file,
-and that vocabulary **live** → act. Query per the handshake's preference order; ripgrep is the required floor.
+**Every invocation:** resolve the vault → read its `INSTRUCTION.md` and its label bank
+(`_machine/labels.yml`) **live** → act. Query per the handshake's preference order; ripgrep is the required floor.
 
 ## Subcommands and routing
 
@@ -92,22 +93,21 @@ from the sections below rather than executing them.
 4. **ONE batch confirm gate** *(skipped under `--silent` — see "Silent mode")*. First run
    `scripts/dispatch-targets route <vault> <proposals.json>`. It returns, per thought, the labels to
    propose (a thought already filed shows its stored labels, which take precedence over the new
-   proposal), its destinations, anything unresolved, and routing warnings. Grouped by day-file/source:
-   each proposed note's title, labels, destinations, disposition, and verbatim body as its own
+   proposal) and its targets. Grouped by day-file/source:
+   each proposed note's title, labels, targets, disposition, and verbatim body as its own
    evidence. Batch-friendly: approve-all-with-exceptions; per-item relabel / re-split /
    demote-to-diary / promote; conversational corrections. A week's backlog is a five-minute review,
-   not fifty questions. Show a tie or a label with no container as the warning says, and let the human
-   correct it. The confirmed labels go in `confirmed-manifest.json`.
+   not fifty questions. The confirmed labels go in `confirmed-manifest.json`.
 5. **Route and write (scripted).** `scripts/dispatch-targets run <vault> <manifest> --mode
    silent|interactive`, where the manifest is `confirmed-manifest.json`, or `proposals.json` under
    `--silent`. Add `--no-journal` for a run scoped to one external source, and `--recovered <run-id>`
    when step 0 printed one. It routes on the confirmed
-   labels, writes the vault copy (dedup, md5 verify, abort-on-mismatch), then each other target in
-   order, records `routed_to` on the note, and **then, in order and only for fully successful
+   labels, delivers to the notes target (dedup, md5 verify, abort-on-mismatch), then to each other
+   target, records `routed_to` on the note, and **then, in order and only for fully successful
    units:** `ingested` markers → `last_read` advances → destructive staging moves. It writes
    `_machine/logs/ingest/<run>/report.json` itself; never write or edit that file. Surface what it
-   prints, including `held`, `open_day_failed` and `warnings`. A non-zero exit means nothing was
-   marked: report it and stop. Never call `file-notes` directly.
+   prints, including `held` and `open_day_failed`. A non-zero exit means nothing was
+   marked: report it and stop. Never call `file-notes` or an adapter directly.
    Then record `run.json` in the run log — `ts` (epoch-seconds, taken after markers land),
    `marked` (day-files), `jj_change_id_at_drain_start`, and the run's structured counts:
    `filed`, `parked`, `diary_only`, `skipped`, and `day_files` (distinct day-files touched,
@@ -156,8 +156,9 @@ from the sections below rather than executing them.
 - **Marker = per-file commit point:** `ingested: true` lands only after all of that file's
   confirmed notes are filed and verified and every routed target has succeeded. A file with a failed
   target is **held**: unmarked, listed in `report.json`, retried by the next drain, and never blocking
-  the other files. The retry is safe: filed notes are skipped by source and body, a backlog append is
-  idempotent on id, and targets are skipped for a note that already has an `outcome`. The day-file is never modified beyond the marker — it
+  the other files. The retry is safe: filed notes are skipped by source and body, an adapter is
+  idempotent on the thought's id (its contract), and targets other than notes are skipped for a note
+  that already has an `outcome`. The day-file is never modified beyond the marker — it
   is the permanent diary; the day-file/note duplication is the one sanctioned denormalization.
 - **`--today`:** extracts and routes from the open day **without writing the marker** and never holds
   it; a failure is reported under `open_day_failed` — same-day
@@ -179,8 +180,38 @@ from the sections below rather than executing them.
   label's `when_to_apply` is the extraction instruction). Out-of-lens content is out of scope —
   it stays in the source, unextracted, never parked. `needs-label` is journal-only: the journal
   is the unfiltered brain-stream; a registered source was pointed here through a deliberate lens.
-- **Loop guard:** A vault-minted id is a note's slug, its filename without `.md`. Skip a source line containing `[[<slug>]]` or `<container>/<slug>` for an existing note: that line came from this vault. A lens may never include an
-  outbound label (one that routes to a non-notes artifact); `status` flags a violation.
+- **Loop guard:** A vault-minted id is a note's slug, its filename without `.md`. Skip a source line containing `[[<slug>]]` or `<target>/<slug>` for an existing note: that line came from this vault. A lens may never include an
+  outbound label (one that a routing rule sends to a target other than notes); `status` flags a violation.
+
+## Routing
+
+Routing is the vault's own data, in `_machine/routing.yml` (schema: the plugin's
+`scripts/routing.schema.json`):
+
+```yaml
+targets:
+  notes:
+    adapter: notes          # the vault copy; its result (the note's slug) is the thought's id
+rules:
+  - match: ['*']
+    to: [notes]
+```
+
+- **Rules are a set.** Every rule whose `match` holds delivers to every target in its `to`, each target
+  once. A `match` is a list of terms that must all hold: a label, a glob (`project:*`; a bare `*` holds
+  for every thought), `{any: [...]}` or `{none: [...]}`. A thought no rule matches is a failed target,
+  never dropped.
+- **Targets name adapters.** A target declares the adapter that delivers to it and its `params`. An
+  adapter is an executable the plugin ships in `scripts/adapters/`, named, never a path. It takes one
+  labelled thought as JSON (`{target, params, thought}`, the thought carrying its `id` for every target
+  but notes) and answers `{status: delivered, landed: …}` or `{status: failed, reason: …}`; exit 2 stops
+  the run (an iron-rule refusal); any other exit, an unreadable answer or a timeout is a failed target,
+  and the thought's unit is held. The notes target is always delivered first; a thought with no notes
+  target fails its other targets ("no id source").
+- **Ships with `notes` only.** An absent or invalid routing file, a rule naming an undeclared target,
+  or a target naming an adapter that does not exist fails the run before anything is written.
+- **Open actionables are a view, not a store.** With no external target, a note with an action label
+  is the only record of the item; `status` lists the undelivered ones, and `note-outcome` closes one.
 
 ## Silent mode (`--silent`)
 
@@ -202,9 +233,10 @@ What changes, and what doesn't:
 - **Unchanged:** three-way extraction against the **frozen** vocabulary — no-fit thoughts still
   park under `needs-label`; silent **never mints or suggests labels** — plus scripted verbatim
   filing, ordered commit points, and idempotency.
-- **Action labels are still applied, and routed.** Safe because backlog items are inert until the
-  ritual selects them, and its calendar write is gated — over-application is caught at the point
-  of action, never silently executed.
+- **Action labels are still applied, and routed.** Safe because a delivered item is inert until a
+  consumer selects it, and with the notes target alone an action label only puts the note in
+  `status`'s undelivered-actionables view — over-application is caught at the point of action,
+  never silently executed.
 - **A filed note's labels stand.** A thought matching an already-filed note takes that note's stored
   labels; only an interactive gate can change them.
 - **Mandatory digest = the changelog entry.** Every silent run ends with the run's rendered
@@ -227,21 +259,24 @@ What changes, and what doesn't:
   phone-sync detection net; fix = remove the marker, re-drain — idempotent filing makes that
   duplicate-free)
 - journal squatters (non-day-file notes in `journal/` — relocate to `notes/`, manually)
-- **held** day-files, with their failed targets and age. The fix: register the container, repair the
-  `BACKLOG.yml`, or revert a bad routing rule, and the next drain clears it; if the labeling itself
-  was wrong, run an interactive ingest and correct the labels at the gate
-- **routing warnings:** a tie between containers, or a container label with no registered row
-- **reconciliation:** unparseable notes; invalid backlogs; one id in two backlogs; a backlog item gone
-  with no `outcome` on its note; orphaned actionables (a closed, unrouted note whose labels route to a
-  backlog); a lens containing an outbound label
+- **held** day-files, with their failed targets and age. The fix: repair what the target's reason
+  names, or revert a bad routing rule, and the next drain clears it; if the labeling itself was wrong,
+  run an interactive ingest and correct the labels at the gate
+- **routing warnings** recorded by older runs (the five newest runs)
+- **undelivered actionables** (count + list): notes with an action label (`todo`, `session-seed`,
+  `delegated`), no `outcome`, and no target but notes in `routed_to`. Close one with
+  `scripts/note-outcome <vault> <slug> done|dropped --resolved YYYY-MM-DD`
+- **anomalies:** unparseable notes; a lens containing an outbound label (checked against the vault's
+  `_machine/routing.yml`; an absent or invalid file is stated, never silently clean)
 
 ## Invariants (cross-cutting, hard)
 
 - **Propose-confirm by default** — nothing written before the gate. `--silent` is the one
   sanctioned exception: gate skipped, mandatory digest surfaced + persisted as the run commit's
   description (review-after), vocabulary still frozen, writes still scripted and verbatim.
-- **Routing is data.** Which thought goes where is decided by the standard library's rules, never here.
-  The vault is a sink: it acts on nothing, and no consumer reads a note to decide pending work.
+- **Routing is data.** Which thought goes where is decided by the vault's `_machine/routing.yml`, never
+  here, and delivered only by adapters the plugin ships. No script reads anything outside the vault and
+  the plugin. The vault is a sink: it acts on nothing.
 - **`routed_to` is audit** — written only by the scripts, listing targets that succeeded. Never edit it.
 - **Never writes `status`, never writes `handled`** — field ownership per INSTRUCTION.md.
 - **Vocabulary frozen** — active labels or `needs-label`; minting is the synthesizer's.
@@ -266,6 +301,6 @@ What changes, and what doesn't:
 - **One run, one commit** — every run whose touched-path set is non-empty ends as exactly one
   path-scoped `jj` commit (via `scripts/commit-run`), held units or not; a no-op run produces none; a
   failed commit produces none and rolls back the run's `ingested:` markers. The vault commit is atomic
-  for the vault only: backlog writes are ordinary uncommitted edits in their own repos. `CHANGELOG.md` is a
+  for the vault only: what an adapter delivers outside the vault is not part of it. `CHANGELOG.md` is a
   derived render, never committed, never hand-edited.
 - **`--silent --today` is refused** — validation error before any vault read.
