@@ -87,12 +87,15 @@ from the sections below rather than executing them.
    never file dumps. Each subagent receives the label bank **and the proposal bank** as data, and
    handles `label::` requests and implicit proposals per "Label requests and proposals" (below),
    emitting them as the thought's `label_proposals`.
-   For every thought disposed to `needs-label`, the subagent additionally emits a `near_miss`
+   For every thought given `needs-label` because nothing fits, the subagent additionally emits a `near_miss`
    array on that proposal — `{label, reason}` objects for each active label seriously weighed and
    why it missed; empty array when nothing was close. This is the changelog's vocabulary-pressure
-   signal (see step 6); without it the Parked section degrades to a list of titles.
+   signal (see step 6); without it the Parked section degrades to a list of titles. A thought that
+   carries `needs-label` only because it is evidence for a proposal needs no `near_miss`.
 3. **Persist proposals** to `_machine/logs/ingest/<run>/proposals.json` *before* the gate — a
-   crash mid-review must not lose the analysis. The run log records the vault's jj change-id at
+   crash mid-review must not lose the analysis. The run-id is `YYYY-MM-DD-N` (today's date; N is one
+   more than the highest existing run directory for today, starting at 1). The file's shape is in
+   "The manifest" (below). The run log records the vault's jj change-id at
    drain start (whole-run undo stays a one-liner).
    Every closed day-file the run read goes in the manifest's `mark_ingested`, including one with no
    extracted thoughts. A day-file you did not process stays out: the script holds it rather than
@@ -122,7 +125,8 @@ from the sections below rather than executing them.
    name never reaches a note. Surface `report.json`'s `proposals` results in the digest.
    Then record `run.json` in the run log — `ts` (epoch-seconds, taken after markers land),
    `marked` (day-files), `jj_change_id_at_drain_start`, and the run's structured counts:
-   `filed`, `parked`, `diary_only`, `skipped`, and `day_files` (distinct day-files touched,
+   `filed` (every note written, parked ones included), `parked` (the subset of those carrying
+   `needs-label`), `diary_only`, `skipped`, and `day_files` (distinct day-files touched,
    including an open day under `--today`, which never enters `marked`). Step 6's `commit-run`
    reads `filed`/`day_files`/`parked` for the commit subject line; `status`'s
    marked-then-modified net reads `ts` and `marked`. Never record ad-hoc fields
@@ -136,7 +140,9 @@ from the sections below rather than executing them.
    `proposals` result from `report.json` (opened, reopened with its old reason, attached, and every
    `skipped`, `failed` or `normalised_from` with its reason), plus any `label::` request for a retired
    label, which is reported and never revived. Parked items render their
-   `near_miss` list plus one closing sentence of synthesis on why nothing fit. Items the
+   `near_miss` list plus one closing sentence of synthesis on why nothing fit. A parked item that
+   is evidence for a proposal renders one line instead: "Waits as evidence for the proposal
+   `<name>`." Items the
    subagent itself parked with an empty `near_miss` array (nothing was close) render "No active
    label was within consideration" plus that required closing synthesis sentence. **Gate-reparked
    items** (a label was proposed; the human parked it instead) have no `near_miss` — render
@@ -222,9 +228,12 @@ thought block it sits in; a thought may carry several; the line stays in the bod
 | not a valid label name | proposes the normalised name; reports the change in the digest |
 
 **Implicit proposals.** *Attach:* any thought, whatever its other labels, may be attached to an open
-proposal whose draft `when_to_apply` it fits; that is how evidence accumulates. *Open:* only when no
-label describing the thought's **subject** fits; type labels (`idea`, `question`, …) and action labels
-do not count as fitting. A thought attached or opened this way also gets `needs-label`. Themes across
+proposal whose draft `when_to_apply` it fits; that is how evidence accumulates. Check the proposal
+bank for a fit before opening anything new. *Open:* allowed only when no label describing the
+thought's **subject** fits; type labels (`idea`, `question`, …) and action labels do not count as
+fitting. Opening is a judgement, not an obligation: open when the subject looks like one that could
+recur, otherwise just park the thought under `needs-label`. Name the proposal for the general subject
+(`baking`), never the instance (`sourdough-hydration`): one short lowercase noun or hyphenated pair. A thought attached or opened this way also gets `needs-label`. Themes across
 already well-labelled notes are the synthesizer `scan` pass's job, not ingest's.
 
 **What the subagent emits**, per thought, beside its labels:
@@ -236,9 +245,11 @@ already well-labelled notes are the synthesizer `scan` pass's job, not ingest's.
 ]
 ```
 
-`op` is `open` (a new name) or `attach` (an open proposal); `quote` must appear verbatim in the
-thought's body (for a `label::` request, the line itself; for an implicit one, the sentence that
-fits). `dispatch-targets run` fills in the source and the note's slug and applies them through
+`op` is `open` (a new name) or `attach` (an open proposal). `quote` must appear verbatim in the
+thought's body and is what the reviewer will read as evidence, so make it the sentence that carries
+the thought, never the `label::` line itself. When several thoughts in one batch ask for the same new
+name, emit `open` for each: the first opens it and the rest attach, and the first draft
+`when_to_apply` stands. `dispatch-targets run` fills in the source and the note's slug and applies them through
 `label-proposals apply`: idempotent (a retry adds no second record; an `open` of an open proposal
 attaches), and it refuses anything but `open` and `attach`. A request it cannot apply holds the
 thought's unit; the note itself stays filed. The proposed name never goes in the thought's `labels`;
@@ -252,6 +263,37 @@ the bank entry in and the proposal (if any) out, made **before** step 5. Then pu
 thought's labels, take its request out of `label_proposals`, and drop `needs-label` unless something
 else still waits. Older evidence notes of an accepted proposal keep `needs-label` until `resolve`'s
 Sweep A. **`--silent` never accepts.**
+
+## The manifest
+
+`proposals.json` (and the gate's `confirmed-manifest.json`, same shape) is what `dispatch-targets`
+reads:
+
+```json
+{
+  "notes": [
+    {"title": "Short searchable title",
+     "labels": ["idea", "aios"],
+     "created": "2026-01-02", "captured": "2026-01-01",
+     "source": "journal/2026-01-01",
+     "body": "the thought, verbatim",
+     "disposition": "file",
+     "related": ["[[sibling-note-slug]]"],
+     "near_miss": [{"label": "ai-systems", "reason": "…"}],
+     "label_proposals": []}
+  ],
+  "mark_ingested": ["journal/2026-01-01.md"],
+  "advance": [], "archive_moves": []
+}
+```
+
+- `disposition`: `diary` keeps a thought in the day-file only; anything else files it.
+- `captured` is the day-file's date and is shared by split-siblings; `created` is today.
+- `related` holds split-siblings as `"[[<slug>]]"`. A note's slug is its title lowercased, every run of
+  characters outside `a-z0-9` turned into one hyphen, cut to 80 characters with trailing hyphens
+  dropped. Build links from that rule, not from the full title, and keep titles under 80 characters so
+  no link is cut short.
+- `advance` and `archive_moves` are for registered sources; leave them empty for a journal-only run.
 
 ## Routing
 
