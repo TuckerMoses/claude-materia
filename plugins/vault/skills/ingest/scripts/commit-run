@@ -9,7 +9,8 @@ Usage:
 
 Contract:
 - Fileset = touched-path set (written+rewritten+marked+moved, plus _machine/ingest_paths.yml when
-  `advanced` is non-empty) + skipped paths + run-log sublist (run.json, proposals.json,
+  `advanced` is non-empty, plus _machine/label-proposals.yml when `proposal_bank` is true) + skipped paths
+  + run-log sublist (run.json, proposals.json,
   entry.md, report.json, + confirmed-manifest.json iff interactive). CHANGELOG.md never.
 - No-op guard: empty touched-path set -> exit 0, no commit, no regen.
 - Description = "ingest(<mode>): <run-id> — N notes, M days, P parked" + blank + entry.md
@@ -78,6 +79,8 @@ def touched_paths(report):
                *report.get('moved', [])]
     if report.get('advanced'):
         touched.append('_machine/ingest_paths.yml')
+    if report.get('proposal_bank'):
+        touched.append('_machine/label-proposals.yml')
     return touched
 
 

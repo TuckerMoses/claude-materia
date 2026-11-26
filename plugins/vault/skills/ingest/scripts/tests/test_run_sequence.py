@@ -75,6 +75,7 @@ class Base(unittest.TestCase):
         bank = yaml.safe_load(SEED.read_text())
         bank['labels'].update(EXTRA)
         (self.vault / '_machine' / 'labels.yml').write_text(yaml.safe_dump(bank, sort_keys=False))
+        shutil.copy(PLUGIN / 'skills' / 'vault' / 'assets' / 'label-proposals.yml', self.vault / '_machine' / 'label-proposals.yml')
         subprocess.run(['jj', 'git', 'init', str(self.vault)], capture_output=True, check=True)
         self.log = self.tmp / 'delivered.jsonl'
         self.save_routing(NOTES_ONLY)
@@ -819,7 +820,24 @@ class Status(Base):
     def test_needs_label_is_counted(self):
         self.actionable('p', labels='[needs-label]')
         self.actionable('q', labels='[idea, needs-label]')
-        self.assertIn('needs-label: 2\n', self.status())
+        self.actionable('r', labels='[idea]')
+        out = self.status()
+        self.assertIn('needs-label: 2 (0 evidence for an open proposal, 2 tied to none)', out)
+        self.assertIn('open proposals: 0 (explicit 0, implicit 0; 0 with two or more evidence records)', out)
+
+    def test_open_proposals_and_their_evidence_notes_are_counted(self):
+        e = lambda q, note=None: dict({'source': 'journal/2026-01-01', 'quote': q, 'added': '2026-01-01'}, **({'note': note} if note else {}))
+        (self.vault / '_machine' / 'label-proposals.yml').write_text(yaml.safe_dump({'proposals': {
+            'a': {'when_to_apply': 'x', 'origin': 'explicit', 'opened': '2026-01-01', 'evidence': [e('one', 'p')]},
+            'b': {'when_to_apply': 'x', 'origin': 'implicit', 'opened': '2026-01-01', 'evidence': [e('one'), e('two')]},
+            'c': {'when_to_apply': 'x', 'origin': 'implicit', 'opened': '2026-01-01', 'evidence': [e('one')]}}, 'rejected': []}))
+        self.actionable('p', labels='[idea, needs-label]')
+        self.actionable('q', labels='[needs-label]')
+        out = self.status()
+        self.assertIn('needs-label: 2 (1 evidence for an open proposal, 1 tied to none)', out)
+        self.assertIn('open proposals: 3 (explicit 1, implicit 2; 1 with two or more evidence records)', out)
+        (self.vault / '_machine' / 'label-proposals.yml').write_text('proposals: [\n')
+        self.assertIn('proposals not read', self.status())
 
     def test_unparseable_note_is_an_anomaly_not_a_crash(self):
         (self.vault / 'notes' / 'bad.md').write_text('---\ntitle: "un"terminated"\n---\n\nb\n')
@@ -869,6 +887,131 @@ class Status(Base):
         out = self.status()
         for gone in ('backlog', 'orphaned', 'reconciliation skipped', 'AGENT_LIB'):
             self.assertNotIn(gone, out)
+
+
+class Proposals(Base):
+    """Label requests in a run: evidence written by label-proposals apply, committed by the run's one commit."""
+
+    REQUEST = {'op': 'open', 'name': 'roadmap', 'origin': 'explicit', 'when_to_apply': 'Plans and sequencing.',
+               'quote': 'label:: roadmap'}
+    BODY = 'Sketch the bed layout.\nlabel:: roadmap\n'
+
+    def proposals(self):
+        return yaml.safe_load((self.vault / '_machine' / 'label-proposals.yml').read_text())
+
+    def requested(self, labels=('idea', 'needs-label'), requests=None, day=D1, **kw):
+        self.day(day)
+        return self.dispatch([note(self.BODY, list(labels), title='modes', day=day,
+                                   label_proposals=requests if requests is not None else [self.REQUEST])],
+                             [f'journal/{day}.md'], **kw)
+
+    def test_an_explicit_request_opens_a_proposal_with_the_note_as_evidence(self):
+        report = self.requested()
+        self.assertEqual(report['held'], [])
+        self.assertEqual([(r['name'], r['result']) for r in report['proposals']], [('roadmap', 'opened')])
+        self.assertIs(report['proposal_bank'], True)
+        p = self.proposals()['proposals']['roadmap']
+        self.assertEqual((p['origin'], p['when_to_apply']), ('explicit', 'Plans and sequencing.'))
+        self.assertEqual(p['evidence'], [{'source': f'journal/{D1}', 'quote': 'label:: roadmap', 'note': 'modes', 'added': TODAY}])
+        self.assertEqual(self.fm('modes')['labels'], ['idea', 'needs-label'])  # the proposed name is not on the note
+        self.assertIn('label:: roadmap', self.body('modes'))  # the request line stays: bodies are verbatim
+        self.assertTrue(self.marked(D1))
+
+    def test_one_run_one_commit_carries_the_proposal_bank(self):
+        subprocess.run(['jj', 'commit', '-m', 'init'], cwd=self.vault, capture_output=True, check=True)
+        self.requested()
+        self.assertEqual(self.commit().returncode, 0)
+        shown = subprocess.run(['jj', 'show', '--summary', '-r', '@-'], cwd=self.vault, capture_output=True, text=True).stdout
+        for path in ('_machine/label-proposals.yml', 'notes/modes.md', f'journal/{D1}.md'):
+            self.assertIn(path, shown)
+        st = subprocess.run(['jj', 'diff', '--name-only'], cwd=self.vault, capture_output=True, text=True).stdout
+        self.assertNotIn('label-proposals.yml', st)
+
+    def test_a_run_without_requests_leaves_the_proposal_bank_alone(self):
+        subprocess.run(['jj', 'commit', '-m', 'init'], cwd=self.vault, capture_output=True, check=True)
+        report = self.requested(requests=[])
+        self.assertEqual((report['proposals'], report['proposal_bank']), ([], False))
+        self.assertEqual(self.commit().returncode, 0)
+        shown = subprocess.run(['jj', 'show', '--summary', '-r', '@-'], cwd=self.vault, capture_output=True, text=True).stdout
+        self.assertNotIn('label-proposals.yml', shown)
+
+    def test_a_killed_run_is_recovered_with_its_proposal_bank(self):
+        subprocess.run(['jj', 'commit', '-m', 'init'], cwd=self.vault, capture_output=True, check=True)
+        self.requested()
+        killed = self.run_id
+        self.run_id = '2026-11-02-2'
+        self.run_dir = self.vault / '_machine' / 'logs' / 'ingest' / self.run_id
+        self.run_dir.mkdir()
+        r = self.script('commit-run', '--recover', self.vault)
+        self.assertEqual(json.loads(r.stdout)['recovered'], killed)
+        shown = subprocess.run(['jj', 'show', '--summary', '-r', '@-'], cwd=self.vault, capture_output=True, text=True).stdout
+        self.assertIn('_machine/label-proposals.yml', shown)
+
+    def test_a_retry_adds_no_second_evidence_record(self):
+        self.requested()
+        report = self.requested()
+        self.assertEqual([r['result'] for r in report['proposals']], ['unchanged'])
+        self.assertEqual(len(self.proposals()['proposals']['roadmap']['evidence']), 1)
+
+    def test_a_request_for_an_open_proposal_attaches(self):
+        self.requested()
+        self.day(D2)
+        report = self.dispatch([note('More on the roadmap.\nlabel:: roadmap', ['needs-label'], title='more', day=D2,
+                                     label_proposals=[dict(self.REQUEST, quote='label:: roadmap')])], [f'journal/{D2}.md'])
+        self.assertEqual([r['result'] for r in report['proposals']], ['attached'])
+        self.assertEqual([e['note'] for e in self.proposals()['proposals']['roadmap']['evidence']], ['modes', 'more'])
+
+    def test_a_proposed_name_on_a_note_is_refused_and_holds_the_day(self):
+        report = self.requested(labels=('idea', 'roadmap'))
+        self.assertEqual(self.notes(), [])
+        failure = report['held'][0]['failed'][0]
+        self.assertEqual(failure['target'], NOTES_ENTRY)
+        self.assertIn('not active in the bank: roadmap', failure['reason'])
+        self.assertFalse(self.marked(D1))
+        self.assertEqual(self.proposals()['proposals'], {})
+
+    def test_a_retired_label_is_never_written_to_a_new_note(self):
+        bank_path = self.vault / '_machine' / 'labels.yml'
+        bank = yaml.safe_load(bank_path.read_text())
+        bank['labels']['old'] = {'when_to_apply': 'x', 'status': 'retired'}
+        bank_path.write_text(yaml.safe_dump(bank, sort_keys=False))
+        report = self.requested(labels=('old',), requests=[])
+        self.assertIn('not active in the bank: old', report['held'][0]['failed'][0]['reason'])
+
+    def test_a_quote_not_verbatim_from_the_body_holds_the_day_but_files_the_note(self):
+        report = self.requested(requests=[dict(self.REQUEST, quote='label:: roadmaps')])
+        self.assertEqual(self.notes(), ['modes.md'])
+        failure = report['held'][0]['failed'][0]
+        self.assertEqual(failure['target'], {'target': 'label-proposals'})
+        self.assertIn('not verbatim', failure['reason'])
+        self.assertFalse(self.marked(D1))
+
+    def test_ingest_never_accepts(self):
+        report = self.requested(requests=[dict(self.REQUEST, op='accept')])
+        self.assertIn('only open or attach', report['held'][0]['failed'][0]['reason'])
+        self.assertNotIn('roadmap', yaml.safe_load((self.vault / '_machine' / 'labels.yml').read_text())['labels'])
+        self.assertEqual(self.proposals()['proposals'], {})
+
+    def test_a_request_for_an_active_label_is_reported_not_opened(self):
+        subprocess.run(['jj', 'commit', '-m', 'init'], cwd=self.vault, capture_output=True, check=True)
+        report = self.requested(labels=('idea', 'todo'), requests=[dict(self.REQUEST, name='todo')])
+        self.assertEqual(report['held'], [])
+        self.assertEqual(report['proposals'][0]['result'], 'skipped')
+        self.assertIs(report['proposal_bank'], False)
+
+    def test_an_unreadable_proposal_bank_holds_the_requesting_thought_only(self):
+        (self.vault / '_machine' / 'label-proposals.yml').write_text('proposals: [\n')
+        self.day(D1)
+        self.day(D2)
+        report = self.dispatch([note(self.BODY, ['needs-label'], title='modes', label_proposals=[self.REQUEST]),
+                                note('plain', title='plain', day=D2)], [f'journal/{D1}.md', f'journal/{D2}.md'])
+        self.assertEqual([h['day_file'] for h in report['held']], [f'journal/{D1}.md'])
+        self.assertIn('does not parse', report['held'][0]['failed'][0]['reason'])
+        self.assertEqual(report['marked'], [f'journal/{D2}.md'])
+
+    def test_gate_route_shows_labels_not_in_the_bank(self):
+        r = self.script('dispatch-targets', 'route', self.vault, self.manifest([note('x', ['idea', 'roadmap'], title='t')]))
+        self.assertEqual(json.loads(r.stdout)[0]['inactive'], ['roadmap'])
 
 
 class FailLoud(Base):

@@ -1,0 +1,30 @@
+# Label proposals — labels asked for but not yet in the bank, and the evidence for each.
+# Schema: the vault plugin's scripts/label-proposals.schema.json. Sole writer: the plugin's
+# `label-proposals` script (open / attach / revise / rename / merge / accept / reject; ingest's
+# batch `apply`); never hand-edit. Only this header comment survives a write.
+#
+# Ingest opens proposals and attaches evidence; it never accepts (except an explicit request the
+# human accepts at the interactive gate). `/synthesizer resolve` reviews them: accept moves the
+# label into _machine/labels.yml and deletes the proposal in one commit; reject records the name
+# in `rejected` so ingest does not reopen it. Proposals never expire.
+#
+# This is the one sanctioned stored label-to-notes record, and it is transient: an entry is
+# deleted when its proposal is accepted or rejected.
+#
+# Entry shape:
+#   proposals:
+#     <name>:
+#       when_to_apply: "draft text"
+#       origin: explicit            # explicit (a `label:: <name>` line, or the human) | implicit
+#       opened: 2026-01-01
+#       reopened: {reason, date}    # optional: the rejection an explicit request overrode
+#       evidence:
+#         - source: journal/2026-01-01
+#           quote: "the verbatim trigger text"
+#           note: some-note-slug    # optional; may go stale after a merge
+#           added: 2026-01-01
+#   rejected:
+#     - {name: <name>, reason: "…", date: 2026-01-01}
+
+proposals: {}
+rejected: []

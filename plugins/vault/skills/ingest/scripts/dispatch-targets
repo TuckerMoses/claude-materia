@@ -3,11 +3,13 @@
 and no target.
 
   dispatch-targets route VAULT MANIFEST
-      For the gate. Per thought: the labels to propose (a filed note's stored labels win, invariant 5) and the targets
-      those labels route to under <vault>/_machine/routing.yml. Writes nothing.
+      For the gate. Per thought: the labels to propose (a filed note's stored labels win, invariant 5), any of them
+      not active in the bank, and the targets those labels route to under <vault>/_machine/routing.yml. Writes
+      nothing.
 
   dispatch-targets run VAULT MANIFEST --mode silent|interactive [--no-journal] [--recovered RUN_ID]
-      Deliver to the notes target, whose result is the thought's id, then to the others in order; then routed_to;
+      Deliver to the notes target, whose result is the thought's id, then to the others in order; then the run's
+      label-proposal requests (label-proposals apply, uncommitted: the run commit carries the file); then routed_to;
       then, for fully successful units only, markers, watermarks and moves; then report.json beside the manifest.
       Exits 0 even with held units: commit-run must still run, and it is what exits non-zero on held. Exits non-zero
       only if the run failed before its commit points.
@@ -17,14 +19,19 @@ params) and rules (label match -> target names). An adapter is an executable in 
 adapters/notes for the interface. A routing file that is absent, fails its schema, or names an adapter that does not
 exist fails the run before anything is written.
 
+Labels are the bank's (<vault>/_machine/labels.yml): a thought whose new or gate-changed labels include one that is not
+active there fails its notes target, so a proposed name never reaches a note. A thought's label_proposals
+([{op: open|attach, name, origin, when_to_apply?, quote}], the quote verbatim from its body) become evidence with the
+thought's source and its note's slug; a request that fails holds the thought's unit, the note stays filed.
+
 --no-journal is for a run scoped to one external source, whose closed day-files are not this run's business.
 --recovered records the interrupted run that `commit-run --recover` committed as this run's first action.
 Every child call times out after $VAULT_INGEST_CALL_TIMEOUT seconds (default 300): a timed-out adapter is a failed
 target, so its unit is held; any other timed-out call aborts the run before markers, as any failure there does.
 $VAULT_INGEST_RUN_DEADLINE (seconds, unset = none; the nightly sets it) bounds the adapter calls' sum, whose count grows
 with the thoughts: each adapter call gets what is left, and one past it times out at once, so its unit is held. The
-other calls are a fixed handful (check, lookup, rewrite, journal-candidates, finish), so this whole command is bounded
-by the deadline plus five call timeouts, and a caller can bound it, as the nightly does with claude's Bash timeout.
+other calls are a fixed handful (check, lookup, proposals, rewrite, journal-candidates, finish), so this whole command is
+bounded by the deadline plus six call timeouts, and a caller can bound it, as the nightly does with claude's Bash timeout.
 SIGTERM or SIGHUP kills the running child's process group before exiting: adapters run in their own sessions and
 would outlive this process.
 """
@@ -45,7 +52,10 @@ import yaml
 HERE = Path(__file__).resolve().parent
 sys.path.insert(1, str(HERE.parents[2] / 'scripts'))  # the plugin's shared modules
 import _ingest_keys  # noqa: E402
+import _label_bank  # noqa: E402
 import _routing  # noqa: E402
+
+PROPOSALS = HERE.parents[2] / 'scripts' / 'label-proposals'
 
 ADAPTERS = HERE / 'adapters'
 ABORT = 2  # an adapter's exit status meaning the run must stop
@@ -140,6 +150,17 @@ def load_routing(vault):
     return routing
 
 
+def load_bank(vault):
+    try:
+        return _label_bank.Bank(vault)
+    except _label_bank.BankError as e:
+        die(f'{e}; nothing written')
+
+
+def inactive(bank, labels):
+    return [x for x in labels if not bank.active(x)]
+
+
 def plain(routing, target):
     return {'target': target, 'adapter': routing.adapter(target)}
 
@@ -151,12 +172,13 @@ def proposed_labels(thought, stored):
 
 def cmd_route(vault, manifest):
     thoughts = thoughts_of(manifest)
-    routing = load_routing(vault)
+    routing, bank = load_routing(vault), load_bank(vault)
     stored = file_notes('lookup', vault, {'notes': thoughts})
     out = []
     for t in thoughts:
         labels = proposed_labels(t, stored)
-        out.append({'ref': t['ref'], 'labels': labels, 'targets': [plain(routing, x) for x in routing.route(labels)],
+        out.append({'ref': t['ref'], 'labels': labels, 'inactive': inactive(bank, labels),
+                    'targets': [plain(routing, x) for x in routing.route(labels)],
                     'already_filed': t['ref'] in stored, 'failed': stored.get(t['ref'], {}).get('failed')})
     print(json.dumps(out, indent=2))
 
@@ -184,6 +206,7 @@ class Run:
         self.ids = {}        # ref -> id: the slug the notes target landed
         self.outcome = {}    # ref -> outcome stored on the note
         self.written, self.skipped, self.warnings = [], [], []
+        self.proposals, self.proposal_bank = [], False
 
     def fail(self, thought, target, reason):
         entry = {'ref': thought['ref'], 'target': target, 'reason': ' '.join(str(reason).split())}
@@ -231,7 +254,7 @@ class Run:
         return result
 
     def record_of(self, t):
-        record = {k: v for k, v in t.items() if k not in ('ref', 'disposition', 'near_miss')}
+        record = {k: v for k, v in t.items() if k not in ('ref', 'disposition', 'near_miss', 'label_proposals')}
         record['ref'] = t['ref']
         if t['ref'] in self.ids:
             record['id'] = self.ids[t['ref']]
@@ -246,6 +269,11 @@ class Run:
                     continue
                 if 'failed' in stored.get(t['ref'], {}):
                     self.fail(t, plain(self.routing, target), stored[t['ref']]['failed'])
+                    continue
+                new_labels = t['ref'] not in stored or t['ref'] in self.changed
+                bad = inactive(self.bank, t['labels']) if new_labels else []
+                if bad:
+                    self.fail(t, plain(self.routing, target), f'not active in the bank: {", ".join(bad)}')
                     continue
                 result = self.deliver(t, target, self.record_of(t))
                 if result['status'] == 'failed':
@@ -346,22 +374,58 @@ class Run:
         return ([a for a in advance if a['path'] not in blocked],
                 [m for m in moves if not any(under(m['from'], root) for root in blocked)])
 
+    def write_proposals(self):
+        """The run's label-proposal requests, for thoughts whose note landed. One label-proposals apply call; the file
+        it writes is committed by commit-run with the rest of the run."""
+        requests, by_ref = [], {t['ref']: t for t in self.thoughts}
+        for t in self.thoughts:
+            asked = t.get('label_proposals') or []
+            if not asked or t['ref'] not in self.ids:
+                continue
+            if not isinstance(asked, list) or not all(isinstance(r, dict) for r in asked):
+                self.fail(t, {'target': 'label-proposals'}, 'label_proposals is not a list of requests')
+                continue
+            for r in asked:
+                if not isinstance(r.get('quote'), str) or not r['quote'].strip() or r['quote'] not in t['body']:
+                    self.fail(t, {'target': 'label-proposals'}, f'{r.get("name")}: quote is not verbatim from the body')
+                    continue
+                requests.append(dict(r, ref=t['ref'], source=t['source'], note=self.ids[t['ref']]))
+        if not requests:
+            return
+        with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False) as f:
+            json.dump(requests, f)
+        try:
+            r = call([str(PROPOSALS), 'apply', str(self.vault), f.name])
+        finally:
+            os.unlink(f.name)
+        if r.returncode != 0:
+            for ref in {q['ref'] for q in requests}:
+                self.fail(by_ref[ref], {'target': 'label-proposals'}, r.stderr or 'label-proposals apply failed')
+            return
+        out = json.loads(r.stdout)
+        self.proposals, self.proposal_bank = out['results'], out['dirty']
+        for res in out['results']:
+            if res['result'] == 'failed':
+                self.fail(by_ref[res['ref']], {'target': 'label-proposals'}, f'{res["name"]}: {res["reason"]}')
+
     def run(self):
         file_notes('check', self.vault, self.manifest)
-        self.routing = load_routing(self.vault)
+        self.routing, self.bank = load_routing(self.vault), load_bank(self.vault)
         stored = file_notes('lookup', self.vault, {'notes': self.thoughts})
         self.confirm_labels(stored)
         routes = {t['ref']: self.routing.route(t['labels']) for t in self.thoughts}
         self.record_routes(routes)
         self.deliver_notes(routes, stored)
         self.deliver_others(routes)
+        self.write_proposals()
         rewritten = self.write_routed_to()
         held, open_day, marks, advance, moves = self.settle_units()
         routed = [{'id': self.ids[t['ref']], 'targets': self.success.get(t['ref'], []), 'labels': t['labels'],
                    'source': t['source'], 'body_md5': _ingest_keys.body_md5(t['body'])}
                   for t in self.thoughts if t['ref'] in self.ids]
         report = {'written': self.written, 'skipped': self.skipped, 'rewritten': rewritten, 'routed': routed,
-                  'held': held, 'open_day_failed': open_day, 'warnings': self.warnings}
+                  'held': held, 'open_day_failed': open_day, 'warnings': self.warnings,
+                  'proposals': self.proposals, 'proposal_bank': self.proposal_bank}
         if self.recovered:
             report['recovered'] = self.recovered
         plan = {'mark_ingested': marks, 'advance': advance, 'archive_moves': moves, 'report': report,

@@ -2,7 +2,7 @@
 """Read-only vault intake health. Usage: ingest-status VAULT_PATH
 
 The first line is `pending closed day-files: N`; the nightly wrapper reads it, so it stays first and stays in this
-form. Reads only the vault and its own routing file, and only reports: an unusable note or routing file is an anomaly,
+form. Reads only the vault (notes, routing, proposal bank), and only reports: an unusable note or routing file is an anomaly,
 never a crash.
 """
 import json, os, re, subprocess, sys, time
@@ -11,6 +11,7 @@ import yaml
 
 sys.path.insert(1, str(Path(__file__).resolve().parents[3] / 'scripts'))  # the plugin's shared modules
 import _file_notes  # noqa: E402
+import _label_proposals  # noqa: E402
 import _note_frontmatter as fm  # noqa: E402
 import _routing  # noqa: E402
 
@@ -66,7 +67,7 @@ def main():
         else:
             print(f"source {s['path']}: destructive (drain to consume)")
     notes, bad = read_notes(vault)
-    print(f'needs-label: {sum(1 for _, data in notes if "needs-label" in labels_of(data))}')
+    proposals(vault, notes)
     squat = [p.name for p in (vault / 'journal').iterdir() if p.suffix == '.md' and not DAY.match(p.name)]
     if squat:
         print(f'{len(squat)} non-day-file note(s) in journal/ — relocate to notes/ (manual refactor): '
@@ -166,6 +167,23 @@ def read_notes(vault):
 def labels_of(data):
     labels = data.get('labels')
     return [x for x in labels if isinstance(x, str)] if isinstance(labels, list) else []
+
+
+def proposals(vault, notes):
+    """The needs-label backlog and the open proposals: the review sitting's queue (synthesizer resolve)."""
+    parked = [slug for slug, data in notes if 'needs-label' in labels_of(data)]
+    try:
+        data = _label_proposals.Proposals(vault).data
+    except _label_proposals.ProposalError as e:
+        print(f'needs-label: {len(parked)}')
+        print(f'proposals not read: {e}')
+        return
+    tied = _label_proposals.evidence_notes(data)
+    print(f'needs-label: {len(parked)} ({sum(1 for s in parked if s in tied)} evidence for an open proposal, '
+          f'{sum(1 for s in parked if s not in tied)} tied to none)')
+    c = _label_proposals.counts(data)
+    print(f"open proposals: {c['open']} (explicit {c['explicit']}, implicit {c['implicit']}; "
+          f"{c['two_or_more']} with two or more evidence records)")
 
 
 def undelivered(notes):
