@@ -1,0 +1,90 @@
+#!/usr/bin/env python3
+"""The shared relabel primitive: rewrite the `labels` of many notes in one commit.
+
+Usage: relabel-notes VAULT MANIFEST_JSON
+
+Manifest:
+  {"reason": "why, as the commit description",
+   "notes": {"<slug>": {"add": ["label", ...], "remove": ["label", ...]}, ...}}
+
+- Frontmatter `labels` only. Each body's md5 is checked before and after; any mismatch aborts the whole run.
+- Every added label must be active in the bank. Removed labels need not exist. A label in both lists is refused.
+- Removals apply first, then additions append in manifest order; a label a note already has is not repeated.
+- All-or-nothing: every note in the manifest is rewritten, or none is. A note that would not change is not written.
+- One path-scoped jj commit, refused when any note it would write has uncommitted changes.
+Prints JSON on success ({"status": "committed"|"unchanged", "notes": [...]}); exits 1 with a reason otherwise.
+"""
+import json
+import sys
+from pathlib import Path
+
+import _label_bank as lb
+import _vault_tx as tx
+
+
+def die(reason):
+    sys.exit('relabel-notes: ' + ' '.join(str(reason).split()))
+
+
+def load(path):
+    try:
+        manifest = json.loads(Path(path).read_text(encoding='utf-8'))
+    except (OSError, ValueError) as e:
+        die(f'manifest unreadable: {e}')
+    if not isinstance(manifest, dict) or set(manifest) - {'reason', 'notes'}:
+        die('manifest must be an object with only "reason" and "notes"')
+    reason, notes = manifest.get('reason'), manifest.get('notes')
+    if not isinstance(reason, str) or not reason.strip():
+        die('manifest needs a non-empty "reason"')
+    if not isinstance(notes, dict) or not notes:
+        die('manifest needs a non-empty "notes" object')
+    for slug, edit in notes.items():
+        if not isinstance(edit, dict) or set(edit) - {'add', 'remove'} or not edit:
+            die(f'{slug}: an edit is {{"add": [...], "remove": [...]}}')
+        for key in ('add', 'remove'):
+            v = edit.get(key, [])
+            if not isinstance(v, list) or not all(isinstance(x, str) for x in v):
+                die(f'{slug}: {key} must be a list of strings')
+        both = set(edit.get('add', [])) & set(edit.get('remove', []))
+        if both:
+            die(f'{slug}: {", ".join(sorted(both))} both added and removed')
+    return reason.strip(), notes
+
+
+def relabel(edit):
+    def fn(current):
+        out = [x for x in current if x not in edit.get('remove', [])]
+        for x in edit.get('add', []):
+            if x not in out:
+                out.append(x)
+        return out
+    return fn
+
+
+def main():
+    if len(sys.argv) != 3:
+        sys.exit('usage: relabel-notes VAULT MANIFEST_JSON')
+    vault = Path(sys.argv[1]).expanduser().resolve()
+    reason, notes = load(sys.argv[2])
+    try:
+        tx.require_vault(vault)
+        bank = lb.Bank(vault)
+        inactive = sorted({x for e in notes.values() for x in e.get('add', []) if not bank.active(x)})
+        if inactive:
+            die(f'not active in the bank: {", ".join(inactive)}')
+        changes = [c for c in (lb.note_change(vault, slug, relabel(e)) for slug, e in notes.items()) if c]
+        if not changes:
+            print(json.dumps({'status': 'unchanged', 'notes': []}))
+            return
+        lines = ''.join(f'- {slug}: ' + ' '.join([f'+{x}' for x in e.get('add', [])] + [f'-{x}' for x in e.get('remove', [])])
+                        + '\n' for slug, e in notes.items() if f'notes/{slug}.md' in {c.rel for c in changes})
+        subject, _, rest = reason.partition('\n')
+        message = f'relabel: {subject}\n\n' + (rest.strip() + '\n\n' if rest.strip() else '') + lines
+        tx.apply(vault, changes, message)
+    except (lb.BankError, tx.TxError) as e:
+        die(e)
+    print(json.dumps({'status': 'committed', 'notes': [Path(c.rel).stem for c in changes]}))
+
+
+if __name__ == '__main__':
+    main()
