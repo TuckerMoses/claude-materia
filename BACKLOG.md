@@ -42,6 +42,18 @@ Mark complete with `[x]`.
   `triage-output.json` and the `baseline-sizes.tsv` TOTAL rows. Likely levers, depending on the
   answer: `severity_guidance`, a Growth threshold that escalates, or a fixer rule that a fix may
   not add net words without saying why.
+- [ ] **adversarial-review: say what the loop commits to, and offer a separate working copy**
+  (raised 2026-11-19 by the aiOS routing session, after two incidents of a feature branch checked
+  out in a primary checkout). The loop makes a checkpoint commit and one commit per fix round on
+  whatever branch is checked out in the scope's repo; it never checks or says which. Pointed at a
+  file in a primary checkout on its default branch, that means review commits land directly on
+  `main`, anything reading that checkout live sees mid-review states a later round may reverse,
+  and the commits sit unpushed. Fine for plan documents; not obviously fine elsewhere. To decide
+  and build: at setup, detect a primary checkout on its default branch, say so in one line, and
+  offer to run in a separate working copy (git worktree or jj workspace; see CLAUDE.md "Checkout
+  and Marketplace"). Autonomy mode cannot wait for an answer, so pick its default (proposed:
+  proceed, and record the fact in the end-of-run brief). Changes setup behaviour, so it wants its
+  own review.
 - [ ] **weekly-planner: vault-query wiring** (approved 2026-07-07, queued behind the kind-vault
   bridge build in `sc-kind-vault-bridge`). The deferred #4 edge: query `todo AND status:open` as a
   lifecycle consumer into weekly planning. Kernel skill — respect its `improvements.md`
