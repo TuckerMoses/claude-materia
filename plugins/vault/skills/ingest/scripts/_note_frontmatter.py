@@ -1,4 +1,5 @@
-"""Read and rewrite a note's frontmatter without touching its body. Shared by file-notes and note-outcome.
+"""Read and rewrite a note's frontmatter without touching its body. Shared by file-notes, note-outcome and the
+plugin-level label scripts (scripts/_label_bank.py).
 
 Iron rule: the body's md5 is checked before and after, and a mismatch aborts. Values keep their types and order
 (dates stay dates). A change made by anyone else between the read and the rename aborts too.
@@ -60,14 +61,20 @@ def read(path):
     return read_text(path), (st.st_mtime_ns, st.st_size)
 
 
-def rewrite(path, text, stamp, data):
-    """Replace the frontmatter with data. Raises NoteError if the body would change or the file already has."""
+def render(text, data):
+    """The note's text with its frontmatter replaced by data. Raises NoteError if the body would change."""
     _, rest = split(text)
     new = '---\n' + dump(data) + '---\n' + rest
     if _ingest_keys.body_md5(body_of(new)) != _ingest_keys.body_md5(body_of(text)):
         raise NoteError('body md5 changed; nothing written')
     if yaml.safe_load(split(new)[0]) != data:
         raise NoteError('frontmatter does not survive a round trip; nothing written')
+    return new
+
+
+def rewrite(path, text, stamp, data):
+    """Replace the frontmatter with data. Raises NoteError if the body would change or the file already has."""
+    new = render(text, data)
     p = Path(path)
     tmp = p.with_name(f'.{p.name}.tmp')
     try:
