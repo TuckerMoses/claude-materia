@@ -1,25 +1,32 @@
 #!/usr/bin/env python3
-"""Route thoughts, dispatch their writers in order, and record what happened. Names no label and no sink.
+"""Route thoughts, deliver them through their targets' adapters in order, and record what happened. Names no label
+and no target.
 
   dispatch-targets route VAULT MANIFEST
-      For the gate. Per thought: the labels to propose (a filed note's stored labels win, invariant 5), the targets
-      those labels resolve to, anything unresolved, and any routing warnings. Writes nothing.
+      For the gate. Per thought: the labels to propose (a filed note's stored labels win, invariant 5) and the targets
+      those labels route to under <vault>/_machine/routing.yml. Writes nothing.
 
   dispatch-targets run VAULT MANIFEST --mode silent|interactive [--no-journal] [--recovered RUN_ID]
-      Write the id-supplying target, then the others in order; then routed_to; then, for fully successful units only,
-      markers, watermarks and moves; then report.json beside the manifest. Exits 0 even with held units: commit-run
-      must still run, and it is what exits non-zero on held. Exits non-zero only if the run failed before writing.
+      Deliver to the notes target, whose result is the thought's id, then to the others in order; then routed_to;
+      then, for fully successful units only, markers, watermarks and moves; then report.json beside the manifest.
+      Exits 0 even with held units: commit-run must still run, and it is what exits non-zero on held. Exits non-zero
+      only if the run failed before its commit points.
+
+Routing is data: <vault>/_machine/routing.yml declares targets (each naming the adapter that delivers to it, and its
+params) and rules (label match -> target names). An adapter is an executable in adapters/ beside this script; see
+adapters/notes for the interface. A routing file that is absent, fails its schema, or names an adapter that does not
+exist fails the run before anything is written.
 
 --no-journal is for a run scoped to one external source, whose closed day-files are not this run's business.
 --recovered records the interrupted run that `commit-run --recover` committed as this run's first action.
-Every child call times out after $VAULT_INGEST_CALL_TIMEOUT seconds (default 300): a timed-out writer is a failed
-target (a timed-out batch fails every thought in it), so its unit is held; any other timed-out call aborts the run
-before markers, as any failure there does. $VAULT_INGEST_RUN_DEADLINE (seconds, unset = none; the nightly sets it)
-bounds the writer calls' sum, whose count grows with the thoughts: each writer gets what is left, and one past it
-times out at once, so its unit is held. The other calls are a fixed handful (lookup, route, rewrite,
-journal-candidates, finish), so this whole command is bounded by the deadline plus five call timeouts, and a caller
-can bound it, as the nightly does with claude's Bash timeout. SIGTERM or SIGHUP kills the running
-child's process group before exiting: the writers run in their own sessions and would outlive this process.
+Every child call times out after $VAULT_INGEST_CALL_TIMEOUT seconds (default 300): a timed-out adapter is a failed
+target, so its unit is held; any other timed-out call aborts the run before markers, as any failure there does.
+$VAULT_INGEST_RUN_DEADLINE (seconds, unset = none; the nightly sets it) bounds the adapter calls' sum, whose count grows
+with the thoughts: each adapter call gets what is left, and one past it times out at once, so its unit is held. The
+other calls are a fixed handful (check, lookup, rewrite, journal-candidates, finish), so this whole command is bounded
+by the deadline plus five call timeouts, and a caller can bound it, as the nightly does with claude's Bash timeout.
+SIGTERM or SIGHUP kills the running child's process group before exiting: adapters run in their own sessions and
+would outlive this process.
 """
 import argparse
 import datetime
@@ -33,41 +40,21 @@ import tempfile
 import time
 from pathlib import Path
 
-import jsonschema
 import yaml
 
-import _ingest_keys
-
 HERE = Path(__file__).resolve().parent
+sys.path.insert(1, str(HERE.parents[2] / 'scripts'))  # the plugin's shared modules
+import _ingest_keys  # noqa: E402
+import _routing  # noqa: E402
+
+ADAPTERS = HERE / 'adapters'
+ABORT = 2  # an adapter's exit status meaning the run must stop
 DAY_SOURCE = re.compile(r'^journal/(\d{4}-\d{2}-\d{2})$')
 DIARY = ('diary', 'diary-only', 'diary_only')
 
 
 def die(reason):
     sys.exit(' '.join(str(reason).split()))
-
-
-def lib():
-    root = os.environ.get('AGENT_LIB')
-    if not root or not os.path.isdir(root):
-        die('AGENT_LIB unset or unresolvable')
-    return root
-
-
-def load_table():
-    with open(HERE / 'dispatch-table.yml', encoding='utf-8') as f:
-        table = yaml.safe_load(f)
-    with open(HERE / 'dispatch-table.schema.json', encoding='utf-8') as f:
-        schema = json.load(f)
-    error = jsonschema.exceptions.best_match(jsonschema.Draft7Validator(schema).iter_errors(table))
-    if error:
-        die(f'dispatch-table.yml fails its schema: {error.message}')
-    return table['artifacts']
-
-
-def writer_path(name):
-    beside = HERE / name
-    return str(beside) if beside.exists() else os.path.join(lib(), 'functions', name)
 
 
 # Every call on the unattended path is bounded (spec, Nightly job: fail loud, never hang). A child that blocks, as one
@@ -140,15 +127,21 @@ def thoughts_of(manifest):
     return out
 
 
-def route(records):
-    r = call([os.path.join(lib(), 'functions', 'route')], stdin=json.dumps(records))
-    if r.returncode != 0:
-        die(f'route failed: {r.stderr}')
-    return {x['ref']: x for x in json.loads(r.stdout)}
+def load_routing(vault):
+    """The vault's routing, with every adapter it names present. Any problem fails the run before a write."""
+    try:
+        routing = _routing.load(vault)
+    except _routing.RoutingError as e:
+        die(f'{e}; nothing written')
+    for name in routing.targets:
+        path = ADAPTERS / routing.adapter(name)
+        if not (path.is_file() and os.access(str(path), os.X_OK)):
+            die(f'target {name}: no adapter {routing.adapter(name)}; nothing written')
+    return routing
 
 
-def plain(target):
-    return {k: target[k] for k in ('container', 'artifact', 'name')}
+def plain(routing, target):
+    return {'target': target, 'adapter': routing.adapter(target)}
 
 
 def proposed_labels(thought, stored):
@@ -158,10 +151,14 @@ def proposed_labels(thought, stored):
 
 def cmd_route(vault, manifest):
     thoughts = thoughts_of(manifest)
+    routing = load_routing(vault)
     stored = file_notes('lookup', vault, {'notes': thoughts})
-    routes = route([{'ref': t['ref'], 'labels': proposed_labels(t, stored)} for t in thoughts])
-    print(json.dumps([dict(routes[t['ref']], labels=proposed_labels(t, stored), already_filed=t['ref'] in stored,
-                           failed=stored.get(t['ref'], {}).get('failed')) for t in thoughts], indent=2))
+    out = []
+    for t in thoughts:
+        labels = proposed_labels(t, stored)
+        out.append({'ref': t['ref'], 'labels': labels, 'targets': [plain(routing, x) for x in routing.route(labels)],
+                    'already_filed': t['ref'] in stored, 'failed': stored.get(t['ref'], {}).get('failed')})
+    print(json.dumps(out, indent=2))
 
 
 def unit_of(source):
@@ -181,11 +178,10 @@ class Run:
         self.include_journal = include_journal
         with open(manifest_path, encoding='utf-8') as f:
             self.manifest = json.load(f)
-        self.table = load_table()
         self.thoughts = thoughts_of(self.manifest)
         self.failed = {}     # ref -> [{ref, id?, target, reason}]
         self.success = {}    # ref -> [targets]
-        self.ids = {}        # ref -> id from the id-supplying writer
+        self.ids = {}        # ref -> id: the slug the notes target landed
         self.outcome = {}    # ref -> outcome stored on the note
         self.written, self.skipped, self.warnings = [], [], []
 
@@ -196,7 +192,7 @@ class Run:
         self.failed.setdefault(thought['ref'], []).append(entry)
 
     def ok(self, thought, target):
-        self.success.setdefault(thought['ref'], []).append(plain(target))
+        self.success.setdefault(thought['ref'], []).append(target)
 
     def confirm_labels(self, stored):
         """Under --silent a filed note's stored labels stand. At a gate, the confirmed labels may differ."""
@@ -210,98 +206,80 @@ class Run:
             elif t['labels'] != found['labels']:
                 self.changed[t['ref']] = t['labels']
 
-    def check_table(self, routes):
-        """Step 2: an unknown artifact fails the run before anything is written."""
-        for r in routes.values():
-            for target in r['targets']:
-                if target['artifact'] not in self.table:
-                    die(f'artifact {target["artifact"]} has no dispatch table entry; nothing written. '
-                        'Revert the offending lib commit with jj.')
-
-    def targets_in_order(self, route_result):
-        return sorted(route_result['targets'], key=lambda t: self.table[t['artifact']]['order'])
-
-    def write_suppliers(self, routes, stored):
-        """Step 3. A supplier failure, including an unusable existing note, leaves the thought's other targets alone."""
-        by_writer = {}
+    def record_routes(self, routes):
+        """A thought no rule matched is a failed target: nothing is dropped."""
         for t in self.thoughts:
-            for target in self.targets_in_order(routes[t['ref']]):
-                if self.table[target['artifact']]['supplies_id']:
-                    found = stored.get(t['ref'], {})
-                    if 'failed' in found:
-                        self.fail(t, plain(target), found['failed'])
-                    else:
-                        by_writer.setdefault(target['artifact'], []).append((t, target))
-        for artifact, pairs in sorted(by_writer.items(), key=lambda kv: self.table[kv[0]]['order']):
-            notes = [{k: v for k, v in t.items() if k != 'ref'} for t, _ in pairs]
-            payload = {'notes': notes}
-            for key in ('mark_ingested', 'archive_moves'):
-                payload[key] = self.manifest.get(key, [])
-            results = self.batch(artifact, payload)
-            if isinstance(results, str):  # the batch timed out: every thought in it is a failed target, its unit held
-                for t, target in pairs:
-                    self.fail(t, plain(target), results)
-                continue
-            for t, target in pairs:
-                result = results.get(t['ref'], {'failed': 'writer returned nothing for this thought'})
-                if 'failed' in result:
-                    self.fail(t, plain(target), result['failed'])
-                    continue
-                self.ids[t['ref']] = result['slug']
-                self.outcome[t['ref']] = result.get('outcome')
-                self.ok(t, target)
-                (self.written if result['status'] == 'written' else self.skipped).append(result['path'])
+            if not routes[t['ref']]:
+                self.fail(t, {}, 'no routing rule matched this thought')
 
-    def batch(self, artifact, payload):
-        with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False) as f:
-            json.dump(payload, f)
-        try:
-            r = call([writer_path(self.table[artifact]['writer']), 'write', str(self.vault), f.name], writer=True)
-        finally:
-            os.unlink(f.name)
-        if r.returncode == TIMED_OUT:
-            return r.stderr
+    def deliver(self, t, target, record):
+        """One adapter call: the parsed result, or a failed result. An adapter's ABORT stops the run."""
+        request = {'target': target, 'params': self.routing.params(target), 'thought': record}
+        r = call([str(ADAPTERS / self.routing.adapter(target)), str(self.vault)], stdin=json.dumps(request), writer=True)
+        if r.returncode == ABORT:
+            die(r.stderr or f'adapter {self.routing.adapter(target)} aborted the run')
         if r.returncode != 0:
-            die(r.stderr or f'{artifact} writer failed')
-        return json.loads(r.stdout)['results']
+            return {'status': 'failed', 'reason': r.stderr or f'adapter {self.routing.adapter(target)} exited {r.returncode}'}
+        try:
+            result = json.loads(r.stdout)
+        except ValueError:
+            result = None
+        if not isinstance(result, dict) or result.get('status') not in ('delivered', 'failed'):
+            return {'status': 'failed', 'reason': f'adapter {self.routing.adapter(target)} returned no status'}
+        if result['status'] == 'failed':
+            result['reason'] = result.get('reason') or 'no reason given'
+        return result
 
-    def write_others(self, routes):
-        """Step 4. Skipped for a note carrying an outcome: the ritual finished the item while the day-file was held."""
+    def record_of(self, t):
+        record = {k: v for k, v in t.items() if k not in ('ref', 'disposition', 'near_miss')}
+        record['ref'] = t['ref']
+        if t['ref'] in self.ids:
+            record['id'] = self.ids[t['ref']]
+        return record
+
+    def deliver_notes(self, routes, stored):
+        """The vault copy first. A failure, including an unusable existing note, leaves the thought's other targets
+        unattempted."""
         for t in self.thoughts:
-            supplied = t['ref'] in self.ids
-            supplier_failed = any(self.table[x['target']['artifact']]['supplies_id'] for x in self.failed.get(t['ref'], [])
-                                  if x['target'].get('artifact') in self.table)
-            for target in self.targets_in_order(routes[t['ref']]):
-                entry = self.table[target['artifact']]
-                if entry['supplies_id'] or supplier_failed:
+            for target in routes[t['ref']]:
+                if not self.routing.is_notes(target):
                     continue
-                if entry['takes_id'] and not supplied:
-                    self.fail(t, plain(target), 'no id source')
+                if 'failed' in stored.get(t['ref'], {}):
+                    self.fail(t, plain(self.routing, target), stored[t['ref']]['failed'])
+                    continue
+                result = self.deliver(t, target, self.record_of(t))
+                if result['status'] == 'failed':
+                    self.fail(t, plain(self.routing, target), result['reason'])
+                    continue
+                landed = result.get('landed') or {}
+                if not all(isinstance(landed.get(k), str) for k in ('slug', 'path', 'status')):
+                    self.fail(t, plain(self.routing, target), 'notes adapter landed no slug')
+                    continue
+                self.ids[t['ref']] = landed['slug']
+                self.outcome[t['ref']] = landed.get('outcome')
+                self.ok(t, plain(self.routing, target))
+                (self.written if landed['status'] == 'written' else self.skipped).append(landed['path'])
+
+    def deliver_others(self, routes):
+        """Then every other target, with the note's slug as the thought's id. Skipped for a note carrying an outcome:
+        the item was finished while the day-file was held."""
+        for t in self.thoughts:
+            targets = routes[t['ref']]
+            if any(self.routing.is_notes(x) for x in targets) and t['ref'] not in self.ids:
+                continue  # the vault copy failed; that failure already holds the unit
+            for target in targets:
+                if self.routing.is_notes(target):
+                    continue
+                if t['ref'] not in self.ids:
+                    self.fail(t, plain(self.routing, target), 'no id source: no notes target for this thought')
                     continue
                 if self.outcome.get(t['ref']):
                     continue
-                self.write_one(t, target, entry)
-
-    def write_one(self, t, target, entry):
-        record = {'body': t['body'], 'labels': t['labels'], 'source': t['source'], 'title': t['title'],
-                  'date': str(t['captured'])}
-        if entry['takes_id']:
-            record['id'] = self.ids[t['ref']]
-        r = call([writer_path(entry['writer']), '--path', target['path'], '--thought', json.dumps(record)], writer=True)
-        if r.returncode == 0:
-            self.ok(t, target)
-        else:
-            self.fail(t, plain(target), r.stderr or f'{entry["writer"]} failed')
-
-    def record_routes(self, routes):
-        """Every unresolved route, and a thought no rule matched at all, is a failed target. Nothing is dropped."""
-        for t in self.thoughts:
-            r = routes[t['ref']]
-            for u in r['unresolved']:
-                self.fail(t, u['target'], u['reason'])
-            if not r['targets'] and not r['unresolved']:
-                self.fail(t, {}, 'no routing rule matched this thought')
-            self.warnings += [{'ref': t['ref'], 'title': t['title'], 'message': m} for m in r.get('warnings', [])]
+                result = self.deliver(t, target, self.record_of(t))
+                if result['status'] == 'delivered':
+                    self.ok(t, plain(self.routing, target))
+                else:
+                    self.fail(t, plain(self.routing, target), result['reason'])
 
     def write_routed_to(self):
         """Step 5, first half. Only successful targets are recorded; gate-changed labels go with them."""
@@ -318,7 +296,7 @@ class Run:
         thoughts = {t['ref']: t for t in self.thoughts}
         for failure in result['failed']:
             ref = by_slug[failure['slug']]
-            self.fail(thoughts[ref], {'artifact': 'routed_to'}, failure['reason'])
+            self.fail(thoughts[ref], {'target': 'routed_to'}, failure['reason'])
         return result['rewritten']
 
     def closed_candidates(self):
@@ -369,13 +347,14 @@ class Run:
                 [m for m in moves if not any(under(m['from'], root) for root in blocked)])
 
     def run(self):
+        file_notes('check', self.vault, self.manifest)
+        self.routing = load_routing(self.vault)
         stored = file_notes('lookup', self.vault, {'notes': self.thoughts})
         self.confirm_labels(stored)
-        routes = route([{'ref': t['ref'], 'labels': t['labels']} for t in self.thoughts])
-        self.check_table(routes)
+        routes = {t['ref']: self.routing.route(t['labels']) for t in self.thoughts}
         self.record_routes(routes)
-        self.write_suppliers(routes, stored)
-        self.write_others(routes)
+        self.deliver_notes(routes, stored)
+        self.deliver_others(routes)
         rewritten = self.write_routed_to()
         held, open_day, marks, advance, moves = self.settle_units()
         routed = [{'id': self.ids[t['ref']], 'targets': self.success.get(t['ref'], []), 'labels': t['labels'],

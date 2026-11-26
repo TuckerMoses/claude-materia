@@ -4,18 +4,16 @@ Nothing here writes: every function returns _vault_tx.Change objects, and the ca
 That is how a rename puts the bank entry, every note, routing rules and source lenses in one commit (D11).
 """
 import json
-import sys
 from pathlib import Path
 
 import jsonschema
 import yaml
 
-HERE = Path(__file__).resolve().parent
-sys.path.insert(1, str(HERE.parent / 'skills' / 'ingest' / 'scripts'))  # _note_frontmatter, _ingest_keys
+import _ingest_keys
+import _note_frontmatter as fm
+import _vault_tx as tx
 
-import _ingest_keys  # noqa: E402
-import _note_frontmatter as fm  # noqa: E402
-import _vault_tx as tx  # noqa: E402
+HERE = Path(__file__).resolve().parent
 
 BANK = '_machine/labels.yml'
 ROUTING = '_machine/routing.yml'

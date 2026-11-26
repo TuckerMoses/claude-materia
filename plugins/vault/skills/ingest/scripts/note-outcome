@@ -2,6 +2,7 @@
 """Write a note's outcome record. The only writer of outcome and resolved; called on the ritual's behalf.
 
 Usage: note-outcome VAULT SLUG done|dropped --resolved YYYY-MM-DD
+The direct way to close an actionable note: no backlog needs to exist for it.
 Frontmatter only, with the body's md5 checked. An identical existing outcome is a no-op; a conflicting one is an
 error; a missing note is an error. Never read to select or schedule work.
 """
@@ -11,7 +12,8 @@ import json
 import sys
 from pathlib import Path
 
-import _note_frontmatter as fm
+sys.path.insert(1, str(Path(__file__).resolve().parents[3] / 'scripts'))  # the plugin's shared modules
+import _note_frontmatter as fm  # noqa: E402
 
 
 class Parser(argparse.ArgumentParser):

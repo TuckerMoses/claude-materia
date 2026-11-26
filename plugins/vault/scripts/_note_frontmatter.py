@@ -1,5 +1,5 @@
-"""Read and rewrite a note's frontmatter without touching its body. Shared by file-notes, note-outcome and the
-plugin-level label scripts (scripts/_label_bank.py).
+"""Read and rewrite a note's frontmatter without touching its body. Shared by the ingest scripts, note-outcome and the
+label scripts beside this file.
 
 Iron rule: the body's md5 is checked before and after, and a mismatch aborts. Values keep their types and order
 (dates stay dates). A change made by anyone else between the read and the rename aborts too.
