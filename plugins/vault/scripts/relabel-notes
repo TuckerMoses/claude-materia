@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The shared relabel primitive: rewrite the `labels` of many notes in one commit.
 
-Usage: relabel-notes VAULT MANIFEST_JSON
+Usage: relabel-notes VAULT MANIFEST_JSON [--dry-run]
 
 Manifest:
   {"reason": "why, as the commit description",
@@ -13,6 +13,8 @@ Manifest:
 - All-or-nothing: every note in the manifest is rewritten, or none is. A note that would not change is not written.
 - One path-scoped jj commit, refused when any note it would write has uncommitted changes.
 Prints JSON on success ({"status": "committed"|"unchanged", "notes": [...]}); exits 1 with a reason otherwise.
+--dry-run runs every check, writes nothing, and prints {"status": "planned", "notes": {slug: {"before": [...],
+"after": [...]}}} for each note that would change.
 """
 import json
 import sys
@@ -62,10 +64,13 @@ def relabel(edit):
 
 
 def main():
-    if len(sys.argv) != 3:
-        sys.exit('usage: relabel-notes VAULT MANIFEST_JSON')
-    vault = Path(sys.argv[1]).expanduser().resolve()
-    reason, notes = load(sys.argv[2])
+    args = sys.argv[1:]
+    dry_run = '--dry-run' in args
+    args = [x for x in args if x != '--dry-run']
+    if len(args) != 2:
+        sys.exit('usage: relabel-notes VAULT MANIFEST_JSON [--dry-run]')
+    vault = Path(args[0]).expanduser().resolve()
+    reason, notes = load(args[1])
     try:
         tx.require_vault(vault)
         bank = lb.Bank(vault)
@@ -75,6 +80,16 @@ def main():
         changes = [c for c in (lb.note_change(vault, slug, relabel(e)) for slug, e in notes.items()) if c]
         if not changes:
             print(json.dumps({'status': 'unchanged', 'notes': []}))
+            return
+        if dry_run:
+            held = sorted({c.rel for c in changes} & tx.dirty(vault))
+            if held:
+                die(f'uncommitted changes in {", ".join(held)}; commit or restore them first')
+            plan = {}
+            for c in changes:
+                before, after = lb.note_labels_change(c)
+                plan[Path(c.rel).stem] = {'before': before, 'after': after}
+            print(json.dumps({'status': 'planned', 'notes': plan}))
             return
         lines = ''.join(f'- {slug}: ' + ' '.join([f'+{x}' for x in e.get('add', [])] + [f'-{x}' for x in e.get('remove', [])])
                         + '\n' for slug, e in notes.items() if f'notes/{slug}.md' in {c.rel for c in changes})
