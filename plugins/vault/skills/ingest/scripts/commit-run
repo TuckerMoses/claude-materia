@@ -36,6 +36,11 @@ Contract:
   paths (its report's written/rewritten/marked/moved/skipped, ingest_paths.yml if it advanced, its run dir) are
   committed under its id, oldest first, and nothing else: an open day-file or a hand-edited note stays uncommitted.
   Prints {"recovered": <newest run-id>}, or null. The caller records it in its own report.json.
+  Then, if _machine/label-proposals.yml is still modified and uncommitted, a run was killed between `label-proposals apply` and
+  its report (no report claims the file): it is committed alone as `ingest(recovered): label proposals`, after it
+  passes the proposal bank's checks, and the output carries "proposal_bank": true. A file that fails them is left
+  uncommitted and --recover exits non-zero naming it. label-proposals is the file's sole writer, so nothing else's
+  edit is swept up.
 - --landed (F2): `completed: true` is written before the commit, so a kill between the two reads as success. Exits 0
   when RUN_ID reports completed and its commit landed or it was a no-op; 1 when it does not report completed (rolled
   back, or a finish that raised) or is one --recover would pick up (the same test); 2 when it cannot tell (bad run
@@ -47,6 +52,7 @@ import json, os, re, subprocess, sys
 from pathlib import Path
 
 sys.path.insert(1, str(Path(__file__).resolve().parents[3] / 'scripts'))  # the plugin's shared modules
+import _label_proposals as lp  # noqa: E402
 import _vault_tx as tx  # noqa: E402
 
 TIMEOUT = int(os.environ.get('VAULT_INGEST_CALL_TIMEOUT', '300'))
@@ -182,9 +188,6 @@ def recover(vault: Path):
         report = pending(vault, run, dirty)
         if report is not None:
             runs.append((run, report))
-    if not runs:
-        print(json.dumps({'recovered': None}))
-        return
     runs.sort(key=lambda rr: (rr[0][:10], int(rr[0][11:])))
     files = 0
     for run, report in runs:
@@ -198,11 +201,42 @@ def recover(vault: Path):
         except tx.TxError as e:
             sys.exit(f'recover: commit of {run} failed\n{e}')
         files += len(fileset)
+    proposals = orphan_proposals(vault)
+    if not runs and not proposals:
+        print(json.dumps({'recovered': None}))
+        return
     try:
         regen(vault)
     except (SystemExit, Exception) as e:  # the commits landed; a stale CHANGELOG.md must not stop the run
         print(f'warning: {e}', file=sys.stderr)
-    print(json.dumps({'recovered': runs[-1][0], 'files': files}))
+    out = {'recovered': runs[-1][0], 'files': files} if runs else {'recovered': None}
+    if proposals:
+        out['proposal_bank'] = True
+    print(json.dumps(out))
+
+
+def orphan_proposals(vault: Path):
+    """Commit a proposal bank an interrupted run left modified and no report claims. True if it committed one. A
+    file the history has never held (a vault stamped but not yet committed) is not a run's leftover."""
+    if lp.PROPOSALS not in dirty_paths(vault, 'recover'):
+        return False
+    r = jj(vault, 'diff', '--summary', '-r', '@', tx.fileset(lp.PROPOSALS))
+    if r.returncode != 0:
+        sys.exit(f'recover: jj diff failed\n{r.stderr}')
+    if r.stdout.split()[:1] != ['M']:
+        return False
+    try:
+        lp.Proposals(vault)
+    except lp.ProposalError as e:
+        sys.exit(f'recover: {lp.PROPOSALS} is uncommitted and fails its checks; fix it by hand ({e})')
+    message = ('ingest(recovered): label proposals — written by an interrupted run; committed by the next run\n\n'
+               '## label proposals · recovered\n\nA run was stopped after `label-proposals apply` wrote the proposal '
+               'bank and before its report. The next run committed the proposal bank alone.\n')
+    try:
+        tx.commit_exact(vault, {lp.PROPOSALS}, message)
+    except tx.TxError as e:
+        sys.exit(f'recover: commit of {lp.PROPOSALS} failed\n{e}')
+    return True
 
 
 def main():
