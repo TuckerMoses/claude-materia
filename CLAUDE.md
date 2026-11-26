@@ -39,6 +39,17 @@ claude-materia/
 - **Consumer-side contract enforcement.** Adversarial-review accepts user-supplied reviewer agents via configuration or invocation flags. The loop's contract is enforced by a semantic audit (the auditor agent) at session start, not by tags or schema requirements on the agent files. This makes reviewer agents portable across skills.
 - **No session data in the repo.** Session artifacts are runtime data created by skills at execution time. They live in user state at `~/.claude/plugins/data/claude-materia-claude-materia/sessions/`, not under the skill install. The `~/.claude/plugins/data/<plugin>-<marketplace>/` path is the Claude Code-canonical user-state location for plugin-managed data — it survives plugin updates and is writable at runtime even when the skill install path is read-only. The audit cache lives in the same directory (`audit-cache.json`).
 
+## Checkout and Marketplace
+
+Claude Code can register this repo as a marketplace by directory. A directory marketplace serves whatever is checked out in that directory: `/reload-plugins` and `claude plugin marketplace update` load the skills from the branch that is checked out there, not from `main` on GitHub.
+
+Check with `claude plugin marketplace list`. If `claude-materia` shows a directory source pointing at this checkout:
+
+- **Keep this checkout on `main`.** Do not switch its branch for feature work. Checking out a feature branch here changes which version of every skill the next reload loads, for every session on the machine.
+- **Do feature work in a worktree** under `.worktrees/` (gitignored): `git worktree add -b <branch> .worktrees/<name> origin/main`. Remove it once the branch is merged.
+- **A change is live only after three things:** it is merged to `main`, this checkout has pulled it, and the plugins are updated (see **Version Bumping**), followed by a restart or `/reload-plugins`.
+- **Stacked PRs merge into their base, not `main`.** A PR whose base is another PR's branch lands on that branch. After the lower PR merges, retarget the upper one to `main` before merging it.
+
 ## Adding a New Skill
 
 1. Create `skills/<skill-name>/SKILL.md` with frontmatter (name, description).
