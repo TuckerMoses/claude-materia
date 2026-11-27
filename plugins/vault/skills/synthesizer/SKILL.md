@@ -137,8 +137,11 @@ seen:
   written only by `label-proposals`. A proposal left open stays for the next sitting, unexpired;
   accepted and rejected ones leave the bank (rejections are remembered in its `rejected` list).
   Its idempotency: an accepted label is in the bank and its proposal gone; a rejected name is in
-  `rejected`; swept notes carry the label. A sitting interrupted part-way loses nothing: each
-  proposal action is its own commit, and the relabel manifest is applied once, at the end.
+  `rejected`; swept notes carry the label. A sitting interrupted part-way keeps every accept and
+  reject (each proposal action is its own commit) and applies no relabel manifest (it is applied once,
+  at the end). The next sitting's Sweep A still catches pending `needs-label` notes, but Sweep B for a
+  label accepted in the interrupted sitting runs only when the human names that label: the accept
+  deleted its proposal and evidence, and the `label-proposals(accept)` commits in vcs history list it.
 
 ## Merge execution (on confirm)
 
@@ -236,7 +239,8 @@ Proposals come from three places, and all of them wait for `resolve`:
 
 **Field ownership refinement:** `labels` is written by ingest **at creation**; thereafter only by
 `relabel-notes` on this skill's (or the surgeon's) **confirmed** passes, by `label-bank rename` or
-`label-bank merge`, ingest's interactive gate, or the human.
+`label-bank merge`, by a confirmed note merge (the survivor's labels union, step 3 of Merge execution),
+ingest's interactive gate, or the human.
 
 ## Which notes this skill skips
 

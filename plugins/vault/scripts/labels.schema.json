@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Vault label bank (<vault>/_machine/labels.yml)",
-  "description": "The vault's label vocabulary. Written only by label-bank.",
+  "description": "The vault's label vocabulary. Written only by label-bank and by label-proposals accept (which adds the entry and removes the proposal in one commit).",
   "type": "object",
   "required": ["labels"],
   "additionalProperties": false,

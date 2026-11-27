@@ -1,6 +1,7 @@
 # Label Bank — this vault's label vocabulary, the shared inter-skill label API.
-# Schema: the vault plugin's scripts/labels.schema.json. Sole writer: the plugin's `label-bank`
-# script (add / update / retire / rename / remove); never hand-edit. Only this header comment
+# Schema: the vault plugin's scripts/labels.schema.json. Writers: the plugin's `label-bank`
+# script (add / update / retire / rename / merge / remove), and `label-proposals accept`, which
+# adds the entry and removes the proposal in one commit; never hand-edit. Only this header comment
 # survives a write.
 #
 # Entry shape:
@@ -8,13 +9,14 @@
 #     when_to_apply: "…"     # classifier-facing definition
 #     status: active         # active | retired. Ingest applies only active labels to new notes;
 #                            # a retired label stays valid on existing notes for provenance.
-#     protected: true        # optional; refuses retire, rename and remove (text may be updated)
+#     protected: true        # optional; refuses retire, rename, merge (as the absorbed label) and remove (text may be updated)
 #     origin: imported       # optional, default local; read-only to every vault writer
 #
 # This is a SEED bank. The action labels and the holding label below ship with every vault and
 # are protected. Domain / topic / type / facet labels are DERIVED PER VAULT at create time and
 # added through `label-bank add`; none ship in this template. Container labels
-# (workspace:<name>, project:<name>) the vault does not own arrive as `origin: imported`.
+# (workspace:<name>, project:<name>) the vault does not own would be `origin: imported`, but no
+# writer of imported entries exists yet (a future import adapter or a one-time migration seed would write them).
 
 labels:
   todo:
@@ -23,7 +25,7 @@ labels:
       from you (vs. knowledge / observation / reference). Orthogonal to
       subject/container/type labels — a note can be [idea, todo] or bare todo. Apply with
       discipline (actionable, not aspirational) or it over-applies. Pairs with note-level
-      status: open|done.
+      outcome: done|dropped, written by note-outcome when the action closes.
     status: active
     protected: true
   session-seed:

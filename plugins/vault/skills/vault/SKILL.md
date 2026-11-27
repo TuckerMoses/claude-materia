@@ -110,8 +110,9 @@ the spec; this phase only stamps them (plus the locked vocabulary). Steps:
    `_archive/`, `_machine/`.
 5. Stamp `assets/labels.yml → _machine/labels.yml` (the seed bank: the protected action and holding
    labels, plus `idea` and `observation`). The locked domain/topic vocabulary is added in step 10,
-   through the bank's sole writer. Container labels (`workspace:<name>`, `project:<name>`) the vault does
-   not own arrive later as `origin: imported` entries; a vault without them works.
+   through `label-bank add`. Container labels (`workspace:<name>`, `project:<name>`) the vault does
+   not own would be `origin: imported` entries, but no writer of imported entries exists yet (a future
+   import adapter or a one-time migration seed would write them); a vault without them works.
 6. Stamp `assets/ingest_paths.yml → _machine/ingest_paths.yml` (empty registry),
    `assets/routing.yml → _machine/routing.yml` (the notes target only), and
    `assets/label-proposals.yml → _machine/label-proposals.yml` (no proposals, nothing rejected).
@@ -138,7 +139,7 @@ all-or-nothing pass — never a best-effort one.
 
 This produces final-architecture notes directly — **born-correct**, never needs a later migration.
 
-*(Cold start → skip; the vocabulary grows later via the ingest skill.)*
+*(Cold start → skip; the vocabulary grows later: ingest proposes, `/synthesizer resolve` accepts.)*
 
 ### Iron rule (hard invariant)
 
@@ -180,11 +181,12 @@ Append a conformant entry to `sources:` in `_machine/ingest_paths.yml`. This app
 deliberate accepted-read-exposure registration (additive-surface model — every entry is an explicit
 "I agree to send this source through ingest").
 
-### Two writers, one schema (no conflict)
+### Three writers, one schema (no conflict)
 
 `add-source` writes **new entries** (invariant registration). The ingest skill (`vault:ingest`)
 writes **`last_read` watermarks** (runtime state) on **vcs** entries only — destructive entries have no
-watermark. The schema is defined once,
+watermark. `label-bank rename` and `merge` rewrite label names in `lens`. Each writes a different
+field. The schema is defined once,
 here and in `INSTRUCTION.md`; do not fork it.
 
 ### Cold-start interaction

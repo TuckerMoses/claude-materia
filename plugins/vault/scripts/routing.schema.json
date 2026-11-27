@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Vault routing (<vault>/_machine/routing.yml)",
-  "description": "Where a labelled thought goes. targets names each destination and the adapter that delivers to it; rules are a set, not a sequence: every rule whose match holds delivers to every target in its to, so one rule never shadows another. Read by ingest's dispatch-targets and ingest-status; label names in match are rewritten only by label-bank rename.",
+  "description": "Where a labelled thought goes. targets names each destination and the adapter that delivers to it; rules are a set, not a sequence: every rule whose match holds delivers to every target in its to, so one rule never shadows another. Read by ingest's dispatch-targets and ingest-status; label names in match are rewritten only by label-bank rename and merge.",
   "type": "object",
   "required": ["targets", "rules"],
   "additionalProperties": false,

@@ -3,6 +3,16 @@
 Status: reviewed with the author 2026-11-26; decisions D1 to D14 settled. Nothing here is built.
 Plugin: `plugins/vault` (currently 1.3.0). This is a breaking change; target version 2.0.0.
 
+**Superseded by implementation (2026-11-26).** Where these points and sections 3, 5.1, 7 and 9 differ, the
+implementation stands: `label-bank` also has `merge --from --into` (one commit moving every note, routing
+rule and source lens from the absorbed label to the survivor, then removing it; refused when the absorbed
+label is imported or protected) and a read-only `show`; the surgeon's `merge A into B` is that one call.
+`label-proposals accept` writes `labels.yml` itself, adding the entry and removing the proposal in one
+commit, rather than calling `label-bank add`, so the bank has two writers. A protected label's text
+(including `needs-label`'s, section 9) is changed with `label-bank update` directly, outside the surgeon,
+which still refuses every operation on protected labels. No writer creates `origin: imported` entries yet;
+the migration seed (section 10, step 2) or a future import adapter would.
+
 ## 1. Why
 
 Four problems, one design:

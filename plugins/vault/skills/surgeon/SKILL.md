@@ -22,7 +22,8 @@ whether a note still fits a rewritten definition) is made against the bank's `wh
 **The skill writes nothing by hand.** Every change goes through two scripts, the same ones the
 synthesizer uses:
 
-- `label-bank` — the sole writer of `<vault>/_machine/labels.yml`. Its `rename` and `merge` also
+- `label-bank` — the writer of `<vault>/_machine/labels.yml` (beside `label-proposals accept`, which
+  the surgeon does not use). Its `rename` and `merge` also
   rewrite carrying notes, routing rules and source lenses in the same commit.
 - `relabel-notes` — the bulk rewrite of note `labels`, driven by a JSON manifest.
 
@@ -71,7 +72,9 @@ from the sections below rather than executing them.
    `protected: true`, refuse every operation on it and say why: imported labels belong to another
    system and the vault never writes them; protected labels (`todo`, `session-seed`, `delegated`,
    `needs-label`) keep their names and meanings because ingest and other skills depend on them.
-   The scripts refuse these too; refusing first saves a dry run.
+   `label-bank` refuses retire, rename, merge and remove on them too; refusing first saves a dry run.
+   A protected label's `when_to_apply` text is changed with `label-bank update` directly, outside
+   the surgeon.
 3. **Dry run.** Run the operation's script with `--dry-run`. It runs every check the real run
    runs and prints `{"status": "planned", ...}`, or refuses with a reason. Show the human:
    - the note count and the slugs (all of them up to about twenty; beyond that the count and the

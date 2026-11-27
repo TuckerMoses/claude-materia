@@ -63,7 +63,8 @@ itself is the immutable source diary (permanent; never deleted or drained).
   undelivered-actionables view.
 - **`labels` after creation:** written only through the plugin's `relabel-notes` on a **confirmed**
   pass (the synthesizer's `resolve` sweeps after acceptance, the surgeon's operations), by
-  `label-bank rename` or `label-bank merge`, at ingest's interactive gate, or by the human (no other consumer touches it). A
+  `label-bank rename` or `label-bank merge`, at ingest's interactive gate, by a confirmed synthesizer note
+  merge (the survivor's labels union), or by the human (no other consumer touches it). A
   proposed label's name is never written to a note before it is accepted.
 - **`related:`** written by ingest at creation for Tier-1 factual links; written by the synthesizer
   on confirm for associative links; human may edit directly.
@@ -102,7 +103,8 @@ proposal in one commit; `reject` records the name and reason so ingest does not 
 never expire. At ingest's interactive gate the human may accept an explicit request on the spot.
 
 The bank itself, `_machine/labels.yml`, is written only by the plugin's `label-bank` (`add`, `update`,
-`retire`, `rename`, `remove`; acceptance calls its `add`). Labels marked `origin: imported` (the container
+`retire`, `rename`, `merge`, `remove`) and by `label-proposals accept`, which adds the entry and removes the
+proposal in one commit. Labels marked `origin: imported` (the container
 labels `workspace:*` / `project:*`) are a read-only snapshot. Never edit either file by hand.
 
 ## Source registry

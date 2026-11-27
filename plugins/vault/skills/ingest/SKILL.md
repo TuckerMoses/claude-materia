@@ -241,7 +241,7 @@ already well-labelled notes are the synthesizer `scan` pass's job, not ingest's.
 ```json
 "label_proposals": [
   {"op": "open", "name": "roadmap", "origin": "explicit",
-   "when_to_apply": "Plans and sequencing of future work.", "quote": "label:: roadmap"}
+   "when_to_apply": "Plans and sequencing of future work.", "quote": "Decide which release ships first next quarter."}
 ]
 ```
 
@@ -391,8 +391,8 @@ What changes, and what doesn't:
   sanctioned exception: gate skipped, mandatory digest surfaced + persisted as the run commit's
   description (review-after), proposals only, writes still scripted and verbatim.
 - **Routing is data.** Which thought goes where is decided by the vault's `_machine/routing.yml`, never
-  here, and delivered only by adapters the plugin ships. No script reads anything outside the vault and
-  the plugin. The vault is a sink: it acts on nothing.
+  here, and delivered only by adapters the plugin ships. No script reads any system outside the vault,
+  the plugin and the registered sources. The vault is a sink: it acts on nothing.
 - **`routed_to` is audit** — written only by the scripts, listing targets that succeeded. Never edit it.
 - **Never writes `status`, never writes `handled`** — field ownership per INSTRUCTION.md.
 - **Ingest proposes, review accepts** — notes get active labels or `needs-label`; new vocabulary

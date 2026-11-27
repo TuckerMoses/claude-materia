@@ -2,7 +2,8 @@
 # Each entry is a deliberate accepted-read-exposure: "I agree to send this source through ingest."
 # Written by `vault add-source` (new entries). The ingest skill writes the
 # `last_read` watermark on vcs entries ONLY (destructive entries carry no stored state — the
-# residue is by definition unprocessed). Two writers, one schema; defined here and in INSTRUCTION.md.
+# residue is by definition unprocessed). The plugin's `label-bank rename` and `merge` rewrite label
+# names in `lens`. Three writers, one schema; defined here and in INSTRUCTION.md.
 #
 # Entry schema:
 #   - path: <absolute path to the source>

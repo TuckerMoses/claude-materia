@@ -2,7 +2,7 @@
 """Read-only vault intake health. Usage: ingest-status VAULT_PATH
 
 The first line is `pending closed day-files: N`; the nightly wrapper reads it, so it stays first and stays in this
-form. Reads only the vault (notes, routing, proposal bank), and only reports: an unusable note or routing file is an anomaly,
+form. Reads only the vault (notes, routing, proposal bank) and the registered sources (pending-commit counts), and only reports: an unusable note or routing file is an anomaly,
 never a crash.
 """
 import json, os, re, subprocess, sys, time

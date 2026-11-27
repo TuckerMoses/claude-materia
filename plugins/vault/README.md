@@ -44,8 +44,8 @@ actionables (an action label, no `outcome`) and `note-outcome` closes one.
 
 ## Shared scripts
 
-`scripts/` holds the vault-level code every skill shares: `label-bank` (the bank's sole writer),
-`label-proposals` (the proposal bank's sole writer; `accept` is one commit over both banks),
+`scripts/` holds the vault-level code every skill shares: `label-bank` (the bank's writer, beside `label-proposals accept`),
+`label-proposals` (the proposal bank's sole writer; `accept` adds the bank entry and removes the proposal in one commit),
 `relabel-notes` (bulk `labels` rewrites, body-md5 checked, one commit), the bank, proposal and
 routing schemas, and the frontmatter and transaction modules. Tests:
 
@@ -80,7 +80,7 @@ without approval:
 4. **`/synthesizer scan`** / **`/synthesizer resolve`** — periodically: merge near-duplicates,
    link related notes, and review the label proposals ingest and scan opened.
 5. **`/surgeon`** — when a label needs to change: rename, merge, retire, split or redefine it, with every carrying note, routing rule and source lens kept consistent.
-6. **Consume** — skills pull by label (`session-seed`, `todo AND status:open`, …) and act.
+6. **Consume** — skills pull by label (`session-seed`, `todo` with no `outcome`, …) and act.
 
 ## Contracts (defined once, in the vault)
 
@@ -93,8 +93,8 @@ Highlights:
   writes `outcome`/`resolved`; `labels` after creation change only through `relabel-notes` on a
   confirmed pass, `label-bank rename` or `label-bank merge`, ingest's interactive gate, or the human. A proposed name is
   never written to a note before acceptance.
-- **Consumer archetypes:** one-shot (`handled` mark-all-seen), lifecycle (`status` filter),
-  pairwise (seen-set watermark — the synthesizer).
+- **Consumer archetypes:** legacy one-shot (`handled` mark-all-seen) and lifecycle (`status` filter),
+  both retired with their fields; pairwise (seen-set watermark — the synthesizer).
 - **Query surface:** ripgrep over frontmatter is the required floor; never a full-vault read.
 - **Binding:** every skill resolves `~/.claude/<skill>.local.md` → `~/.claude/vault.local.md` →
   fails loudly. No skill hardcodes a vault path.
