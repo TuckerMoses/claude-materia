@@ -1,25 +1,59 @@
 # The vault system
 
-A portable personal knowledge system built on a plain-markdown vault — three linked materia
-(**vault**, **ingest**, **synthesizer**) plus any consumer skill that queries it.
+A portable personal knowledge system built on a plain-markdown vault — four linked materia
+(**vault**, **ingest**, **synthesizer**, **surgeon**) plus any consumer skill that queries it.
 
 The vault itself is deliberately simple: a flat pool of atomic notes organized by a controlled
 label vocabulary instead of folders, a `journal/` of daily notes that doubles as the capture
 surface and the permanent ingest source, and a thin machine layer (`_machine/`) holding the label
-bank and source registry. Everything an external skill needs to integrate lives in the vault's own
-`INSTRUCTION.md` (read live, never copied) — which is why every skill here stays portable.
+bank, the label proposals, the routing rules and the source registry. The vault owns all of them and
+depends on nothing outside itself and this plugin. Everything an external skill needs to integrate lives in the vault's
+own `INSTRUCTION.md` (read live, never copied) — which is why every skill here stays portable.
 
-## The three materia
+## The four materia
 
 | Materia | Role | Subcommands |
 |---------|------|-------------|
 | **vault** (the anchor skill) | Creation & registration | `create` (stamp a born-correct vault from the `assets/` templates — corpus-seeded or cold), `add-source` (register an external ingest source), `discuss` (architecture meta) |
-| **ingest** | Intake | `[source?] [--today]` (drain closed journal day-files + registered sources: split → label → file through one confirm gate), `status` (read-only health) |
-| **synthesizer** | Pool coherence & vocabulary growth | `scan [scope?] [--full]` (propose merges, links, and labels for emergent themes), `resolve` (drain the `needs-label` backlog into coherent new labels) |
+| **ingest** | Intake | `[source?] [--today] [--silent]` (drain closed journal day-files + registered sources: split → label → route → file through one confirm gate), `status` (read-only health, including undelivered actionables) |
+| **synthesizer** | Pool coherence & vocabulary growth | `scan [scope?] [--full]` (propose merges and links; open label proposals for emergent themes), `resolve` (the label review sitting: accept, reject, revise, rename or merge each proposal, then sweep accepted labels onto pending and earlier notes) |
+| **surgeon** | Vocabulary changes | `rename A B`, `merge A into B`, `retire A`, `split A`, `redefine A` — each a dry run then one confirm; imported and protected labels refused; writes only through `label-bank` and `relabel-notes` |
 
-Consumers — session-planner today, any future puller — query notes by label on their own cadence
-and write `status`/`handled`. The vault stays inert: it triggers nothing and knows nothing about
-who reads it.
+Consumers — session-planner today, any future puller — query notes by label on their own cadence.
+The vault stays inert: it triggers nothing and knows nothing about who reads it.
+
+## Label proposals
+
+**Ingest proposes, review accepts.** Write `label:: <name>` in a journal thought to ask for a label;
+ingest applies it if it exists, and otherwise opens a proposal in `_machine/label-proposals.yml` with
+the thought as evidence and parks the note under `needs-label`. Ingest also opens implicit proposals
+when no subject label fits, and attaches thoughts that fit an open one. `--silent` writes proposals but
+never accepts. `/synthesizer resolve` is the review: explicit proposals and any with two or more
+evidence records are presented (single-record implicit ones wait, never expiring); an accepted label
+enters the bank in the same commit that deletes its proposal, and a rejected name is remembered so
+ingest does not reopen it. At ingest's interactive gate an explicit request can be accepted on the spot.
+
+## Routing and adapters
+
+`_machine/routing.yml` maps label matches to named targets; each target names the adapter that
+delivers to it. An adapter is an executable shipped in `skills/ingest/scripts/adapters/` that takes
+one labelled thought as JSON and answers `{status: delivered, landed}` or `{status: failed, reason}`.
+The plugin ships one, `notes` (the vault copy, whose slug is every thought's id). Delivery to any
+other system stays off until an adapter for it ships; meanwhile `ingest status` lists undelivered
+actionables (an action label, no `outcome`) and `note-outcome` closes one.
+
+## Shared scripts
+
+`scripts/` holds the vault-level code every skill shares: `label-bank` (the bank's writer, beside `label-proposals accept`),
+`label-proposals` (the proposal bank's sole writer; `accept` adds the bank entry and removes the proposal in one commit),
+`relabel-notes` (bulk `labels` rewrites, body-md5 checked, one commit), the bank, proposal and
+routing schemas, and the frontmatter and transaction modules. Tests:
+
+```sh
+python3 -m unittest discover plugins/vault/scripts/tests
+python3 -m unittest discover plugins/vault/skills/ingest/scripts/tests
+for t in plugins/vault/skills/ingest/scripts/tests/test-*.sh; do bash "$t"; done
+```
 
 ## Architecture
 
@@ -44,8 +78,9 @@ without approval:
 3. **`/ingest`** — when you feel like it, drain the closed days (and any registered sources) into
    labeled atomic notes. `--today` includes the open day so same-day actionables aren't blocked.
 4. **`/synthesizer scan`** / **`/synthesizer resolve`** — periodically: merge near-duplicates,
-   link related notes, and grow the label vocabulary from what ingest couldn't classify.
-5. **Consume** — skills pull by label (`session-seed`, `todo AND status:open`, …) and act.
+   link related notes, and review the label proposals ingest and scan opened.
+5. **`/surgeon`** — when a label needs to change: rename, merge, retire, split or redefine it, with every carrying note, routing rule and source lens kept consistent.
+6. **Consume** — skills pull by label (`session-seed`, `todo` with no `outcome`, …) and act.
 
 ## Contracts (defined once, in the vault)
 
@@ -54,11 +89,13 @@ The authoritative integration contract is the stamped `INSTRUCTION.md` — see
 every vault is born with.
 Highlights:
 
-- **Field ownership:** ingest writes `title`/`labels`/dates/`source`; consumers (and the human)
-  write `status`/`handled`; `labels` after creation change only via the synthesizer's confirmed
-  minting or the human.
-- **Consumer archetypes:** one-shot (`handled` mark-all-seen), lifecycle (`status` filter),
-  pairwise (seen-set watermark — the synthesizer).
+- **Field ownership:** ingest writes `title`/`labels`/dates/`source`/`routed_to`; `note-outcome`
+  writes `outcome`/`resolved`; `labels` after creation change only through `relabel-notes` on a
+  confirmed pass, `label-bank rename` or `label-bank merge`, a confirmed synthesizer note merge (the
+  survivor's labels union), ingest's interactive gate, or the human. A proposed name is
+  never written to a note before acceptance.
+- **Consumer archetypes:** legacy one-shot (`handled` mark-all-seen) and lifecycle (`status` filter),
+  both retired with their fields; pairwise (seen-set watermark — the synthesizer).
 - **Query surface:** ripgrep over frontmatter is the required floor; never a full-vault read.
 - **Binding:** every skill resolves `~/.claude/<skill>.local.md` → `~/.claude/vault.local.md` →
   fails loudly. No skill hardcodes a vault path.

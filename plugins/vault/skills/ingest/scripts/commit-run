@@ -9,14 +9,20 @@ Usage:
 
 Contract:
 - Fileset = touched-path set (written+rewritten+marked+moved, plus _machine/ingest_paths.yml when
-  `advanced` is non-empty) + skipped paths + run-log sublist (run.json, proposals.json,
+  `advanced` is non-empty, plus _machine/label-proposals.yml when `proposal_bank` is true) + skipped paths
+  + run-log sublist (run.json, proposals.json,
   entry.md, report.json, + confirmed-manifest.json iff interactive). CHANGELOG.md never.
 - No-op guard: empty touched-path set -> exit 0, no commit, no regen.
 - Description = "ingest(<mode>): <run-id> — N notes, M days, P parked" + blank + entry.md
   verbatim; N/M/P read from run.json (filed, day_files, parked) - never parsed from entry.md.
 - Mode must agree with confirmed-manifest.json presence in the run dir (exit 1 otherwise).
 - jj 0.43 tolerates absent fileset paths and can create an EMPTY commit (verified): every
-  fileset path is pre-flighted, and a post-commit empty check abandons + rolls back.
+  fileset path is pre-flighted. Paths go to jj as exact-path filesets (root-file:"..."), and the landed commit's
+  changed paths must equal the fileset's changed paths; anything else (an empty commit included) is abandoned with
+  its content kept in the working copy, then rolled back as a failed commit.
+- Whether the commit landed is read from the history, not jj's exit status (a timed-out commit may have landed). When
+  that cannot be established, nothing is rolled back: the report stays `completed: true` and dirty, so --landed
+  answers "not landed" until the history shows it, and the next run's --recover commits it if it never landed.
 - Failure after commit points -> remove `ingested: true` from report's `marked` files, exit 1.
 - Success -> regenerate CHANGELOG.md from jj log (newest first; renderer owns separators). A regen failure after the
   commit landed is a warning on stderr, not a failure, on this path as on --recover's.
@@ -30,14 +36,24 @@ Contract:
   paths (its report's written/rewritten/marked/moved/skipped, ingest_paths.yml if it advanced, its run dir) are
   committed under its id, oldest first, and nothing else: an open day-file or a hand-edited note stays uncommitted.
   Prints {"recovered": <newest run-id>}, or null. The caller records it in its own report.json.
+  Then, if _machine/label-proposals.yml is still modified and uncommitted, a run was killed between `label-proposals apply` and
+  its report (no report claims the file): it is committed alone as `ingest(recovered): label proposals`, after it
+  passes the proposal bank's checks, and the output carries "proposal_bank": true. A file that fails them is left
+  uncommitted and --recover exits non-zero naming it. label-proposals is the file's sole writer, so nothing else's
+  edit is swept up.
 - --landed (F2): `completed: true` is written before the commit, so a kill between the two reads as success. Exits 0
   when RUN_ID reports completed and its commit landed or it was a no-op; 1 when it does not report completed (rolled
   back, or a finish that raised) or is one --recover would pick up (the same test); 2 when it cannot tell (bad run
   id, missing or unreadable report, jj failure). Writes nothing.
-- Every jj call is bounded ($VAULT_INGEST_CALL_TIMEOUT, default 300 s); a timed-out commit is a failed commit.
+- Every jj call is bounded ($VAULT_INGEST_CALL_TIMEOUT, default 300 s); a timed-out commit is checked against the
+  history like any other.
 """
 import json, os, re, subprocess, sys
 from pathlib import Path
+
+sys.path.insert(1, str(Path(__file__).resolve().parents[3] / 'scripts'))  # the plugin's shared modules
+import _label_proposals as lp  # noqa: E402
+import _vault_tx as tx  # noqa: E402
 
 TIMEOUT = int(os.environ.get('VAULT_INGEST_CALL_TIMEOUT', '300'))
 RUN_ID = re.compile(r'\d{4}-\d{2}-\d{2}-\d+')
@@ -78,6 +94,8 @@ def touched_paths(report):
                *report.get('moved', [])]
     if report.get('advanced'):
         touched.append('_machine/ingest_paths.yml')
+    if report.get('proposal_bank'):
+        touched.append('_machine/label-proposals.yml')
     return touched
 
 
@@ -170,9 +188,6 @@ def recover(vault: Path):
         report = pending(vault, run, dirty)
         if report is not None:
             runs.append((run, report))
-    if not runs:
-        print(json.dumps({'recovered': None}))
-        return
     runs.sort(key=lambda rr: (rr[0][:10], int(rr[0][11:])))
     files = 0
     for run, report in runs:
@@ -181,15 +196,47 @@ def recover(vault: Path):
         message = (f'ingest(recovered): {run} — interrupted before its commit; committed by the next run\n\n'
                    f'## {run} · recovered\n\nThis run was stopped after it wrote and before its own commit landed. '
                    f'The next run committed what it left: {len(own)} vault path(s) and its run log.\n')
-        c = jj(vault, 'commit', '-m', message, *fileset)
-        if c.returncode != 0:
-            sys.exit(f'recover: commit of {run} failed\n{c.stderr}')
+        try:
+            tx.commit_exact(vault, set(fileset), message)
+        except tx.TxError as e:
+            sys.exit(f'recover: commit of {run} failed\n{e}')
         files += len(fileset)
+    proposals = orphan_proposals(vault)
+    if not runs and not proposals:
+        print(json.dumps({'recovered': None}))
+        return
     try:
         regen(vault)
     except (SystemExit, Exception) as e:  # the commits landed; a stale CHANGELOG.md must not stop the run
         print(f'warning: {e}', file=sys.stderr)
-    print(json.dumps({'recovered': runs[-1][0], 'files': files}))
+    out = {'recovered': runs[-1][0], 'files': files} if runs else {'recovered': None}
+    if proposals:
+        out['proposal_bank'] = True
+    print(json.dumps(out))
+
+
+def orphan_proposals(vault: Path):
+    """Commit a proposal bank an interrupted run left modified and no report claims. True if it committed one. A
+    file the history has never held (a vault stamped but not yet committed) is not a run's leftover."""
+    if lp.PROPOSALS not in dirty_paths(vault, 'recover'):
+        return False
+    r = jj(vault, 'diff', '--summary', '-r', '@', tx.fileset(lp.PROPOSALS))
+    if r.returncode != 0:
+        sys.exit(f'recover: jj diff failed\n{r.stderr}')
+    if r.stdout.split()[:1] != ['M']:
+        return False
+    try:
+        lp.Proposals(vault)
+    except lp.ProposalError as e:
+        sys.exit(f'recover: {lp.PROPOSALS} is uncommitted and fails its checks; fix it by hand ({e})')
+    message = ('ingest(recovered): label proposals — written by an interrupted run; committed by the next run\n\n'
+               '## label proposals · recovered\n\nA run was stopped after `label-proposals apply` wrote the proposal '
+               'bank and before its report. The next run committed the proposal bank alone.\n')
+    try:
+        tx.commit_exact(vault, {lp.PROPOSALS}, message)
+    except tx.TxError as e:
+        sys.exit(f'recover: commit of {lp.PROPOSALS} failed\n{e}')
+    return True
 
 
 def main():
@@ -257,23 +304,20 @@ def main():
     message = subject + '\n\n' + entry_path.read_text(encoding='utf-8')
     set_completed(report_path, report, True)
     try:
-        r = jj(vault, 'commit', '-m', message, *fileset)
-        ok = r.returncode == 0
-        if ok:
-            e = jj(vault, 'log', '--no-graph', '-r', '@-',
-                   '-T', 'if(empty, "EMPTY", "NONEMPTY")')
-            if e.stdout.strip() == 'EMPTY':
-                jj(vault, 'abandon', '@-')
-                ok = False
-                r.stderr += '\ncommit selected no changes (empty commit abandoned)'
+        tx.commit_exact(vault, set(fileset) & tx.dirty(vault), message)
+        why = None
+    except tx.CommitError as exc:
+        if exc.unknown:  # maybe landed: a rollback could contradict the history; --landed / --recover settle it
+            sys.exit(f'commit-run: cannot tell whether the commit landed; nothing rolled back\n{exc}')
+        why = str(exc)
     except Exception as exc:  # never leave a report saying completed over a commit that did not land
-        r, ok = subprocess.CompletedProcess([], 1, '', f'{type(exc).__name__}: {exc}'), False
-    if not ok:
+        why = f'{type(exc).__name__}: {exc}'
+    if why is not None:
         marked = report.get('marked', [])
         unmark(vault, marked)
         set_completed(report_path, report, False)  # after unmark: a kill between the two stays recoverable
         sys.exit(f'commit-run failed; rolled back ingested markers on '
-                 f'{len(marked)} day-file(s)\n{r.stderr}')
+                 f'{len(marked)} day-file(s)\n{why}')
     try:
         regen(vault)
     except (SystemExit, Exception) as e:  # F8: the commit landed; a stale CHANGELOG.md must not fail the run (as in recover)

@@ -1,0 +1,195 @@
+#!/usr/bin/env python3
+"""The sole writer of a vault's proposal bank, <vault>/_machine/label-proposals.yml.
+
+  label-proposals open VAULT --name N --when-to-apply T [--explicit] [EVIDENCE]
+      a new proposal, implicit unless --explicit. Refused for an open proposal, a name in the bank, an invalid name,
+      and a rejected name unless --explicit, which reopens it carrying the old rejection.
+  label-proposals attach VAULT --name N EVIDENCE        more evidence; a record already there (same source,
+                                                        quote and note) is skipped
+      EVIDENCE is --source S --quote Q [--note SLUG] for one record, or --evidence FILE: a JSON list of
+      {source, quote, note?} (a scan theme's member notes, in one commit).
+  label-proposals revise VAULT --name N --when-to-apply T                    rewrite the draft definition
+  label-proposals rename VAULT --from A --to B                               rename an open proposal
+  label-proposals merge VAULT --from A --into B
+      B an open proposal: A's evidence joins B's and A closes. B an active label: A closes and is remembered as
+      rejected ("merged into existing label B"); its evidence notes are printed for the caller's relabel sweep.
+  label-proposals accept VAULT --name N [--when-to-apply T] [--explicit]
+      the label enters the bank (active, local) and the proposal is deleted, in ONE commit. --explicit with
+      --when-to-apply accepts a name that has no proposal yet: an explicit request accepted at ingest's gate.
+  label-proposals reject VAULT --name N --reason R      delete the proposal; remember name, reason and date
+  label-proposals apply VAULT REQUESTS_JSON             ingest's batch: idempotent open/attach, NO commit (the run
+                                                        commit carries the file); never accepts
+  label-proposals stats VAULT                           read-only counts, plus accepts/rejects from the history
+
+Every mutation but apply validates against label-proposals.schema.json (accept also against labels.schema.json),
+refuses when a file it would write has uncommitted changes, and lands as exactly one path-scoped jj commit, or
+changes nothing. Prints JSON on success; exits 1 with a reason on refusal. Proposed names never reach a note: only
+acceptance puts a name in the bank, and only bank labels are written to notes.
+"""
+import argparse
+import json
+import sys
+from pathlib import Path
+
+import _label_bank as lb
+import _label_proposals as lp
+import _vault_tx as tx
+
+
+class Parser(argparse.ArgumentParser):
+    def error(self, message):
+        sys.exit(f'label-proposals: {message}')
+
+
+def die(reason):
+    sys.exit('label-proposals: ' + ' '.join(str(reason).split()))
+
+
+def committed(op, changes, message, **extra):
+    tx.apply(VAULT, changes, message)
+    print(json.dumps(dict({'status': 'committed', 'op': op, 'files': [c.rel for c in changes]}, **extra)))
+
+
+def unchanged():
+    print(json.dumps({'status': 'unchanged'}))
+
+
+def records(a):
+    if a.evidence:
+        if a.source or a.quote or a.note:
+            die('--evidence replaces --source, --quote and --note')
+        try:
+            items = json.loads(Path(a.evidence).read_text(encoding='utf-8'))
+        except (OSError, ValueError) as e:
+            die(f'evidence unreadable: {e}')
+        if not isinstance(items, list) or not items or not all(isinstance(x, dict) for x in items):
+            die('--evidence must be a non-empty JSON list of {source, quote, note?}')
+        return [lp.evidence(x.get('source'), x.get('quote'), x.get('note')) for x in items]
+    if a.source is None and a.quote is None:
+        if a.note:
+            die('--note needs --source and --quote')
+        return []
+    return [lp.evidence(a.source, a.quote, a.note)]
+
+
+def cmd_open(props, bank, a):
+    data = lp.op_open(props.data, bank, a.name, a.when_to_apply, a.explicit, records(a))
+    reopened = data['proposals'][a.name].get('reopened')
+    committed('open', [props.change(data)], f'label-proposals(open): {a.name}' + (' (reopened)' if reopened else ''),
+              name=a.name, origin=data['proposals'][a.name]['origin'], reopened=reopened)
+
+
+def cmd_attach(props, bank, a):
+    new = records(a) or die('attach needs --source and --quote, or --evidence')
+    data, added = lp.op_attach(props.data, a.name, new)
+    if not added:
+        return unchanged()
+    where = new[0]['source'] if len(new) == 1 else f'{added} records'
+    committed('attach', [props.change(data)], f'label-proposals(attach): {a.name} <- {where}', name=a.name,
+              added=added, evidence=len(data['proposals'][a.name]['evidence']))
+
+
+def cmd_revise(props, bank, a):
+    if lp._proposal(props.data, a.name)['when_to_apply'] == a.when_to_apply:
+        return unchanged()
+    committed('revise', [props.change(lp.op_revise(props.data, a.name, a.when_to_apply))],
+              f'label-proposals(revise): {a.name}', name=a.name)
+
+
+def cmd_rename(props, bank, a):
+    data = lp.op_rename(props.data, bank, a.from_, a.to)
+    committed('rename', [props.change(data)], f'label-proposals(rename): {a.from_} -> {a.to}', **{'from': a.from_, 'to': a.to})
+
+
+def cmd_merge(props, bank, a):
+    notes = sorted({e['note'] for e in lp._proposal(props.data, a.from_)['evidence'] if e.get('note')})
+    data, kind = lp.op_merge(props.data, bank, a.from_, a.into)
+    committed('merge', [props.change(data)], f'label-proposals(merge): {a.from_} into {kind} {a.into}',
+              **{'from': a.from_, 'into': a.into, 'kind': kind, 'evidence_notes': notes})
+
+
+def cmd_accept(props, bank, a):
+    proposal = props.data['proposals'].get(a.name)
+    notes = sorted({e['note'] for e in (proposal or {}).get('evidence', []) if e.get('note')})
+    data, labels = lp.op_accept(props.data, bank, a.name, a.when_to_apply, a.explicit)
+    changes = [bank.change(labels), props.change(data)]
+    how = 'proposal' if proposal else 'on the spot'
+    committed('accept', changes, f'label-proposals(accept): {a.name} ({how})', name=a.name,
+              when_to_apply=labels[a.name]['when_to_apply'], evidence_notes=notes)
+
+
+def cmd_reject(props, bank, a):
+    committed('reject', [props.change(lp.op_reject(props.data, a.name, a.reason))],
+              f'label-proposals(reject): {a.name}\n\n{a.reason}\n', name=a.name)
+
+
+def cmd_apply(props, bank, a):
+    try:
+        requests = json.loads(Path(a.requests).read_text(encoding='utf-8'))
+    except (OSError, ValueError) as e:
+        die(f'requests unreadable: {e}')
+    if not isinstance(requests, list) or not all(isinstance(r, dict) for r in requests):
+        die('requests must be a JSON list of objects')
+    data, results = lp.apply_requests(props.data, bank, requests)
+    changed = data != props.data
+    if changed:
+        lp.write_uncommitted(VAULT, props.change(data))
+    print(json.dumps({'results': results, 'changed': changed, 'dirty': lp.PROPOSALS in tx.dirty(VAULT)}))
+
+
+def history(op):
+    r = tx.jj(VAULT, 'log', '--no-graph', '-r', f'description(glob:"label-proposals({op})*")', '-T', 'commit_id ++ "\\n"')
+    if r.returncode != 0:
+        die(f'jj log failed: {r.stderr.strip()}')
+    return len(r.stdout.split())
+
+
+def cmd_stats(props, bank, a):
+    out = lp.counts(props.data)
+    out.update(accepted=history('accept'), rejected=history('reject'))
+    print(json.dumps(out))
+
+
+COMMANDS = {'open': cmd_open, 'attach': cmd_attach, 'revise': cmd_revise, 'rename': cmd_rename, 'merge': cmd_merge,
+            'accept': cmd_accept, 'reject': cmd_reject, 'apply': cmd_apply, 'stats': cmd_stats}
+
+
+def main():
+    global VAULT
+    p = Parser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest='op', required=True, parser_class=Parser)
+    s = {op: sub.add_parser(op) for op in COMMANDS}
+    for op, sp in s.items():
+        sp.add_argument('vault')
+        sp.set_defaults(fn=COMMANDS[op])
+    for op in ('open', 'attach', 'revise', 'accept', 'reject'):
+        s[op].add_argument('--name', required=True)
+    s['open'].add_argument('--when-to-apply', required=True)
+    s['revise'].add_argument('--when-to-apply', required=True)
+    s['accept'].add_argument('--when-to-apply')
+    for op in ('open', 'accept'):
+        s[op].add_argument('--explicit', action='store_true')
+    for op in ('open', 'attach'):
+        s[op].add_argument('--source')
+        s[op].add_argument('--quote')
+        s[op].add_argument('--note')
+        s[op].add_argument('--evidence', metavar='FILE')
+    s['rename'].add_argument('--from', dest='from_', required=True)
+    s['rename'].add_argument('--to', required=True)
+    s['merge'].add_argument('--from', dest='from_', required=True)
+    s['merge'].add_argument('--into', required=True)
+    s['reject'].add_argument('--reason', required=True)
+    s['apply'].add_argument('requests')
+    a = p.parse_args()
+    VAULT = Path(a.vault).expanduser().resolve()
+    try:
+        tx.require_vault(VAULT)
+        a.fn(lp.Proposals(VAULT), lb.Bank(VAULT), a)
+    except (lp.ProposalError, lb.BankError, tx.TxError) as e:
+        die(e)
+
+
+VAULT = None
+
+if __name__ == '__main__':
+    main()

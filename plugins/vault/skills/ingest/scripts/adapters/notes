@@ -1,0 +1,38 @@
+#!/usr/bin/env python3
+"""The notes adapter: file one labelled thought as a note in the vault's notes/ pool, or find it already filed.
+
+Adapter interface (every adapter): `ADAPTER VAULT`, with one JSON object on stdin,
+  {"target": NAME, "params": {...}, "thought": {ref, title, labels, body, source, captured, created, related?, id?}}
+and one JSON object on stdout with exit 0:
+  {"status": "delivered", "landed": ...} | {"status": "failed", "reason": "..."}
+Exit 2 means the run must stop (an iron-rule refusal). Any other exit, unreadable output or a timeout is a failed
+target, so the thought's unit is held.
+
+This adapter's landed is {slug, path, status: written|skipped, outcome}; the slug becomes the thought's id. It takes
+no params.
+"""
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # ingest's scripts
+import _file_notes as fn  # noqa: E402
+
+
+def main():
+    if len(sys.argv) != 2:
+        sys.exit('usage: notes VAULT  (request JSON on stdin)')
+    vault = Path(sys.argv[1]).expanduser()
+    if not (vault / 'notes').is_dir():
+        sys.exit(f'vault not found (no notes/ under {vault})')
+    thought = json.load(sys.stdin)['thought']
+    try:
+        result = fn.deliver(vault, thought)
+    except fn.Abort as e:
+        print(f'ABORT {e}', file=sys.stderr)
+        sys.exit(2)
+    print(json.dumps(result))
+
+
+if __name__ == '__main__':
+    main()

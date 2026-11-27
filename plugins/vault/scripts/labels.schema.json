@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Vault label bank (<vault>/_machine/labels.yml)",
+  "description": "The vault's label vocabulary. Written by label-bank and by label-proposals accept (which adds the entry and removes the proposal in one commit); a one-time, supervised migration seed writes the initial file, including origin: imported entries, which are otherwise read-only.",
+  "type": "object",
+  "required": ["labels"],
+  "additionalProperties": false,
+  "properties": {
+    "labels": {
+      "type": "object",
+      "propertyNames": {"pattern": "^(?![\\s\\S]*\\n)[a-z0-9][a-z0-9/-]*(:[a-z0-9][a-z0-9_-]*)?$"},
+      "additionalProperties": {"$ref": "#/definitions/label"}
+    }
+  },
+  "definitions": {
+    "label": {
+      "type": "object",
+      "required": ["when_to_apply", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "when_to_apply": {"type": "string", "minLength": 1, "pattern": "\\S"},
+        "status": {"enum": ["active", "retired"]},
+        "protected": {"type": "boolean"},
+        "origin": {"enum": ["local", "imported"], "default": "local"}
+      }
+    }
+  }
+}

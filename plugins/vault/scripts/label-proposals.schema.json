@@ -1,0 +1,64 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Vault label proposals (<vault>/_machine/label-proposals.yml)",
+  "description": "Labels asked for but not yet in the bank, with the evidence for each, and a short memory of rejected names. Written only by label-proposals. The one sanctioned stored label-to-notes record: an entry is deleted when its proposal is accepted or rejected.",
+  "type": "object",
+  "required": ["proposals", "rejected"],
+  "additionalProperties": false,
+  "properties": {
+    "proposals": {
+      "type": "object",
+      "propertyNames": {"$ref": "#/definitions/name"},
+      "additionalProperties": {"$ref": "#/definitions/proposal"}
+    },
+    "rejected": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "reason", "date"],
+        "additionalProperties": false,
+        "properties": {
+          "name": {"$ref": "#/definitions/name"},
+          "reason": {"$ref": "#/definitions/text"},
+          "date": {"$ref": "#/definitions/date"}
+        }
+      }
+    }
+  },
+  "definitions": {
+    "name": {"type": "string", "pattern": "^(?![\\s\\S]*\\n)[a-z0-9][a-z0-9/-]*(:[a-z0-9][a-z0-9_-]*)?$"},
+    "text": {"type": "string", "minLength": 1, "pattern": "\\S"},
+    "date": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$"},
+    "proposal": {
+      "type": "object",
+      "required": ["when_to_apply", "origin", "opened", "evidence"],
+      "additionalProperties": false,
+      "properties": {
+        "when_to_apply": {"$ref": "#/definitions/text"},
+        "origin": {"enum": ["explicit", "implicit"]},
+        "opened": {"$ref": "#/definitions/date"},
+        "reopened": {
+          "type": "object",
+          "description": "Set when an explicit request reopened a rejected name: the rejection it overrides.",
+          "required": ["reason", "date"],
+          "additionalProperties": false,
+          "properties": {"reason": {"$ref": "#/definitions/text"}, "date": {"$ref": "#/definitions/date"}}
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["source", "quote", "added"],
+            "additionalProperties": false,
+            "properties": {
+              "source": {"$ref": "#/definitions/text"},
+              "quote": {"$ref": "#/definitions/text"},
+              "note": {"type": "string", "pattern": "^[^/\\\\.][^/\\\\]*$", "description": "The note's slug when it was attached; may go stale after a merge."},
+              "added": {"$ref": "#/definitions/date"}
+            }
+          }
+        }
+      }
+    }
+  }
+}

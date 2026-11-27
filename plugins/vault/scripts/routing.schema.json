@@ -1,0 +1,79 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Vault routing (<vault>/_machine/routing.yml)",
+  "description": "Where a labelled thought goes. targets names each destination and the adapter that delivers to it; rules are a set, not a sequence: every rule whose match holds delivers to every target in its to, so one rule never shadows another. Read by ingest's dispatch-targets and ingest-status; label-bank rename and merge rewrite label names in match automatically.",
+  "type": "object",
+  "required": ["targets", "rules"],
+  "additionalProperties": false,
+  "properties": {
+    "targets": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {"pattern": "^[a-z0-9][a-z0-9_-]*$"},
+      "additionalProperties": {
+        "type": "object",
+        "required": ["adapter"],
+        "additionalProperties": false,
+        "properties": {
+          "adapter": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9_-]*$",
+            "description": "An adapter the vault plugin ships (ingest's scripts/adapters/<adapter>). A name, never a path."
+          },
+          "params": {
+            "type": "object",
+            "description": "Passed to the adapter verbatim with every thought."
+          }
+        }
+      }
+    },
+    "rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["match", "to"],
+        "additionalProperties": false,
+        "properties": {
+          "match": {
+            "type": "array",
+            "minItems": 1,
+            "description": "All terms must hold.",
+            "items": {"$ref": "#/definitions/term"}
+          },
+          "to": {
+            "type": "array",
+            "minItems": 1,
+            "description": "Target names, each declared under targets.",
+            "items": {"type": "string", "minLength": 1}
+          }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "pattern": {
+      "type": "string",
+      "minLength": 1,
+      "description": "A label, or a glob on labels where * matches any run of characters (project:*). A bare * holds for every thought, even one with no labels."
+    },
+    "term": {
+      "oneOf": [
+        {"$ref": "#/definitions/pattern"},
+        {
+          "type": "object",
+          "required": ["any"],
+          "additionalProperties": false,
+          "description": "Holds when at least one label matches one pattern.",
+          "properties": {"any": {"type": "array", "minItems": 1, "items": {"$ref": "#/definitions/pattern"}}}
+        },
+        {
+          "type": "object",
+          "required": ["none"],
+          "additionalProperties": false,
+          "description": "Holds when no label matches any pattern. This is how a fallback is expressed without ordering.",
+          "properties": {"none": {"type": "array", "minItems": 1, "items": {"$ref": "#/definitions/pattern"}}}
+        }
+      ]
+    }
+  }
+}
