@@ -104,8 +104,10 @@ never expire. At ingest's interactive gate the human may accept an explicit requ
 
 The bank itself, `_machine/labels.yml`, is written only by the plugin's `label-bank` (`add`, `update`,
 `retire`, `rename`, `merge`, `remove`) and by `label-proposals accept`, which adds the entry and removes the
-proposal in one commit. Labels marked `origin: imported` (the container
-labels `workspace:*` / `project:*`) are a read-only snapshot. Never edit either file by hand.
+proposal in one commit. The exception is a one-time, supervised migration seed that writes the initial
+`labels.yml` when an existing vocabulary moves into the vault, including `origin: imported` entries. Labels
+marked `origin: imported` (the container labels `workspace:*` / `project:*`) are otherwise a read-only
+snapshot. Apart from that seed, never edit either file by hand.
 
 ## Source registry
 

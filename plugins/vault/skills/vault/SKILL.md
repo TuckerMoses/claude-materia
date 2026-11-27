@@ -111,8 +111,8 @@ the spec; this phase only stamps them (plus the locked vocabulary). Steps:
 5. Stamp `assets/labels.yml → _machine/labels.yml` (the seed bank: the protected action and holding
    labels, plus `idea` and `observation`). The locked domain/topic vocabulary is added in step 10,
    through `label-bank add`. Container labels (`workspace:<name>`, `project:<name>`) the vault does
-   not own would be `origin: imported` entries, but no writer of imported entries exists yet (a future
-   import adapter or a one-time migration seed would write them); a vault without them works.
+   not own would be `origin: imported` entries, but no script writes imported entries yet (the
+   one-time, supervised migration seed or a future import adapter would); a vault without them works.
 6. Stamp `assets/ingest_paths.yml → _machine/ingest_paths.yml` (empty registry),
    `assets/routing.yml → _machine/routing.yml` (the notes target only), and
    `assets/label-proposals.yml → _machine/label-proposals.yml` (no proposals, nothing rejected).
@@ -183,10 +183,11 @@ deliberate accepted-read-exposure registration (additive-surface model — every
 
 ### Three writers, one schema (no conflict)
 
-`add-source` writes **new entries** (invariant registration). The ingest skill (`vault:ingest`)
-writes **`last_read` watermarks** (runtime state) on **vcs** entries only — destructive entries have no
-watermark. `label-bank rename` and `merge` rewrite label names in `lens`. Each writes a different
-field. The schema is defined once,
+`add-source` creates **new entries**, lens included (invariant registration). The ingest skill
+(`vault:ingest`) advances **`last_read` watermarks** (runtime state) on **vcs** entries only —
+destructive entries have no watermark. `label-bank rename` and `merge` rewrite label names inside
+existing `lens` lists. No two write the same entry at the same time (`label-bank` refuses a file with
+uncommitted changes). The schema is defined once,
 here and in `INSTRUCTION.md`; do not fork it.
 
 ### Cold-start interaction

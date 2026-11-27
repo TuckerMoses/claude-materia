@@ -9,7 +9,7 @@
 #   A match is a list of terms that must all hold: a label, a glob on labels (`project:*`; a bare
 #   `*` holds for every thought), {any: [...]} or {none: [...]}.
 #
-# Label names in `match` are rewritten only by label-bank rename and merge. Edit targets and rules by
+# label-bank rename and merge rewrite label names in `match` automatically. Edit targets and rules by
 # hand, then commit. A lens label that a rule sends to a non-notes target is outbound; ingest status
 # flags it.
 

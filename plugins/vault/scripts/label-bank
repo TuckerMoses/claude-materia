@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""The sole writer of a vault's label bank, <vault>/_machine/labels.yml.
+"""The main writer of a vault's label bank, <vault>/_machine/labels.yml (label-proposals accept also adds
+entries, and a one-time, supervised migration seed writes the initial file; see INSTRUCTION.md).
 
   label-bank add VAULT --name N --when-to-apply TEXT   new active local label
   label-bank update VAULT --name N --when-to-apply TEXT rewrite its text

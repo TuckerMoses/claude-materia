@@ -140,8 +140,9 @@ seen:
   `rejected`; swept notes carry the label. A sitting interrupted part-way keeps every accept and
   reject (each proposal action is its own commit) and applies no relabel manifest (it is applied once,
   at the end). The next sitting's Sweep A still catches pending `needs-label` notes, but Sweep B for a
-  label accepted in the interrupted sitting runs only when the human names that label: the accept
-  deleted its proposal and evidence, and the `label-proposals(accept)` commits in vcs history list it.
+  label accepted in the interrupted sitting runs only when the human names that label (resolve step 4):
+  the accept deleted its proposal and evidence, and the `label-proposals(accept)` commits in vcs history
+  list it.
 
 ## Merge execution (on confirm)
 
@@ -233,7 +234,9 @@ Proposals come from three places, and all of them wait for `resolve`:
    - **Sweep B, backfill:** for each accepted label, search the whole pool for candidates (`rg` on
      terms from its definition and its evidence quotes), classify them, and show the proposed
      additions. Without this, earlier notes that already carried a generic label would never receive
-     the new one.
+     the new one. The human may also name a label accepted in an earlier, interrupted sitting; Sweep B
+     then runs for it too, searching on its bank `when_to_apply` only, since its evidence left with the
+     proposal.
 5. **Effect check:** each accepted label sits in `_machine/labels.yml`; its proposal is gone from the
    proposal bank; the swept notes carry it; each rejected name is in `rejected`.
 
