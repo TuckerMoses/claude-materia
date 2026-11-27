@@ -33,6 +33,26 @@ evidence records are presented (single-record implicit ones wait, never expiring
 enters the bank in the same commit that deletes its proposal, and a rejected name is remembered so
 ingest does not reopen it. At ingest's interactive gate an explicit request can be accepted on the spot.
 
+**Writing a request.** It counts only at the very start of a thought, and only with a space after the
+`::`, so `tokio::spawn` in prose never triggers it. Names are read case-insensitively (a phone's
+auto-capitalised `Gardening:: …` works, and a space inside a name becomes a hyphen). Several labels go
+in a comma list: `health, todo:: book the dentist`. The prefix stays in the note body, where it is also a
+Dataview inline field.
+
+**Where new labels come from.** Three sources open proposals, and only `resolve` turns one into a label:
+
+| Source | Opens a proposal when | Good for |
+|---|---|---|
+| You, with `<label>:: ` | you ask | a label you already know you want |
+| `/ingest` | a thought fits **no** subject label | a subject that is new to the vault |
+| `/synthesizer scan` | several notes share a theme, whatever labels they already carry | a theme hiding under generic labels |
+
+The third row matters most in an established vault. A thought that already fits a broad label (say
+`idea` plus one subject) is filed under it and ingest proposes nothing, so a recurring topic can pile up
+unlabelled for months. Nothing is applied retroactively on its own either: accepting a label in
+`resolve` is what sweeps it onto the notes that were waiting and searches earlier notes for the rest.
+Run `scan` then `resolve` now and then, and after migrating an existing vault.
+
 ## Routing and adapters
 
 `_machine/routing.yml` maps label matches to named targets; each target names the adapter that
@@ -81,6 +101,14 @@ without approval:
    link related notes, and review the label proposals ingest and scan opened.
 5. **`/surgeon`** — when a label needs to change: rename, merge, retire, split or redefine it, with every carrying note, routing rule and source lens kept consistent.
 6. **Consume** — skills pull by label (`session-seed`, `todo` with no `outcome`, …) and act.
+
+## Requirements
+
+The scripts run under whatever `python3` is first on `PATH`, and it must have **PyYAML** and
+**jsonschema** (Python 3.8 or later). Vaults are **jj** repositories. A script started by an
+interpreter without the two modules exits with one line naming it. If a scheduled run reports that,
+check the `PATH` order in login shells as well as non-login ones: a shell profile that puts another
+Python first applies only to some of them.
 
 ## Contracts (defined once, in the vault)
 
