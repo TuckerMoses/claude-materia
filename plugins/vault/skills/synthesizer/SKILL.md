@@ -29,7 +29,7 @@ Two jobs (one skill because both feed the same review — see "Vocabulary growth
 - **Vocabulary growth** (`resolve` + scan's theme sensor) — own the `needs-label` backlog and the
   growth of the vocabulary. **Ingest proposes, review accepts:** ingest (and `scan`) only open
   proposals and attach evidence; `resolve` is where a proposal becomes a label, through user
-  confirmation. The single exception is an explicit `label::` request the human accepts at ingest's
+  confirmation. The single exception is an explicit `<label>:: ` request the human accepts at ingest's
   interactive gate. (Bootstrap vocabulary is vault's domain — `vault create` derives the seed
   domain/topic labels during scaffold. *Changing* labels that already exist — rename, merge, retire,
   split, redefine — is the surgeon's job, a separate skill; the two share scripts, not a skill.)
@@ -190,7 +190,7 @@ adds the bank entry and deletes the proposal in one commit). Never hand-edit any
 
 Proposals come from three places, and all of them wait for `resolve`:
 
-- **Ingest** — a `label:: <name>` request in the journal (explicit) and thoughts that fit an open
+- **Ingest** — a `<label>:: <thought>` request in the journal (explicit) and thoughts that fit an open
   proposal or no subject label (implicit). Its notes carry `needs-label`.
 - **scan's theme sensor** — a neighborhood subagent reports "these N notes circle a concept no bank
   label names". On confirm at scan's gate: `label-proposals open <vault> --name <name>
@@ -277,7 +277,7 @@ ingest's interactive gate, or the human.
   a drafted `when_to_apply` must be derived from what the cluster's notes are *about*, never from
   a member note's prose about how labels, workspaces, or classification ought to work — that path
   bakes the confusion into the bank permanently, where every future ingest run inherits it. A
-  `label:: <name>` line in a body is a *request* (ingest turned it into a proposal); it asks for a
+  `<label>:: ` prefix at the start of a body is a *request* (ingest turned it into a proposal); it asks for a
   name, it never defines one. If a bank description seems wrong mid-run, that is gate feedback for
   the human, never a license to override it.
 - **Env-agnostic** — no environment paths in the skill body; binding via

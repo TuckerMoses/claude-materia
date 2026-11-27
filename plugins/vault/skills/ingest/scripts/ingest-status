@@ -7,7 +7,12 @@ never a crash.
 """
 import json, os, re, subprocess, sys, time
 from pathlib import Path
-import yaml
+try:
+    import yaml
+except ModuleNotFoundError as _e:
+    import sys
+    sys.exit(f"{sys.argv[0]}: {sys.executable} has no module '{_e.name}'. The vault scripts need PyYAML and "
+             "jsonschema: put a python3 that has both first on PATH.")
 
 sys.path.insert(1, str(Path(__file__).resolve().parents[3] / 'scripts'))  # the plugin's shared modules
 import _file_notes  # noqa: E402

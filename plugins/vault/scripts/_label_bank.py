@@ -6,8 +6,13 @@ That is how a rename puts the bank entry, every note, routing rules and source l
 import json
 from pathlib import Path
 
-import jsonschema
-import yaml
+try:
+    import jsonschema
+    import yaml
+except ModuleNotFoundError as _e:
+    import sys
+    sys.exit(f"{sys.argv[0]}: {sys.executable} has no module '{_e.name}'. The vault scripts need PyYAML and "
+             "jsonschema: put a python3 that has both first on PATH.")
 
 import _ingest_keys
 import _note_frontmatter as fm

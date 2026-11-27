@@ -11,8 +11,13 @@ import json
 import re
 from pathlib import Path
 
-import jsonschema
-import yaml
+try:
+    import jsonschema
+    import yaml
+except ModuleNotFoundError as _e:
+    import sys
+    sys.exit(f"{sys.argv[0]}: {sys.executable} has no module '{_e.name}'. The vault scripts need PyYAML and "
+             "jsonschema: put a python3 that has both first on PATH.")
 
 import _label_bank as lb
 import _vault_tx as tx
