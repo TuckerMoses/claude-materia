@@ -15,7 +15,7 @@
 #   proposals:
 #     <name>:
 #       when_to_apply: "draft text"
-#       origin: explicit            # explicit (a `label:: <name>` line, or the human) | implicit
+#       origin: explicit            # explicit (a `<label>:: <thought>` request, or the human) | implicit
 #       opened: 2026-01-01
 #       reopened: {reason, date}    # optional: the rejection an explicit request overrode
 #       evidence:

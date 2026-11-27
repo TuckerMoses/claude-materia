@@ -15,6 +15,12 @@ commit, rather than calling `label-bank add`, so the bank has two writers, plus 
 which still refuses every operation on protected labels. No script creates `origin: imported` entries yet;
 the migration seed or a future import adapter would.
 
+> **Superseded (2026-11-27): the request syntax.** Section 5.2's two-line form (`label:: <name>` on its own
+> line) was replaced before first use by a prefix on the thought itself: `<label>:: <thought>`, several names
+> comma-separated, counted only at the start of a thought and only with a space after `::`. Everything else in
+> 5.2 (what ingest does per kind of name) stands. Where this document says "a `label::` line", read "a
+> `<label>:: ` prefix".
+
 ## 1. Why
 
 Four problems, one design:

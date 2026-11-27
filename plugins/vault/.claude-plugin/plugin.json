@@ -1,6 +1,6 @@
 {
   "name": "vault",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "A portable personal knowledge system: create a label-based markdown vault that owns its vocabulary and routing, ingest captured thoughts into it (with label proposals reviewed before they enter the bank), synthesize the pool (merges, links, vocabulary growth), and change existing labels safely (rename, merge, retire, split). Four linked skills — vault, ingest, synthesizer, surgeon.",
   "author": {
     "name": "Tucker Moses"

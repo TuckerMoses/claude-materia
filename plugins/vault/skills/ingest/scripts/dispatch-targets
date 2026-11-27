@@ -47,7 +47,12 @@ import tempfile
 import time
 from pathlib import Path
 
-import yaml
+try:
+    import yaml
+except ModuleNotFoundError as _e:
+    import sys
+    sys.exit(f"{sys.argv[0]}: {sys.executable} has no module '{_e.name}'. The vault scripts need PyYAML and "
+             "jsonschema: put a python3 that has both first on PATH.")
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(1, str(HERE.parents[2] / 'scripts'))  # the plugin's shared modules

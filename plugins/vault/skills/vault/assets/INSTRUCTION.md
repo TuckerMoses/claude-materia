@@ -88,8 +88,10 @@ note's slug). It is transient: an entry is deleted when its proposal is accepted
 
 **Ingest proposes, review accepts.** A missing label is *proposed*, never registered directly:
 
-- **In the journal:** write `label:: <name>` on its own line inside the thought (Dataview's inline-field
-  syntax; prose containing "label:" never triggers it). Ingest applies `<name>` if it is an active label;
+- **In the journal:** start the thought with the label name, a double colon and a space:
+  `gardening:: sketch the bed layout first` (several names: `health, todo:: …`). It counts only at the very start
+  of a thought and only with a space after `::`, so `tokio::spawn` in prose never triggers it. It is also a
+  Dataview inline field. Ingest applies `<name>` if it is an active label;
   otherwise it opens (or adds evidence to) a proposal and parks the note under `needs-label`. A name
   previously rejected is reopened by an explicit request, carrying the old reason.
 - **Implicitly:** ingest opens a proposal when no subject label fits a thought, and attaches thoughts that

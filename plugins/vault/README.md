@@ -24,7 +24,7 @@ The vault stays inert: it triggers nothing and knows nothing about who reads it.
 
 ## Label proposals
 
-**Ingest proposes, review accepts.** Write `label:: <name>` in a journal thought to ask for a label;
+**Ingest proposes, review accepts.** Start a journal thought with `<label>:: ` (for example `gardening:: sketch the bed layout first`) to ask for a label;
 ingest applies it if it exists, and otherwise opens a proposal in `_machine/label-proposals.yml` with
 the thought as evidence and parks the note under `needs-label`. Ingest also opens implicit proposals
 when no subject label fits, and attaches thoughts that fit an open one. `--silent` writes proposals but

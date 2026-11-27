@@ -46,7 +46,7 @@ this vault's notes. After every target has succeeded, ingest marks the day-file
 the extracted atomic note and the frozen day-file coexist (the day-file is the immutable source).
 
 **Ingest proposes, review accepts.** Ingest applies existing labels, parks under `needs-label`, and
-writes label *proposals* (from a `label:: <name>` line in the journal, or when nothing fits), never
+writes label *proposals* (from a thought that starts with `<label>:: ` in the journal, or when nothing fits), never
 active labels. The synthesizer's `resolve` sitting reviews the proposals with you: accept puts a label
 in the bank, reject remembers the name, and the accepted labels are then swept onto pending and earlier
 notes. The one exception: at ingest's interactive gate you may accept an explicit request on the spot.
